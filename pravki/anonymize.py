@@ -83,6 +83,8 @@ _IP2 = re.compile(r"(?:Индивидуальный\s+предпринимате
 _SURNAME_INIT = re.compile(r"(?<![А-ЯЁа-яё])([А-ЯЁ][а-яё]{2,})\s+([А-ЯЁ])\.\s?([А-ЯЁ])\.?")
 _INIT_SURNAME = re.compile(r"(?<![А-ЯЁа-яё])([А-ЯЁ])\.\s?([А-ЯЁ])\.?\s*([А-ЯЁ][а-яё]{2,})(?![А-ЯЁа-яё])")
 
+_LOWER_WORD = re.compile(r"(?<![А-ЯЁа-яёA-Za-z])[а-яё]{3,}(?![А-ЯЁа-яёA-Za-z])")
+
 _EMAIL = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _URL = re.compile(r"(?:https?://|www\.)[^\s<>)»\"'”]+", re.IGNORECASE)
 _DOMAIN = re.compile(r"(?<![\w@.\-])(?:[a-zA-Z0-9\-]+\.)+(?:ru|com|org|net|su|io|рф|info|biz|pro|shop|store|online)(?![\w\-])")
@@ -96,11 +98,11 @@ _PHONE_CHAIN = re.compile(r"(?<![\w.,/])\+?\d[\d\s()\-]{5,}\d(?![\w])")
 _PHONE_CONTEXT = re.compile(r"(?i)\b(?:тел|телефон|факс|моб|phone|whatsapp|telegram|e-?mail|эл\.?\s*почт\w*|почт\w*)\b|\+7|@")
 _ADDRESS_HINT = re.compile(r"(?i)\bг\.|\bул\.|улица|\bд\.|\bофис|\bпом\.|\bкорп\.|адрес")
 _STREET = re.compile(
-    r"(?i:\b(?:ул\.|улица|пр-т|просп\.|проспект|пер\.|переулок|ш\.|шоссе|наб\.|набережная|б-р|бульвар|пл\.|площадь|проезд|"
+    r"(?i:\b(?:ул\.?(?=\s)|улица|пр-т|просп\.|проспект|пер\.|переулок|ш\.|шоссе|наб\.|набережная|б-р|бульвар|пл\.|площадь|проезд|"
     r"мкр\.?|микрорайон))\s*(?P<n>[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ0-9][а-яё0-9\-]*){0,2})")
 _ADDRESS_CONTEXT = re.compile(r"(?i)\bг\.|город|\bул\.|улиц|проспект|\bпр-т|адрес|област|шоссе|переул|бульвар|(?<!\d)\d{6}(?!\d)")
 _STREET_POST = re.compile(
-    r"(?P<n>[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){0,2})\s+(?i:ул\.|улица|пр-т|просп\.|проспект|пер\.|переулок|ш\.|шоссе|наб\.|набережная|б-р|бульвар|пл\.|площадь)")
+    r"(?P<n>[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){0,2})\s+(?i:ул\.?|улица|пр-т|просп\.|проспект|пер\.|переулок|ш\.|шоссе|наб\.|набережная|б-р|бульвар|пл\.|площадь)(?![а-яё])")
 _BUILDING = re.compile(r"(?i:\b(?:д\.|дом|корп\.|корпус|кв\.|квартира|оф\.|офис|пом\.|помещение|стр\.|строение))\s*№?\s*(?P<n>\d[\w./\-]*)")
 _POSTAL = re.compile(r"(?<![\d])\d{6}(?![\d])")
 _DIGIT_RUN = re.compile(r"\d{2,}")
@@ -110,12 +112,22 @@ APP_BLANK = {"Company", "Manager", "HyperlinkBase"}
 APP_DROP = {"TitlesOfParts", "HeadingPairs"}
 
 
+_PATR_FEMALE = re.compile(r"(?:овн|евн|ичн)(?:а|ы|е|у|ой)$")
+_SURNAME_FEMALE = re.compile(r"(?:ова|ева|ина|ына|ая|(?:ов|ев|ин|ын)ой)$")
+
+
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").casefold().replace("ё", "е")).strip()
 
 
 _NOT_ORG = {_norm(x) for x in ("Компания", "Общество", "Организация", "Заказчик", "Исполнитель", "Стороны", "Договор", "Предприятие",
                                "Организатор", "Участник", "Оператор", "Клиент", "Партнёр", "Партнер", "Агент", "Принципал")}
+# слова, которые встречаются в договоре с большой буквы и похожи на фамилию («Договор А.Б.», «Приложение Б.1»)
+_NOT_SURNAME = {_norm(x) for x in (
+    "Договор", "Договора", "Договору", "Приложение", "Приложения", "Соглашение", "Соглашения", "Спецификация", "Спецификации",
+    "Акт", "Акта", "Протокол", "Протокола", "Заказчик", "Исполнитель", "Поставщик", "Покупатель", "Подрядчик", "Арендатор",
+    "Арендодатель", "Сторона", "Стороны", "Статья", "Пункт", "Раздел", "Часть", "Глава", "Таблица", "Форма", "Счёт", "Счет",
+    "Реестр", "Задание", "Перечень", "Заявка", "Заявление", "Уведомление", "Гарантия", "Оборудование", "Товар", "Услуги")}
 _GENERIC_FIRST = {_norm(x) for x in (
     "Торговый", "Торговая", "Торговое", "Производственная", "Производственное", "Строительная", "Строительное", "Группа",
     "Компания", "Сервис", "Технологии", "Центр", "Международная", "Международный", "Российская", "Российский", "Первая", "Первый",
@@ -182,12 +194,16 @@ class Anonymizer:
     emails: dict[str, str] = field(default_factory=dict)
     urls: dict[str, str] = field(default_factory=dict)
     originals: set[str] = field(default_factory=set)  # всё найденное: по нему идёт проверка утечек
+    common: Counter = field(default_factory=Counter, repr=False)  # строчные слова корпуса: так отличаем фамилию от обычного слова
+    pruned: list = field(default_factory=list, repr=False)  # что отсеяли как «не фамилию» (показываем юристу)
     _compiled: list | None = field(default=None, repr=False)
     _fake_set: set = field(default_factory=set, repr=False)
 
     # ------------------------------------------------------------------ обучение
     def learn(self, text: str) -> None:
         self._compiled = None
+        for w in _LOWER_WORD.findall(text):
+            self.common[w[:5] if len(w) >= 5 else w] += 1
         for m in _ORG_QUOTED.finditer(text):
             self._add_org(m.group("name"))
         for m in _NAME_FOREIGN.finditer(text):
@@ -255,7 +271,10 @@ class Anonymizer:
             p.name = p.name or name
             p.patronymic = p.patronymic or patronymic
             p.surname = p.surname or surname
-        p.female = p.female or bool(re.search(r"(?:овн|евн|ичн)а?$", patronymic) or re.search(r"(?:ова|ева|ина|ая)$", surname))
+        if patronymic:  # отчество надёжнее фамилии: у мужчины в родительном падеже «Иванова» похоже на женское
+            p.female = bool(_PATR_FEMALE.search(patronymic))
+        elif not p.patronymic:
+            p.female = p.female or bool(_SURNAME_FEMALE.search(surname))
         for t in (surname, name, patronymic):
             if t:
                 self.originals.add(t)
@@ -289,6 +308,29 @@ class Anonymizer:
                     picked.append(pool[0])
             p.fake = (picked[0], picked[1], picked[2])
             taken.extend(_prefix(x).casefold() for x in picked)
+
+    def prune(self) -> None:
+        """Убрать «людей», которые на деле обычные слова: «Договор А.Б.» — не фамилия «Договор».
+
+        Отсеиваем только тех, у кого нашлась одна фамилия (без имени и отчества): настоящий ФИО из трёх слов не трогаем.
+        Лишнее обезличивание безвредно, пропущенный человек — утечка, поэтому порог высокий.
+        """
+        keep = []
+        for p in self.persons:
+            if p.name or p.patronymic or not p.surname:
+                keep.append(p)
+                continue
+            w = p.surname.casefold().replace("ё", "е")
+            low = self.common.get(w[:5] if len(w) >= 5 else w, 0)
+            if _norm(p.surname) in _NOT_SURNAME or low >= 3:
+                self.pruned.append(p.surname)
+                if not any(p.surname in q.keys() for q in keep) and not any(p.surname in q.keys() for q in self.persons if q is not p):
+                    self.originals.discard(p.surname)
+                continue
+            keep.append(p)
+        if len(keep) != len(self.persons):
+            self.persons = keep
+            self._compiled = None
 
     def _is_fake(self, value: str) -> bool:
         return value in self._fake_set
@@ -354,11 +396,17 @@ class Anonymizer:
                 out.append((re.compile(rf"(?<![А-ЯЁа-яё]){N}{sep}{P}(?![А-ЯЁа-яё])"), lambda m, b=f_n, c=f_p: f"{b} {c}"))
             if S:
                 out.append((re.compile(rf"(?<![А-ЯЁа-яё]){S}(?![А-ЯЁа-яё])"), lambda m, a=f_s: a))
+            # имя или отчество отдельно («Екатерина, посмотрите»): слабый признак, но всё равно называет человека
+            if N and len(p.name) >= 4:
+                out.append((re.compile(rf"(?<![А-ЯЁа-яё]){N}(?![А-ЯЁа-яё])"), lambda m, b=f_n: b))
+            if P:
+                out.append((re.compile(rf"(?<![А-ЯЁа-яё]){P}(?![А-ЯЁа-яё])"), lambda m, c=f_p: c))
         return out
 
     def _compile(self) -> list:
         if self._compiled is not None:
             return self._compiled
+        self.prune()
         self._assign_fakes()
         pats: list[tuple[re.Pattern, callable]] = []
         by_norm = {_norm(o).rstrip(","): o for o in self.originals}
@@ -779,7 +827,7 @@ def scan_leaks(anon: Anonymizer, path: str) -> list[Leak]:
                         if span.kind in ("name",) and span.repl != s[span.start:span.end]:
                             leaks.append(Leak(name, "найдено ещё раз", s[span.start:span.end][:60]))
                     for m in _LONG_DIGITS.finditer(s):
-                        if m.group(0) not in anon._fake_set:
+                        if m.group(0) not in anon._fake_set and set(m.group(0)) != {"0"}:
                             leaks.append(Leak(name, "длинное число", m.group(0)))
     for author in anon.authors:
         if author in anon.authors.values():

@@ -126,6 +126,8 @@ def cmd_anonymize(a) -> int:
               f"остатков {len(leaks)}" + ("" if not leaks else " — ПРОВЕРЬТЕ:"))
         for lk in leaks[:15]:
             print(f"   {lk}")
+    if anon.pruned:
+        print("Не приняты за фамилии (обычные слова в договоре): " + ", ".join(sorted(set(anon.pruned))))
     if a.map:
         _write(a.map, anon.to_json())
         _write(os.path.splitext(a.map)[0] + ".index.json", json.dumps(index, ensure_ascii=False, indent=1))

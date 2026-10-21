@@ -309,3 +309,43 @@ def test_phone_digits_already_replaced_are_not_replaced_twice(tmp_path):
     anonymize_docx(a, dst, again)  # повторное обезличивание уже обезличенного не меняет его
     assert read_docx(dst).paragraphs[0].segments[0].text == read_docx(again).paragraphs[0].segments[0].text
     assert scan_leaks(a, dst) == []
+
+
+def test_given_name_alone_is_replaced_too(tmp_path):
+    src = _write(tmp_path / "a.docx", p(r("Директор Смирнов Алексей Петрович. Алексей, посмотрите п. 5; Алексею Петровичу направить.")))
+    a = _anon_for(src)
+    dst = str(tmp_path / "o.docx")
+    anonymize_docx(a, src, dst)
+    text = _all_text(dst)
+    assert "Алексе" not in text and "Петрович" not in text
+    assert scan_leaks(a, dst) == []
+
+
+def test_contract_word_before_initials_is_not_a_surname(tmp_path):
+    """«Договор А.Б.» не делает слово «Договор» фамилией: иначе везде появится «к настоящему Морозов»."""
+    body = (p(r("Договор Д.В. подписан сторонами. Приложение Б.С. является неотъемлемой частью.")) +
+            p(r("Стороны подписали настоящий договор. Условия договору соответствуют. Согласно договора, по договору, к договору.")) +
+            p(r("Директор Смирнов Алексей Петрович. Смирнов А.П. принял к настоящему Договору.")))
+    src = _write(tmp_path / "a.docx", body)
+    a = _anon_for(src)
+    dst = str(tmp_path / "o.docx")
+    anonymize_docx(a, src, dst)
+    text = _all_text(dst)
+    assert "к настоящему Договору" in text and "Приложение" in text
+    assert "Смирнов" not in text
+    assert scan_leaks(a, dst) == []
+    assert "Договор" in a.pruned
+
+
+def test_gender_from_inflected_patronymic():
+    a = Anonymizer()
+    a.learn("Договор подписан с Ермаковой Екатериной Юрьевной. Генеральному директору Ивановой Анне Сергеевне.")
+    a.learn("Директору Смирнову Алексею Петровичу и Смирнова Алексея Петровича.")
+    by = {p.surname[:4]: p.female for p in a.persons}
+    assert by["Ерма"] is True and by["Иван"] is True and by["Смир"] is False
+
+
+def test_male_genitive_surname_is_not_female():
+    a = Anonymizer()
+    a.learn("Приказ Иванова Петра Сергеевича об увольнении.")
+    assert a.persons and a.persons[0].female is False
