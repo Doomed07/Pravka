@@ -133,6 +133,16 @@ def _sentences(text: str) -> list[str]:
     return [p for p in parts if p]
 
 
+def _after_spans(text: str, after: str) -> list[tuple[int, int]]:
+    """Где в тексте стоит вставленный фрагмент. Число не должно быть частью другого числа: «5%» не найдётся в «0,5%»."""
+    pat = re.escape(after)
+    if after[0].isdigit():
+        pat = r"(?<!\d)(?<!\d[,.])" + pat
+    if after[-1].isdigit():
+        pat += r"(?!\d)(?![,.]\d)"
+    return [(m.start(), m.end()) for m in re.finditer(pat, text)]
+
+
 def _find_numbers(ch: Change, unit: str, check: dict) -> list[float]:
     """Числа с единицей из итогового текста, которых касается правка."""
     text = ch.context_after or ch.after
@@ -140,11 +150,18 @@ def _find_numbers(ch: Change, unit: str, check: dict) -> list[float]:
         return []
     sel = check.get("context")
     if sel:
+        # ограничение по предложению: если ни одно предложение не подходит, правило к правке не относится
         sents = [s for s in _sentences(text) if re.search(sel, s, re.IGNORECASE)]
-        text_scope = " ".join(sents) if sents else text
+        if not sents:
+            return []
+        text_scope = " ".join(sents)
     else:
         text_scope = text
-    spans = [(m.start(), m.end()) for m in re.finditer(re.escape(ch.after), text_scope)] if ch.after else []
+    spans: list[tuple[int, int]] = []
+    if ch.after:
+        spans = _after_spans(text_scope, ch.after)
+        if not spans:  # изменённое место не в выбранных предложениях или оно часть другого числа («5%» внутри «0,5%»)
+            return []
     rx = re.compile(UNIT_PATTERNS[unit], re.IGNORECASE)
     lead = re.compile(check["lead"], re.IGNORECASE) if check.get("lead") else None
     not_lead = re.compile(check["not_lead"], re.IGNORECASE) if check.get("not_lead") else None
