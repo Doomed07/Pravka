@@ -77,3 +77,52 @@ def test_reordered_clauses_are_reported(tmp_path):
     theirs = p(r("1.1. Раз.")) + p(r("1.3. Три.")) + p(r("1.2. Два."))
     b, t = _docs(tmp_path, base, theirs)
     assert compare_versions(b, t)  # перестановка не должна пройти незамеченной
+
+
+# ---------------------------------------------------------------- накопительный файл: правки контрагента прошлых раундов
+def _cumulative(tmp_path):
+    """Отправленная версия содержит нерешённую правку Admin прошлого раунда и нашу правку; контрагент добавил новую."""
+    old_admin = lambda n: dele("5", n, "Admin") + ins("10", n + 1, "Admin")  # noqa: E731
+    base = (p(r("1.1. Оплата в течение "), old_admin(1), r(" дней.")) +
+            p(r("1.2. Неустойка "), ins("0,1%", 3, "Мы"), r(" в день.")) +
+            p(r("1.3. Срок поставки 7 дней.")))
+    theirs = (p(r("1.1. Оплата в течение "), old_admin(1), r(" дней.")) +
+              p(r("1.2. Неустойка "), ins("0,1%", 3, "Мы"), r(" в день.")) +
+              p(r("1.3. Срок поставки "), dele("7", 4, "Admin"), ins("20", 5, "Admin"), r(" дней.")))
+    b = str(make_docx(tmp_path / "base.docx", base))
+    t = str(make_docx(tmp_path / "theirs.docx", theirs))
+    return b, t
+
+
+def test_pending_changes_of_previous_round_are_carried_not_silent(tmp_path):
+    b, t = _cumulative(tmp_path)
+    ch = compare_versions(read_docx(b), read_docx(t), ["Мы"])
+    assert [c for c in ch if c.source != "tracked"] == []  # ничего «тихого»
+    by_after = {c.after: c for c in ch}
+    assert by_after["10"].detail.get("carried") and "из прошлого раунда" in by_after["10"].flags
+    assert not by_after["20"].detail.get("carried")
+
+
+def test_foreign_author_in_sent_version_is_not_taken_as_ours(tmp_path):
+    from pravki.pipeline import review_files
+    b, t = _cumulative(tmp_path)
+    rv = review_files(t, base_path=b, our_authors=["Мы"])
+    assert any(c.after == "20" and c.author == "Admin" for c in rv.changes)  # новая правка не пропала
+    assert any("не указанные как наши: Admin" in w for w in rv.warnings)
+    assert any("нерешёнными" in w for w in rv.warnings)
+
+
+def test_several_authors_without_explicit_ours_hides_nobody(tmp_path):
+    from pravki.pipeline import review_files
+    b, t = _cumulative(tmp_path)
+    rv = review_files(t, base_path=b)
+    assert any(c.after == "20" for c in rv.changes)
+    assert any("наши авторы не указаны" in w for w in rv.warnings)
+
+
+def test_single_author_of_sent_version_is_still_ours(tmp_path):
+    base = p(r("1.1. Срок "), dele("5", 1, "Мы"), ins("10", 2, "Мы"), r(" дней."))
+    theirs = p(r("1.1. Срок "), dele("5", 1, "Мы"), ins("10", 2, "Мы"), r(" дней."))
+    b = read_docx(str(make_docx(tmp_path / "b.docx", base)))
+    t = read_docx(str(make_docx(tmp_path / "t.docx", theirs)))
+    assert compare_versions(b, t) == []

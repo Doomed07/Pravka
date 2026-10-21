@@ -15,6 +15,8 @@
 5. **Каждый выходной файл заканчивается** «Черновик — требует вашей проверки перед отправкой (draft — needs your review
    before sending)». Продукт не выдаёт окончательных формулировок для внешнего использования.
 6. Порядок в отчёте: изменение сторон и реквизитов, затем возмещение убытков, ограничение ответственности, расторжение.
+7. **Обезличивание.** В облачную сессию попадают только обезличенные файлы и выдержки. Карту замен
+   (`anon_map.json`, `anon_map.index.json`) и список исходных файлов не печатать и не отправлять: в них настоящие данные.
 
 ## Команды
     pip install -r requirements.txt          # Python 3.10+
@@ -23,6 +25,8 @@
     python -m pravki review demo/theirs_tracked.docx --base demo/base.docx \
         --playbook playbooks/services_example.yaml --our-inn 7701234567 --out demo/out
     python -m pravki eval                    # метрики на синтетических договорах
+    python -m pravki anonymize ... --out data/golden/anon --map data/golden/anon_map.json   # см. README «Золотой набор»
+    python -m pravki worksheet --pair "Имя=theirs.docx::base.docx" --out data/golden/anketa.xlsx
 
 ## Как вносить изменения
 * Работа в ветках `feature/...` или `fix/...`, в `main` через pull request; перед коммитом `python -m pytest -q`.

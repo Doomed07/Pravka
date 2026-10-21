@@ -170,3 +170,92 @@ def test_llm_unavailable_keeps_template(case):
 
     rv = review_files(case["paths"]["tracked"], case["paths"]["base"], PB, explainer=Explainer(Broken()), side=side_config(case))
     assert rv.changes and all(c.explanation or c.materiality == "техническая" for c in rv.changes)
+
+
+# ---------------------------------------------------------------- анкета разметки
+def test_worksheet_roundtrip_and_grouping(case, tmp_path):
+    from pravki.worksheet import DECISIONS, SHEET_ROWS, group_changes, load_labels
+
+    out = tmp_path / "a.xlsx"
+    rc = main(["worksheet", "--pair", f"Учебный договор={case['paths']['tracked']}::{case['paths']['base']}", "--out", str(out)])
+    assert rc == 0 and out.exists()
+    wb = load_workbook(out)
+    ws = wb[SHEET_ROWS]
+    assert ws.max_row > 2
+    texts = [c.value for w in wb.worksheets for row in w.iter_rows() for c in row if isinstance(c.value, str)]
+    assert any(DISCLAIMER in t for t in texts)
+    assert any("жёлтые" in t for t in texts if t)  # памятка есть
+    # юрист заполняет: первая строка — тема верна, решение, вторая — тема другая
+    ws.cell(row=2, column=11, value="Да")
+    ws.cell(row=2, column=13, value=DECISIONS[1])
+    ws.cell(row=2, column=14, value="до 5% — уступить")
+    ws.cell(row=3, column=11, value="Нет")
+    ws.cell(row=3, column=12, value="налоги")
+    ws.cell(row=3, column=13, value=DECISIONS[2])
+    wb["Договоры"].cell(row=2, column=5, value="Заказчик")
+    wb.save(out)
+    labels = load_labels(str(out))
+    assert labels[0]["decision"] == DECISIONS[1] and labels[0]["topic"] == labels[0]["topic_program"]
+    assert labels[0]["role"] == "Заказчик" and labels[0]["note"].startswith("до 5%")
+    assert labels[1]["topic"] == "налоги" and labels[1]["topic_ok"] == "Нет"
+    ids = {i for x in labels for i in x["ids"]}
+    rv = review_files(case["paths"]["tracked"], case["paths"]["base"], None)
+    assert ids <= {c.id for c in rv.changes} and len(ids) >= len(labels)
+
+
+def test_worksheet_merges_noise_and_short_fragments(tmp_path):
+    from pravki.worksheet import group_changes
+
+    mk = lambda i, kind, before, after, **kw: Change(id=f"E{i:03d}", kind=kind, before=before, after=after, order=float(i),
+                                                     author=kw.pop("author", "Контрагент"), **kw)
+    changes = [
+        mk(1, "insert", "", ", но не позднее", clause="3.2", paragraph_index=5, topic="порядок и сроки оплаты"),
+        mk(2, "insert", "", "апреля 2026", clause="3.2", paragraph_index=5, topic="порядок и сроки оплаты"),
+        mk(3, "insert", "", "Подрядчик не отвечает за утрату оборудования после истечения срока приёмки работ, установленного договором",
+           clause="4.1", paragraph_index=9, topic="ограничение ответственности"),
+        mk(4, "insert", "", "Ответственность ограничена реальным ущербом без упущенной выгоды и без штрафных санкций вообще",
+           clause="4.1", paragraph_index=9, topic="ограничение ответственности"),
+    ] + [mk(10 + i, "delete", "[разрыв абзаца]", "", clause="10", paragraph_index=30 + i, topic="прочее", flags=["склейка абзацев"])
+         for i in range(4)] + [
+        mk(20, "delete", ", офис 1", "", clause="10", paragraph_index=40, topic="прочее"),
+        mk(21, "replace", "Тел. 1", "Тел. 2", clause="10", paragraph_index=41, topic="прочее"),
+        mk(22, "comment", "абзац", "ок", clause="3.2", paragraph_index=5, topic="порядок и сроки оплаты"),
+        mk(23, "insert", "", "наше", author="Мы", clause="1", paragraph_index=1),
+    ]
+    rows = group_changes(changes, "X")
+    by_ids = {tuple(r.ids) for r in rows}
+    assert ("E001", "E002") in by_ids  # короткие обрывки одного абзаца — одна строка
+    assert ("E003",) in by_ids and ("E004",) in by_ids  # длинные правки одного абзаца — разные мысли
+    noise = [r for r in rows if "склейка абзацев" in r.flags]
+    assert len(noise) == 1 and noise[0].grouped == 4
+    assert ("E020", "E021") in by_ids  # мелкие правки реквизитов вне тем — вместе
+    assert ("E022",) in by_ids  # комментарий всегда отдельно
+    assert not any("E023" in r.ids for r in rows)  # наши правки в анкету не идут
+
+
+def test_worksheet_never_writes_formulas(tmp_path):
+    from pravki.worksheet import Row, build_worksheet
+
+    row = Row("X", "1", "h", ["вставка"], "", "=HYPERLINK(\"http://evil\",\"x\")", "=1+1", [], "прочее", ["E001"])
+    build_worksheet([row], str(tmp_path / "w.xlsx"))
+    ws = load_workbook(tmp_path / "w.xlsx")["Разметка"]
+    assert ws["G2"].data_type == "s" and ws["G2"].value.startswith("=HYPERLINK")
+
+
+def test_positions_sheet_roundtrip(tmp_path):
+    from pravki.worksheet import Row, add_positions_sheet, build_worksheet, load_positions, SHEET_POSITIONS
+
+    path = str(tmp_path / "w.xlsx")
+    build_worksheet([Row("X", "1", "h", ["вставка"], "", "текст", "абзац", [], "прочее", ["E001"])], path)
+    n = add_positions_sheet(path, [{"role": "Заказчик", "topic": "неустойка и штрафы", "position": "=1+1 не более 10%",
+                                    "evidence": "doc07 п.5.2", "docs": "1", "confidence": "средняя"}])
+    assert n == 1
+    wb = load_workbook(path)
+    assert SHEET_POSITIONS in wb.sheetnames and wb[SHEET_POSITIONS]["D2"].data_type == "s"
+    wb[SHEET_POSITIONS]["H2"] = "Частично"
+    wb[SHEET_POSITIONS]["I2"] = "до 5%"
+    wb.save(path)
+    got = load_positions(path)
+    assert got[0]["ok"] == "Частично" and got[0]["limit"] == "до 5%" and got[0]["topic"] == "неустойка и штрафы"
+    texts = [c.value for row in wb["Памятка"].iter_rows() for c in row if isinstance(c.value, str)]
+    assert any("Позиции (черновик)" in t for t in texts)
