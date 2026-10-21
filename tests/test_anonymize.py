@@ -257,3 +257,55 @@ def test_cli_anonymizes_a_set_with_one_map(tmp_path, capsys):
     out2 = tmp_path / "out2"
     assert main(["anonymize", s1, "--out", str(out2), "--map", str(mp)]) == 0
     assert read_docx(str(out2 / "doc01.docx")).paragraphs[0].segments[0].text == first
+
+
+def test_street_after_name_building_numbers_and_postal_code(tmp_path):
+    src = _write(tmp_path / "a.docx", p(r("Юридический адрес: 123098, Москва г., Маршала Василевского ул., д.7, корп. 1, кв. 32")) +
+                 p(r("1.1. Передать товар в течение 5 дней по пункту д. 3 приложения.")))
+    a = _anon_for(src)
+    dst = str(tmp_path / "o.docx")
+    anonymize_docx(a, src, dst)
+    text = " ".join("".join(s.text for s in x.segments) for x in read_docx(dst).paragraphs)
+    assert "Василев" not in text and "123098" not in text and "кв. 32" not in text and "д.7" not in text
+    assert "Москва" in text  # город остаётся
+    assert "в течение 5 дней" in text and "д. 3 приложения" in text  # вне адреса ничего не трогаем
+
+
+def test_org_name_in_different_case_is_replaced_everywhere(tmp_path):
+    src = _write(tmp_path / "a.docx", p(r("ООО «КВАДРАТ РЕСУРС» и ООО «Квадрат ресурс» подписали. Квадрат просит ускорить.")) +
+                 p(r("Центральный банк России не изменился, а портал остался порталом.")))
+    a = _anon_for(src)
+    dst = str(tmp_path / "o.docx")
+    anonymize_docx(a, src, dst)
+    text = " ".join("".join(s.text for s in x.segments) for x in read_docx(dst).paragraphs)
+    assert "КВАДРАТ" not in text.upper().replace("ОРГАНИЗАЦИЯ", "") and "Организация-1" in text
+    assert "Центральный банк России" in text and "портал" in text  # обычные слова не портим
+
+
+def test_role_in_quotes_is_not_an_organization(tmp_path):
+    src = _write(tmp_path / "a.docx", p(r("ООО «Ромашка», именуемое в дальнейшем «Перевозчик», и Компания «Нептун» заключили договор. «___» месяца.")))
+    a = _anon_for(src)
+    assert "перевозчик" not in a.orgs and "___" not in " ".join(a.orgs) and "нептун" in a.orgs
+
+
+def test_field_codes_keep_bookmark_names(tmp_path):
+    body = ('<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc227125846 \\h </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r><w:bookmarkStart w:id="1" w:name="_Toc227125846"/><w:r><w:t>Раздел</w:t></w:r></w:p>')
+    src = _write(tmp_path / "a.docx", body)
+    a = _anon_for(src)
+    dst = str(tmp_path / "o.docx")
+    anonymize_docx(a, src, dst)
+    xml = _all_text(dst)
+    assert xml.count("_Toc227125846") == 2  # ссылка в поле и закладка совпадают
+    assert scan_leaks(a, dst) == []
+
+
+def test_phone_digits_already_replaced_are_not_replaced_twice(tmp_path):
+    src = _write(tmp_path / "a.docx", p(r("Тел.: +7 (916) 123-45-67, +7 (916) 765-43-21; e-mail: a@b.ru")))
+    a = _anon_for(src)
+    dst = str(tmp_path / "o.docx")
+    anonymize_docx(a, src, dst)
+    again = str(tmp_path / "o2.docx")
+    anonymize_docx(a, dst, again)  # повторное обезличивание уже обезличенного не меняет его
+    assert read_docx(dst).paragraphs[0].segments[0].text == read_docx(again).paragraphs[0].segments[0].text
+    assert scan_leaks(a, dst) == []

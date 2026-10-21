@@ -35,14 +35,14 @@ from dataclasses import dataclass, field
 from lxml import etree
 
 from .docx_reader import MAX_PART, W, DocxError, q
-from .parties import _LEGAL, _NAME_FOREIGN
+from .parties import _LEGAL, _NAME_FOREIGN, is_known_role, is_numbered_role
 
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
-TEXT_PARTS = re.compile(r"^word/(document|comments|footnotes|endnotes|header\d*|footer\d*)\.xml$")
+TEXT_PARTS = re.compile(r"^word/(document|comments\w*|footnotes|endnotes|header\d*|footer\d*)\.xml$")
 PEOPLE_PARTS = re.compile(r"^word/people\w*\.xml$")
 DROP_PREFIXES = ("customXml/", "docProps/thumbnail", "docProps/custom.xml")
 PNG_1X1 = bytes.fromhex(
@@ -98,6 +98,10 @@ _ADDRESS_HINT = re.compile(r"(?i)\bг\.|\bул\.|улица|\bд\.|\bофис|\b
 _STREET = re.compile(
     r"(?i:\b(?:ул\.|улица|пр-т|просп\.|проспект|пер\.|переулок|ш\.|шоссе|наб\.|набережная|б-р|бульвар|пл\.|площадь|проезд|"
     r"мкр\.?|микрорайон))\s*(?P<n>[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ0-9][а-яё0-9\-]*){0,2})")
+_ADDRESS_CONTEXT = re.compile(r"(?i)\bг\.|город|\bул\.|улиц|проспект|\bпр-т|адрес|област|шоссе|переул|бульвар|(?<!\d)\d{6}(?!\d)")
+_STREET_POST = re.compile(
+    r"(?P<n>[А-ЯЁ][а-яё\-]+(?:\s+[А-ЯЁ][а-яё\-]+){0,2})\s+(?i:ул\.|улица|пр-т|просп\.|проспект|пер\.|переулок|ш\.|шоссе|наб\.|набережная|б-р|бульвар|пл\.|площадь)")
+_BUILDING = re.compile(r"(?i:\b(?:д\.|дом|корп\.|корпус|кв\.|квартира|оф\.|офис|пом\.|помещение|стр\.|строение))\s*№?\s*(?P<n>\d[\w./\-]*)")
 _POSTAL = re.compile(r"(?<![\d])\d{6}(?![\d])")
 _DIGIT_RUN = re.compile(r"\d{2,}")
 
@@ -110,6 +114,8 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").casefold().replace("ё", "е")).strip()
 
 
+_NOT_ORG = {_norm(x) for x in ("Компания", "Общество", "Организация", "Заказчик", "Исполнитель", "Стороны", "Договор", "Предприятие",
+                               "Организатор", "Участник", "Оператор", "Клиент", "Партнёр", "Партнер", "Агент", "Принципал")}
 _GENERIC_FIRST = {_norm(x) for x in (
     "Торговый", "Торговая", "Торговое", "Производственная", "Производственное", "Строительная", "Строительное", "Группа",
     "Компания", "Сервис", "Технологии", "Центр", "Международная", "Международный", "Российская", "Российский", "Первая", "Первый",
@@ -200,10 +206,15 @@ class Anonymizer:
             self.originals.add(m.group(0).rstrip(".,;"))
 
     def _add_org(self, name: str) -> None:
-        name = re.sub(r"\s+", " ", name).strip()
+        name = re.sub(r"\s+", " ", name.split("«")[-1]).strip()  # «Компания «Тензор»» → Тензор
         key = _norm(name)
-        if len(key) < 2 or key in self.orgs or key.startswith(("организация-", "foreign ")):
+        if key in self.orgs:
+            self.originals.add(name)  # ещё один вариант написания (регистр)
             return
+        if len(key) < 2 or key.startswith(("организация-", "foreign ")) or not re.search(r"[A-Za-zА-Яа-яЁё]", name):
+            return
+        if is_known_role(name) or is_numbered_role(name) or key in _NOT_ORG or set(key) <= {"0", " "}:
+            return  # роль («Перевозчик», «Сторона 1») — часть условий, а не название
         repl = f"Организация-{len(set(self.orgs.values())) + 1}"
         self.orgs[key] = repl
         self.originals.add(name)
@@ -300,10 +311,13 @@ class Anonymizer:
             else:
                 out.append(ch)
         res = "".join(out)
+        if set(orig) <= {"0", " ", "-"}:
+            return orig
         if res == orig:  # цифры не должны совпасть с настоящими
             res = "".join(str((int(c) + 1) % 10) if c.isdigit() else c for c in orig)
         self.digits[orig] = res
         self._fake_set.add(res)
+        self._fake_set.update(re.findall(r"\d+", res))
         self.originals.add(orig)
         return res
 
@@ -350,12 +364,20 @@ class Anonymizer:
         by_norm = {_norm(o).rstrip(","): o for o in self.originals}
         for key, repl in sorted(self.foreign.items(), key=lambda kv: -len(kv[0])):
             pats.append((re.compile(r"(?<![A-Za-z])" + _flex(by_norm.get(key, key)), re.IGNORECASE), lambda m, r=repl: r))
+        variants: dict[str, set[str]] = {}
+        for o in self.originals:
+            variants.setdefault(_norm(o).rstrip(","), set()).add(o)
         for key, repl in sorted(self.orgs.items(), key=lambda kv: -len(kv[0])):
-            orig = by_norm.get(key, key)
-            pats.append((re.compile(r"(?<![А-ЯЁа-яёA-Za-z])(?:" + _flex(orig) + "|" + _flex(orig.upper()) + r")(?![А-ЯЁа-яёA-Za-z])"),
-                         lambda m, r=repl: r))
+            vs = variants.get(key) or {key}
+            sample = max(vs, key=len)
+            tail = r"[а-яё]{0,3}" if sample[-1:].lower() in "абвгдеёжзийклмнопрстуфхцчшщъыьэюя" else ""
+            if " " in key:  # несколько слов: регистр не важен
+                body, flags = _flex(sample), re.IGNORECASE
+            else:  # одно слово может быть и обычным словом («портал»): только встретившиеся написания
+                body, flags = "|".join(_flex(x) for x in sorted({y for v in vs for y in (v, v.capitalize(), v.upper())}, key=len, reverse=True)), 0
+            pats.append((re.compile(r"(?<![А-ЯЁа-яёA-Za-z])(?:" + body + r")" + tail + r"(?![А-ЯЁа-яёA-Za-z])", flags), lambda m, r=repl: r))
         for term, repl in sorted(self.terms.items(), key=lambda kv: -len(kv[0])):
-            pats.append((re.compile(r"(?<![А-ЯЁа-яёA-Za-z])(?:" + _flex(term) + "|" + _flex(term.upper()) + r")(?![А-ЯЁа-яёA-Za-z])"),
+            pats.append((re.compile(r"(?<![А-ЯЁа-яёA-Za-z])(?:" + _flex(term) + r")[а-яё]{0,3}(?![А-ЯЁа-яёA-Za-z])", re.IGNORECASE),
                          lambda m, r=repl: r))
         pats.extend(self._person_patterns())
         pats.append((_EMAIL, lambda m: self._fake_email(m.group(0))))
@@ -364,12 +386,14 @@ class Anonymizer:
         self._compiled = pats
         return pats
 
-    def find_spans(self, text: str) -> list[Span]:
+    def find_spans(self, text: str, names_only: bool = False) -> list[Span]:
         spans: list[Span] = []
         for rx, fn in self._compile():
             for m in rx.finditer(text):
                 if m.end() > m.start():
                     spans.append(Span(m.start(), m.end(), fn(m), "name"))
+        if names_only:
+            return self._pick(spans)
         for m in _LABELED_ID.finditer(text):
             spans.append(Span(m.start("d"), m.end("d"), self._fake_digits(m.group("d")), "id"))
         for m in _LONG_DIGITS.finditer(text):
@@ -385,9 +409,18 @@ class Anonymizer:
                     spans.append(Span(chain.start() + d.start(), chain.start() + d.end(), self._fake_digits(d.group(0)), "phone"))
         for m in _STREET.finditer(text):
             spans.append(Span(m.start("n"), m.end("n"), "Образцовая", "address"))
+        for m in _STREET_POST.finditer(text):
+            spans.append(Span(m.start("n"), m.end("n"), "Образцовая", "address"))
+        if _ADDRESS_CONTEXT.search(text):
+            for m in _BUILDING.finditer(text):
+                spans.append(Span(m.start("n"), m.end("n"), "1", "address"))
         if _ADDRESS_HINT.search(text):
             for m in _POSTAL.finditer(text):
                 spans.append(Span(m.start(), m.end(), "000000", "address"))
+        return self._pick(spans)
+
+    @staticmethod
+    def _pick(spans: list[Span]) -> list[Span]:
         spans.sort(key=lambda s: (s.start, -(s.end - s.start)))
         chosen: list[Span] = []
         end = -1
@@ -432,6 +465,8 @@ class Anonymizer:
         a.digits, a.emails, a.urls = d.get("digits", {}), d.get("emails", {}), d.get("urls", {})
         a.originals = set(d.get("originals", []))
         a._fake_set = set(a.digits.values())
+        for v in list(a._fake_set):
+            a._fake_set.update(re.findall(r"\d+", v))
         for p in d.get("persons", []):
             a.persons.append(Person(p["surname"], p["name"], p["patronymic"], p.get("female", False), tuple(p.get("fake", ("", "", "")))))
         return a
@@ -502,7 +537,7 @@ def learn_docx(anon: Anonymizer, path: str) -> None:
                 anon.learn(n.text)
 
 
-def _apply_nodes(anon: Anonymizer, nodes: list) -> int:
+def _apply_nodes(anon: Anonymizer, nodes: list, names_only: bool = False) -> int:
     texts = [n.text or "" for n in nodes]
     if not any(texts):
         return 0
@@ -511,7 +546,7 @@ def _apply_nodes(anon: Anonymizer, nodes: list) -> int:
         starts.append(pos)
         pos += len(t)
     full = "".join(texts)
-    spans = anon.find_spans(full)
+    spans = anon.find_spans(full, names_only)
     for s in reversed(spans):
         first = True
         for i, t in enumerate(texts):
@@ -538,7 +573,7 @@ def _anon_text_part(anon: Anonymizer, root) -> int:
         for nodes in _streams(p):
             count += _apply_nodes(anon, nodes)
     for n in root.iter(q("instrText")):
-        count += _apply_nodes(anon, [n])
+        count += _apply_nodes(anon, [n], names_only=True)
     for el in root.iter():
         new_author = ""
         for attr in list(el.attrib):
@@ -717,8 +752,7 @@ def scan_leaks(anon: Anonymizer, path: str) -> list[Leak]:
     for name, data in parts.items():
         raw = data
         for t in needles:
-            low = t.lower()
-            for form in _search_forms(t) + _search_forms(low):
+            for form in _search_forms(t):
                 if form in raw:
                     leaks.append(Leak(name, "исходное значение", t[:60]))
                     break
@@ -728,7 +762,7 @@ def scan_leaks(anon: Anonymizer, path: str) -> list[Leak]:
                 if rx.search(decoded):
                     leaks.append(Leak(name, "имя или фамилия", t))
         if name.endswith((".xml", ".rels")):
-            text = data.decode("utf-8", "ignore")
+            text = re.sub(r'xmlns(?::\w+)?="[^"]*"', "", data.decode("utf-8", "ignore"))
             for m in _EMAIL.finditer(text):
                 if not m.group(0).endswith("@example.com"):
                     leaks.append(Leak(name, "e-mail", m.group(0)))
