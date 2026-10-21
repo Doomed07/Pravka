@@ -16,6 +16,7 @@ from .pipeline import DISCLAIMER, review_files
 from .playbook import PlaybookError, load_playbook
 from .report import render_html, render_xlsx, write_json
 from .synth import generate_case
+from .worksheet import build_worksheet, group_changes, load_labels
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLAYBOOK_DIR = os.path.join(os.path.dirname(HERE), "playbooks")
@@ -144,6 +145,51 @@ def cmd_anonymize(a) -> int:
     return 4 if bad else 0
 
 
+def cmd_worksheet(a) -> int:
+    """Анкета разметки: правки контрагента из одного или нескольких раундов → xlsx для юриста."""
+    from .docx_reader import read_docx, view_paragraphs
+    from .parties import parse_parties
+
+    rows, contracts = [], []
+    kinds = _pairs(a.kind, "--kind")
+    for spec in a.pair:
+        if "=" not in spec:
+            raise DocxError(f"--pair: ожидается «Название=версия_контрагента.docx[:наша_версия.docx]», получено «{spec}»")
+        name, files = spec.split("=", 1)
+        theirs, _, base = files.partition("::")
+        rv = review_files(theirs, base or None, None, our_authors=a.our_author, ordering="doc")
+        rows += group_changes(rv.changes, name.strip())
+        try:
+            text = "\n".join(t for _, t in view_paragraphs(read_docx(theirs), "accepted"))
+            ps = [p for p in parse_parties(text) if p.name]
+            seen, parties = set(), []
+            for p in ps:
+                if (p.role, p.name) not in seen:
+                    seen.add((p.role, p.name))
+                    parties.append(f"{p.role}: {p.name}")
+            parties_txt = "; ".join(parties[:4])
+        except DocxError:
+            parties_txt = ""
+        c = rv.counts()
+        contracts.append({"name": name.strip(), "kind": kinds.get(name.strip(), ""), "parties": parties_txt,
+                          "note": ("сравнение с нашей версией; " if base else "без нашей версии; ") +
+                                  f"правок {c['всего']}, комментариев {c['комментарии']}, тихих {c['тихие правки']}"})
+    n = build_worksheet(rows, a.out, contracts)
+    print(f"Анкета: {n} строк → {a.out}")
+    print(DISCLAIMER)
+    return 0
+
+
+def cmd_labels(a) -> int:
+    labels = load_labels(a.xlsx)
+    filled = [x for x in labels if x["decision"] or x["topic_ok"]]
+    text = json.dumps(labels, ensure_ascii=False, indent=1)
+    if a.out:
+        _write(a.out, text)
+    print(f"Строк в анкете: {len(labels)}, размечено: {len(filled)}" + (f" → {a.out}" if a.out else ""))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="pravki", description="Разбор правок контрагента в договоре (docx)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -194,6 +240,19 @@ def build_parser() -> argparse.ArgumentParser:
     z.add_argument("--prefix", default="doc", help="начало имени обезличенных файлов (имена исходных не сохраняются)")
     z.add_argument("--residual", type=int, nargs="?", const=60, default=0, help="показать слова, которые могли остаться")
     z.set_defaults(fn=cmd_anonymize)
+
+    w = sub.add_parser("worksheet", help="анкета для разметки правок (xlsx), чтобы юрист указал тему и решение")
+    w.add_argument("--pair", action="append", required=True,
+                   help="«Название=версия_контрагента.docx::наша_версия.docx» (наша версия необязательна; можно несколько раз)")
+    w.add_argument("--our-author", action="append", default=[], help="автор наших правок (можно несколько раз)")
+    w.add_argument("--kind", action="append", default=[], help="«Название=вид договора» для листа «Договоры»")
+    w.add_argument("--out", required=True, help="куда записать xlsx")
+    w.set_defaults(fn=cmd_worksheet)
+
+    lb = sub.add_parser("labels", help="прочитать заполненную анкету и сохранить ответы юриста в json")
+    lb.add_argument("xlsx")
+    lb.add_argument("--out")
+    lb.set_defaults(fn=cmd_labels)
 
     s = sub.add_parser("synth", help="создать пример: наша версия + версия контрагента с правками")
     s.add_argument("out")

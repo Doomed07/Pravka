@@ -11,6 +11,8 @@ company*.yaml
 !tests/fixtures/company*.yaml
 *.docx
 !tests/fixtures/**/*.docx
+*.xlsx
+!tests/fixtures/**/*.xlsx
 demo/
 .env
 
