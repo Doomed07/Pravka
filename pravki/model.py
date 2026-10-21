@@ -16,6 +16,10 @@ class Segment:
     author: str = ""
     date: str = ""
     move: bool = False  # True для перемещений (moveFrom / moveTo)
+    # Для удаления внутри чужой или своей вставки (w:ins > w:del): автор вставки; иначе None.
+    # Текст вставил один автор, а удалил другой: при «отклонить все» он вернётся, только если
+    # вставка наша, а удаление чужое.
+    ins_author: str | None = None
 
 
 @dataclass
