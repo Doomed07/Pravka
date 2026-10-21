@@ -16,7 +16,7 @@ from .pipeline import DISCLAIMER, review_files
 from .playbook import PlaybookError, load_playbook
 from .report import render_html, render_xlsx, write_json
 from .synth import generate_case
-from .worksheet import build_worksheet, group_changes, load_labels
+from .worksheet import add_positions_sheet, build_worksheet, group_changes, load_labels
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLAYBOOK_DIR = os.path.join(os.path.dirname(HERE), "playbooks")
@@ -176,6 +176,10 @@ def cmd_worksheet(a) -> int:
                                   f"правок {c['всего']}, комментариев {c['комментарии']}, тихих {c['тихие правки']}"})
     n = build_worksheet(rows, a.out, contracts)
     print(f"Анкета: {n} строк → {a.out}")
+    if a.positions:
+        with open(a.positions, encoding="utf-8") as fh:
+            m = add_positions_sheet(a.out, json.load(fh))
+        print(f"Лист «Позиции (черновик)»: {m} строк")
     print(DISCLAIMER)
     return 0
 
@@ -246,6 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="«Название=версия_контрагента.docx::наша_версия.docx» (наша версия необязательна; можно несколько раз)")
     w.add_argument("--our-author", action="append", default=[], help="автор наших правок (можно несколько раз)")
     w.add_argument("--kind", action="append", default=[], help="«Название=вид договора» для листа «Договоры»")
+    w.add_argument("--positions", help="json с выводами из ваших правок: добавит лист «Позиции (черновик)»")
     w.add_argument("--out", required=True, help="куда записать xlsx")
     w.set_defaults(fn=cmd_worksheet)
 

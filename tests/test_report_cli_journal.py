@@ -240,3 +240,22 @@ def test_worksheet_never_writes_formulas(tmp_path):
     build_worksheet([row], str(tmp_path / "w.xlsx"))
     ws = load_workbook(tmp_path / "w.xlsx")["Разметка"]
     assert ws["G2"].data_type == "s" and ws["G2"].value.startswith("=HYPERLINK")
+
+
+def test_positions_sheet_roundtrip(tmp_path):
+    from pravki.worksheet import Row, add_positions_sheet, build_worksheet, load_positions, SHEET_POSITIONS
+
+    path = str(tmp_path / "w.xlsx")
+    build_worksheet([Row("X", "1", "h", ["вставка"], "", "текст", "абзац", [], "прочее", ["E001"])], path)
+    n = add_positions_sheet(path, [{"role": "Заказчик", "topic": "неустойка и штрафы", "position": "=1+1 не более 10%",
+                                    "evidence": "doc07 п.5.2", "docs": "1", "confidence": "средняя"}])
+    assert n == 1
+    wb = load_workbook(path)
+    assert SHEET_POSITIONS in wb.sheetnames and wb[SHEET_POSITIONS]["D2"].data_type == "s"
+    wb[SHEET_POSITIONS]["H2"] = "Частично"
+    wb[SHEET_POSITIONS]["I2"] = "до 5%"
+    wb.save(path)
+    got = load_positions(path)
+    assert got[0]["ok"] == "Частично" and got[0]["limit"] == "до 5%" and got[0]["topic"] == "неустойка и штрафы"
+    texts = [c.value for row in wb["Памятка"].iter_rows() for c in row if isinstance(c.value, str)]
+    assert any("Позиции (черновик)" in t for t in texts)

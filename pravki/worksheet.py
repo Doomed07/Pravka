@@ -286,3 +286,73 @@ def load_labels(path: str) -> list[dict]:
             "decision": (row[12] or "").strip(), "note": (row[13] or "").strip(),
         })
     return out
+
+
+SHEET_POSITIONS = "Позиции (черновик)"
+POS_HEADERS = ["№", "Роль (проверьте)", "Тема", "Что вы делаете в своих правках (мой вывод)", "Где видно", "Договоров",
+               "Уверенность", "Верно?", "Допустимая граница / поправка", "Комментарий"]
+POS_WIDTHS = [5, 16, 24, 70, 40, 10, 13, 12, 40, 30]
+POS_OK = ["Да", "Нет", "Частично"]
+
+
+def add_positions_sheet(path: str, positions: list[dict]) -> int:
+    """Добавить лист «Позиции (черновик)»: выводы из собственных правок юриста, которые он подтверждает или правит.
+
+    positions: [{role, topic, position, evidence, docs, confidence}]. Это гипотезы, а не правила: в плейбук они
+    попадают только после ответа «Да» или поправки юриста.
+    """
+    wb = load_workbook(path)
+    if SHEET_POSITIONS in wb.sheetnames:
+        del wb[SHEET_POSITIONS]
+    ws = wb.create_sheet(SHEET_POSITIONS, index=wb.sheetnames.index(SHEET_ROWS) + 1 if SHEET_ROWS in wb.sheetnames else None)
+    f_base, f_bold = Font(name="Arial", size=10), Font(name="Arial", size=10, bold=True)
+    f_head = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    fill_head, fill_in = PatternFill("solid", fgColor="548235"), PatternFill("solid", fgColor="FFF2CC")
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top")
+    if SHEET_GUIDE in wb.sheetnames:
+        g = wb[SHEET_GUIDE]
+        row = g.max_row + 1
+        for k, text in enumerate(("", "Лист «Позиции (черновик)»: мои выводы из ваших собственных правок (не из правок контрагента). "
+                                       "Для каждой строки ответьте «Верно?» (Да / Нет / Частично), при необходимости впишите допустимую границу. "
+                                       "«Где видно» — номер обезличенного файла и пункт; список «файл → исходный договор» лежит у вас в data/golden/anon_index.txt."), 0):
+            c = g.cell(row=row + k, column=1, value=text)
+            c.font, c.alignment = f_base, Alignment(wrap_text=True, vertical="top")
+        g.cell(row=row + 2, column=1, value=DISCLAIMER).font = f_bold
+    for j, h in enumerate(POS_HEADERS, 1):
+        c = ws.cell(row=1, column=j, value=h)
+        c.font, c.fill, c.border = f_head, fill_head, border
+        c.alignment = Alignment(wrap_text=True, vertical="center")
+    for i, p in enumerate(positions, 2):
+        vals = [i - 1, p.get("role", ""), p.get("topic", ""), p.get("position", ""), p.get("evidence", ""),
+                p.get("docs", ""), p.get("confidence", ""), "", "", ""]
+        for j, v in enumerate(vals, 1):
+            c = _put(ws, i, j, v)
+            c.font, c.border, c.alignment = f_base, border, wrap
+            if j >= 8:
+                c.fill = fill_in
+        ws.row_dimensions[i].height = min(409, 14 * (int(max(len(str(vals[3])) / 70, len(str(vals[4])) / 40, 1)) + 2))
+    for j, w in enumerate(POS_WIDTHS, 1):
+        ws.column_dimensions[get_column_letter(j)].width = w
+    last = max(len(positions) + 1, 2)
+    dv = DataValidation(type="list", formula1='"' + ",".join(POS_OK) + '"', allow_blank=True)
+    ws.add_data_validation(dv)
+    dv.add(f"H2:H{last}")
+    ws.freeze_panes = "D2"
+    ws.cell(row=last + 2, column=2, value="Это гипотезы по вашим правкам в обезличенных договорах, а не правила. В плейбук попадёт только то, "
+                                          "что вы подтвердили («Да») или поправили.").font = f_base
+    ws.cell(row=last + 3, column=2, value=DISCLAIMER).font = f_bold
+    wb.save(path)
+    return len(positions)
+
+
+def load_positions(path: str) -> list[dict]:
+    ws = load_workbook(path, data_only=True)[SHEET_POSITIONS]
+    out = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or not row[0] or not isinstance(row[0], int):
+            continue
+        out.append({"n": row[0], "role": row[1] or "", "topic": row[2] or "", "position": row[3] or "", "evidence": row[4] or "",
+                    "confidence": row[6] or "", "ok": (row[7] or "").strip(), "limit": (row[8] or "").strip(), "note": (row[9] or "").strip()})
+    return out
