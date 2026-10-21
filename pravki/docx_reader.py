@@ -232,14 +232,14 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
     segs: list[Segment] = []
     anchors: dict[str, str] = {}
 
-    def add(kind, text, author, date, move):
+    def add(kind, text, author, date, move, ins_by):
         if not text:
             return
         if segs and segs[-1].kind == kind and segs[-1].author == author and segs[-1].date == date \
-                and segs[-1].move == move:
+                and segs[-1].move == move and segs[-1].ins_author == ins_by:
             segs[-1].text += text
         else:
-            segs.append(Segment(kind, text, author, date, move))
+            segs.append(Segment(kind, text, author, date, move, ins_by))
 
     def note_comment(cid):
         if cid is not None and cid not in para.comment_ids:
@@ -247,12 +247,12 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
         if cid is not None:
             comment_para.setdefault(cid, idx)
 
-    def walk(el, kind, author, date, move):
+    def walk(el, kind, author, date, move, ins_by=None):
         for ch in el:
             tag = ch.tag
             if tag == q("r"):
                 text = _run_text(ch)
-                add(kind, text, author, date, move)
+                add(kind, text, author, date, move, ins_by)
                 if text:
                     for buf in open_comments.values():
                         buf.append(text)
@@ -263,7 +263,9 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
                 walk(ch, "ins", a, d, tag == q("moveTo"))
             elif tag in (q("del"), q("moveFrom")):
                 a, d = _attrs(ch)
-                walk(ch, "del", a, d, tag == q("moveFrom"))
+                # удаление внутри вставки: запоминаем, кто вставил текст
+                inner_ins = author if kind == "ins" else ins_by
+                walk(ch, "del", a, d, tag == q("moveFrom"), inner_ins)
             elif tag == q("commentRangeStart"):
                 cid = ch.get(q("id"))
                 if cid is not None:
@@ -274,7 +276,7 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
                 if cid in open_comments:
                     anchors[cid] = "".join(open_comments.pop(cid))
             elif tag in _TRANSPARENT:
-                walk(ch, kind, author, date, move)
+                walk(ch, kind, author, date, move, ins_by)
 
     walk(p, "equal", "", "", False)
     para.segments = segs
@@ -425,6 +427,10 @@ def view_paragraphs(doc: DocxDoc, mode: str, ours: frozenset[str] | set[str] = f
         mine = s.author in ours
         if mode == "accepted":
             return s.kind == "ins"
+        if s.kind == "del" and s.ins_author is not None:
+            # текст вставил один автор, удалил другой: после «отклонить чужое» он есть,
+            # только если вставка наша, а удаление чужое
+            return s.ins_author in ours and not mine
         # rejected: чужие вставки убираем, чужие удаления возвращаем; свои правки принимаем
         if s.kind == "ins":
             return mine

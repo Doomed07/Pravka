@@ -11,7 +11,10 @@
 
 Ограничения (честно):
   * разбираются стороны, описанные в начале договора (до первого пункта) по образцу «…, именуемое в дальнейшем
-    «Роль»» или «(далее – Роль)»; раздел с реквизитами в конце договора (чаще таблицей) не разбирается;
+    «Роль»», «…в дальнейшем Роль» (без кавычек) или «(далее – Роль)»; обозначения «Стороны» и «Договор» ролями не
+    считаются; раздел с реквизитами в конце договора (чаще таблицей) не разбирается;
+  * иностранные наименования распознаются по форме (Ltd, LLC, Inc, GmbH, AG, Corp и т. п.) и по слову «Фирма»,
+    «Компания» с названием в кавычках; если наименование не разобрано в обеих версиях, оно изменением не считается;
   * ИНН и ОГРН учитываются, только если указаны в преамбуле;
   * «Сторона 1» и «Сторона 2» роль не определяют: такие договоры всегда идут на подтверждение юристу.
 """
@@ -44,6 +47,8 @@ _SIDE = {
     "поклажедатель": "поклажедатель", "перевозчик": "перевозчик", "грузоотправитель": "грузоотправитель",
     "грузополучатель": "грузополучатель", "наймодатель": "наймодатель", "наниматель": "наниматель",
 }
+# Обозначения, которые не роли: «…, именуемые в дальнейшем Стороны», «(далее – Договор)».
+_COLLECTIVE = {"стороны", "договор", "соглашение", "контракт", "сторонами", "сторонам", "участники"}
 _NUMBERED = re.compile(r"^(?:сторона|участник)\s*(?:№\s*)?\d*$")
 
 _LEGAL = (r"(?:Общество\s+с\s+ограниченной\s+ответственностью|Публичное\s+акционерное\s+общество|"
@@ -53,10 +58,20 @@ _LEGAL = (r"(?:Общество\s+с\s+ограниченной\s+ответст
 _NAME_QUOTED = re.compile(_LEGAL + r"[^«\"“,;]{0,40}?[«\"“][^»\"”]{1,80}[»\"”]")
 _NAME_IP = re.compile(r"(?:Индивидуальный\s+предприниматель|ИП)\s+[А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё\.]+){1,2}")
 _NAME_PERSON = re.compile(r"[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+(?:ич|вна|чна|ична|оглы|кызы)\b")
+# Иностранные наименования: «Huawei Technologies Co., Ltd.», «Siemens AG», «Acme Trading LLC».
+_FOREIGN_SUFFIX = (r"(?:Co\.?,?\s*Ltd\.?|Ltd\.?|Limited|LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|GmbH|AG|S\.A\.?|SA|"
+                   r"B\.V\.?|BV|PLC|LLP|SRL|S\.r\.l\.?|Pte\.?(?:\s*Ltd\.?)?|Pty(?:\s*Ltd\.?)?|OY|AB|NV|SAS|SARL|KG|Kft|FZE|FZCO|DMCC|OOO)")
+_NAME_FOREIGN = re.compile(r"(?:[A-Z][\w&'\-]*\.?,?\s+){1,6}" + _FOREIGN_SUFFIX + r"(?![\w])")
+_NAME_COMPANY_WORD = re.compile(r"(?:Компания|Фирма|Корпорация|Фонд|Ассоциация|Банк)\s+[«\"“][^»\"”]{1,80}[»\"”]")
 _LEGAL_WORD = re.compile(r"\b" + _LEGAL + r"\b")
 
-_DEF_QUOTED = re.compile(r"(?:именуем\w+|далее)\s*(?:в\s+дальнейшем\s*)?(?:[-–—]\s*)?[«\"“]([^»\"”]{2,40})[»\"”]", re.IGNORECASE)
-_DEF_PAREN = re.compile(r"\(\s*(?:далее|в\s+дальнейшем)\s*(?:[-–—]\s*)?([А-ЯЁ][а-яё]+(?:\s+[а-яё]+)?)\s*\)")
+_BY_TEXT = r"(?:по\s+тексту\s*)?"
+_DEF_QUOTED = re.compile(r"(?i:именуем\w+|далее)\s*(?i:в\s+дальнейшем\s*)?" + _BY_TEXT + r"(?:[-–—]\s*)?[«\"“]([^»\"”]{2,40})[»\"”]")
+_DEF_PAREN = re.compile(r"\(\s*(?i:далее|в\s+дальнейшем)\s*" + _BY_TEXT + r"(?:[-–—]\s*)?([А-ЯЁ][а-яё]+(?:\s+[а-яё]+)?)\s*\)")
+# Роль без кавычек: «…, именуемое в дальнейшем Продавец, в лице…». Название роли с заглавной буквы, дальше запятая и т. п.
+_DEF_BARE = re.compile(
+    r"(?i:именуем\w+\s+в\s+дальнейшем|именуем\w+|далее)\s*" + _BY_TEXT + r"(?:[-–—]\s*)?([А-ЯЁ][а-яё]+(?:\s+[а-яё]+)?)"
+    r"(?=\s*(?:,|;|\.|\(|$|(?i:в\s+лице|действующ|на\s+основании|с\s+(?:одной|другой)|и\s+[А-ЯЁ])))")
 _SIDE_SPLIT = re.compile(r"\bс\s+(?:одной|другой)\s+стороны\s*,?", re.IGNORECASE)
 _INN = re.compile(r"ИНН\s*[:№]?\s*(\d{10}|\d{12})\b")
 _OGRN = re.compile(r"ОГРН(?:ИП)?\s*[:№]?\s*(\d{13}|\d{15})\b")
@@ -68,7 +83,8 @@ _FORMS = [
     ("открытое акционерное общество", "оао"), ("акционерное общество", "ао"),
     ("индивидуальный предприниматель", "ип"), ("некоммерческая организация", "нко"),
 ]
-_FORM_TOKENS = {"ооо", "пао", "нао", "зао", "оао", "ао", "ип", "нко", "ано", "фгуп", "муп", "гуп", "гбу", "фгбу", "фгбоу", "гк"}
+_FORM_TOKENS = {"ооо", "пао", "нао", "зао", "оао", "ао", "ип", "нко", "ано", "фгуп", "муп", "гуп", "гбу", "фгбу", "фгбоу", "гк",
+                "ltd", "llc", "inc", "gmbh", "ag", "corp", "plc", "limited", "co", "sa", "bv"}
 
 
 class PartiesError(Exception):
@@ -195,7 +211,7 @@ def head_text(doc: DocxDoc, mode: str, ours: set[str] | frozenset[str] = frozens
 
 
 def _find_name(block: str) -> str:
-    for rx in (_NAME_QUOTED, _NAME_IP, _NAME_PERSON):
+    for rx in (_NAME_QUOTED, _NAME_COMPANY_WORD, _NAME_IP, _NAME_FOREIGN, _NAME_PERSON):
         found = list(rx.finditer(block))
         if found:
             return normalize(found[-1].group(0))
@@ -207,9 +223,10 @@ def parse_parties(text: str) -> list[Party]:
     defs: list[tuple[int, int, str]] = []
     for m in _DEF_QUOTED.finditer(text):
         defs.append((m.start(), m.end(), m.group(1)))
-    for m in _DEF_PAREN.finditer(text):
-        if not any(s <= m.start() < e for s, e, _ in defs):
-            defs.append((m.start(), m.end(), m.group(1)))
+    for rx in (_DEF_PAREN, _DEF_BARE):
+        for m in rx.finditer(text):
+            if not any(a <= m.start() < b or m.start() <= a < m.end() for a, b, _ in defs):
+                defs.append((m.start(), m.end(), m.group(1)))
     defs.sort()
     parties: list[Party] = []
     lo = 0  # начало участка текста, относящегося к текущей стороне
@@ -220,13 +237,16 @@ def parse_parties(text: str) -> list[Party]:
             hi, next_lo = m.start(), m.end()
         else:  # без «с одной стороны» берём короткий хвост до следующего наименования
             tail = text[end:min(gap_end, end + 120)]
-            nxt = _LEGAL_WORD.search(tail)
-            hi = end + (nxt.start() if nxt else len(tail))
+            starts = [x.start() for x in (_LEGAL_WORD.search(tail), _NAME_FOREIGN.search(tail)) if x]
+            hi = end + (min(starts) if starts else len(tail))
             next_lo = hi
         before_def = text[lo:end]
         span = text[lo:hi]
         lo = next_lo
-        has_legal = bool(_LEGAL_WORD.search(before_def)) or bool(_NAME_PERSON.search(before_def))
+        has_legal = bool(_LEGAL_WORD.search(before_def) or _NAME_PERSON.search(before_def)
+                         or _NAME_FOREIGN.search(before_def) or _NAME_COMPANY_WORD.search(before_def))
+        if re.sub(r"[«»\"“”]", "", role).strip().casefold().replace("ё", "е") in _COLLECTIVE:
+            continue
         if not (is_known_role(role) or is_numbered_role(role) or has_legal):
             continue
         inn = _INN.search(span)
@@ -365,33 +385,44 @@ def compare_parties(ours: list[Party], theirs: list[Party]) -> list[tuple[str, s
     if len(ours) != len(theirs):
         return [(f"Изменилось число сторон: было {len(ours)}, стало {len(theirs)}.", _parties_text(ours), _parties_text(theirs))]
     used: set[int] = set()
-    for o in ours:
+    matched: set[int] = set()
+    for oi, o in enumerate(ours):
         on = norm_name(o.name)
         j = next((k for k, t in enumerate(theirs) if k not in used and on and norm_name(t.name) == on), None)
         if j is not None:  # та же организация: проверяем роль и реквизиты
             used.add(j)
-            t = theirs[j]
-            if o.side != t.side:
-                out.append((f"Изменились роли сторон: «{o.name}» была «{o.role}», стала «{t.role}». "
-                            "Это меняет смысл всех условий договора.", o.label(), t.label()))
-            elif normalize(o.role).casefold() != normalize(t.role).casefold():
-                out.append((f"Изменено название роли: «{o.role}» → «{t.role}».", o.label(), t.label()))
-            for what, a, b in (("ИНН", o.inn, t.inn), ("ОГРН", o.ogrn, t.ogrn)):
-                if a and b and a != b:
-                    out.append((f"Изменён {what} стороны «{t.role}»: {a} → {b}.", o.label(), t.label()))
-    for o in ours:
-        if any(norm_name(o.name) == norm_name(t.name) and o.name for t in theirs):
+            matched.add(oi)
+            _same_party_checks(o, theirs[j], out)
+    for oi, o in enumerate(ours):
+        if oi in matched:
             continue
         j = next((k for k, t in enumerate(theirs) if k not in used and t.side == o.side), None)
-        if j is not None:  # та же роль, другая организация
-            used.add(j)
-            t = theirs[j]
-            out.append((f"Изменено наименование стороны «{o.role}»: {o.name or 'не указано'} → {t.name or 'не указано'}.",
-                        o.label(), t.label()))
-        else:
+        if j is None:
             out.append((f"Сторона «{o.role}» заменена: {o.label()} отсутствует в версии контрагента.", o.label(),
                         _parties_text(theirs)))
+            continue
+        used.add(j)
+        t = theirs[j]
+        if norm_name(o.name) == norm_name(t.name):
+            # наименование не разобрано в обеих версиях (оба пусты): различить стороны по названию нельзя,
+            # сверяем роль и реквизиты, а пустое наименование изменением не считаем
+            _same_party_checks(o, t, out)
+        else:  # та же роль, другая организация (или наименование пропало)
+            out.append((f"Изменено наименование стороны «{o.role}»: {o.name or 'не указано'} → {t.name or 'не указано'}.",
+                        o.label(), t.label()))
     return out
+
+
+def _same_party_checks(o: Party, t: Party, out: list[tuple[str, str, str]]) -> None:
+    """Одна и та же организация в двух версиях: роль, название роли, ИНН и ОГРН."""
+    if o.side != t.side:
+        out.append((f"Изменились роли сторон: «{o.name or o.role}» была «{o.role}», стала «{t.role}». "
+                    "Это меняет смысл всех условий договора.", o.label(), t.label()))
+    elif normalize(o.role).casefold() != normalize(t.role).casefold():
+        out.append((f"Изменено название роли: «{o.role}» → «{t.role}».", o.label(), t.label()))
+    for what, a, b in (("ИНН", o.inn, t.inn), ("ОГРН", o.ogrn, t.ogrn)):
+        if a and b and a != b:
+            out.append((f"Изменён {what} стороны «{t.role}»: {a} → {b}.", o.label(), t.label()))
 
 
 def party_changes(base: DocxDoc | None, theirs: DocxDoc, ours_authors: set[str], start: int = 1) -> list[Change]:

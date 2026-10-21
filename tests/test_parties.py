@@ -399,3 +399,107 @@ def test_compare_parties_unit():
     assert compare_parties([], a)[0][0].startswith("В нашей версии")
     swapped = [Party("Заказчик", "ООО «А»", "7701234567"), Party("Исполнитель", "АО «Б»", "7702345678")]
     assert any("роли" in w for w, _, _ in compare_parties(a, swapped))
+
+
+# ---------------------------------------------------------------- реальные формулировки: роль без кавычек, иностранные названия
+@pytest.mark.parametrize("text,roles", [
+    ("ООО «Альфа», в лице директора Иванова И.И., действующего на основании Устава, именуемое в дальнейшем Продавец, "
+     "с одной стороны, и ООО «Бета», именуемое в дальнейшем Покупатель, с другой стороны, заключили договор",
+     ["Продавец", "Покупатель"]),
+    ("ООО «Альфа», именуемое в дальнейшем Исполнитель, в лице директора, и ООО «Бета», именуемое в дальнейшем Заказчик, "
+     "в лице директора, заключили договор", ["Исполнитель", "Заказчик"]),
+    ("ООО «Альфа», далее по тексту – Поставщик, с одной стороны, и ООО «Бета», далее по тексту – Покупатель, с другой стороны",
+     ["Поставщик", "Покупатель"]),
+    ("ООО «Альфа» (далее по тексту — Лицензиар) с одной стороны и ООО «Бета» (далее по тексту — Лицензиат) с другой стороны",
+     ["Лицензиар", "Лицензиат"]),
+    ("ООО «Альфа», именуемое в дальнейшем Получающая сторона, с одной стороны, и ООО «Бета», именуемое в дальнейшем "
+     "Раскрывающая сторона, с другой стороны", ["Получающая сторона", "Раскрывающая сторона"]),
+])
+def test_parse_role_without_quotes(text, roles):
+    assert [x.role for x in parse_parties(text)] == roles
+
+
+def test_role_without_quotes_keeps_names_and_inn():
+    ps = parse_parties("ООО «Альфа», ИНН 7701234567, именуемое в дальнейшем Продавец, с одной стороны, и ООО «Бета», "
+                       "ИНН 7702345678, именуемое в дальнейшем Покупатель, с другой стороны")
+    assert [(x.role, x.inn) for x in ps] == [("Продавец", "7701234567"), ("Покупатель", "7702345678")]
+    assert "Альфа" in ps[0].name and "Бета" in ps[1].name
+
+
+@pytest.mark.parametrize("text", [
+    "ООО «Альфа» и ООО «Бета», именуемые в дальнейшем Стороны, заключили договор",
+    "ООО «Альфа» и ООО «Бета», именуемые в дальнейшем «Стороны», заключили договор",
+    "ООО «Альфа» и ООО «Бета» (далее – Стороны) заключили договор",
+])
+def test_collective_name_is_not_a_party(text):
+    assert parse_parties(text) == []
+
+
+@pytest.mark.parametrize("name", [
+    "Huawei Technologies Co., Ltd.", "SIEMENS AG", "Acme Trading LLC", "Global Supplies GmbH", "Northwind Corp.",
+    "Acme Holdings Pte. Ltd.",
+])
+def test_foreign_company_names(name):
+    text = (f"{name}, именуемое в дальнейшем «Поставщик», с одной стороны, и ООО «Бета», именуемое в дальнейшем «Покупатель», "
+            "с другой стороны, заключили договор")
+    ps = parse_parties(text)
+    assert [x.role for x in ps] == ["Поставщик", "Покупатель"]
+    assert ps[0].name.rstrip(".,") == name.rstrip(".,")
+    assert "Бета" in ps[1].name
+
+
+def test_foreign_company_with_unusual_role_is_a_party():
+    text = ("Acme Trading LLC, именуемая в дальнейшем «Дистрибьютор», с одной стороны, и ООО «Бета», именуемое в дальнейшем "
+            "«Производитель», с другой стороны")
+    assert [x.role for x in parse_parties(text)] == ["Дистрибьютор", "Производитель"]
+
+
+def test_company_word_with_quotes_is_a_name():
+    ps = parse_parties("Фирма «Рога и копыта», именуемая в дальнейшем «Продавец», с одной стороны, и ООО «Бета», именуемое "
+                       "в дальнейшем «Покупатель», с другой стороны")
+    assert ps[0].name.startswith("Фирма") and "Рога и копыта" in ps[0].name
+
+
+def test_foreign_company_is_matched_by_profile():
+    ps = parse_parties("Acme Trading LLC, именуемая в дальнейшем «Покупатель», с одной стороны, и ООО «Альфа Софт», "
+                       "именуемое в дальнейшем «Исполнитель», с другой стороны")
+    prof = CompanyProfile(names=["ACME Trading"])
+    assert prof.match(ps[0]) == "name_loose"
+    assert CompanyProfile(names=["Acme Trading LLC"]).match(ps[0]) == "name"
+
+
+def test_side_detected_for_unquoted_role_with_inn(tmp_path):
+    pre = ("Общество с ограниченной ответственностью «Альфа Софт», ИНН 7701234567, именуемое в дальнейшем Исполнитель, "
+           "с одной стороны, и Акционерное общество «Бета Групп», ИНН 7702345678, именуемое в дальнейшем Заказчик, "
+           "с другой стороны, заключили договор")
+    res = check_side("Исполнитель", parse_parties(pre), EXEC)
+    assert res.status == "ok"
+    assert check_side("Заказчик", parse_parties(pre), EXEC).status == "mismatch"
+
+
+# ---------------------------------------------------------------- сверка при пустых наименованиях
+def test_empty_names_in_both_versions_are_not_a_change():
+    a = [Party("Продавец"), Party("Покупатель")]
+    b = [Party("Покупатель"), Party("Продавец")]
+    assert compare_parties(a, b) == []
+
+
+def test_empty_names_still_catch_inn_change():
+    a = [Party("Продавец", inn="7701234567"), Party("Покупатель")]
+    b = [Party("Продавец", inn="7709999999"), Party("Покупатель")]
+    found = compare_parties(a, b)
+    assert len(found) == 1 and "ИНН" in found[0][0]
+
+
+def test_name_vanished_is_flagged():
+    a = [Party("Продавец", "ООО «Альфа»"), Party("Покупатель", "ООО «Бета»")]
+    b = [Party("Продавец"), Party("Покупатель", "ООО «Бета»")]
+    found = compare_parties(a, b)
+    assert len(found) == 1 and "не указано" in found[0][0]
+
+
+def test_empty_names_with_replaced_role_is_flagged():
+    a = [Party("Продавец"), Party("Покупатель")]
+    b = [Party("Продавец"), Party("Арендатор")]
+    found = compare_parties(a, b)
+    assert len(found) == 1 and "заменена" in found[0][0]

@@ -117,3 +117,54 @@ def test_mc_fallback_not_duplicated(tmp_path):
           f'{p(r("Текст в рамке"))}</mc:Choice><mc:Fallback>{p(r("Текст в рамке"))}</mc:Fallback></mc:AlternateContent>')
     doc = read_docx(str(make_docx(tmp_path / "mc.docx", mc)))
     assert len(doc.paragraphs) == 1
+
+
+def _nested(text, ins_author, del_author, n=1):
+    """Текст вставил ins_author, а удалил del_author (как пишет Word: w:ins > w:del)."""
+    return (f'<w:ins w:id="{n}" w:author="{ins_author}" w:date="2026-10-01T00:00:00Z">'
+            f'{dele(text, n + 1, del_author)}</w:ins>')
+
+
+def test_nested_foreign_insertion_deleted_by_third_party_is_gone_everywhere(tmp_path):
+    # контрагент вставил «в течение 5 дней», а затем юрист удалил — текста нет ни там, ни там
+    body = p(r("Оплата "), _nested("в течение 5 дней ", "Они", "Мы"), r("производится по счёту."))
+    doc = read_docx(str(make_docx(tmp_path / "n1.docx", body)))
+    for ours in (set(), {"Мы"}):
+        assert view_paragraphs(doc, "rejected", ours)[0][1] == "Оплата производится по счёту."
+        assert view_paragraphs(doc, "accepted", ours)[0][1] == "Оплата производится по счёту."
+
+
+def test_nested_foreign_insertion_not_reported_as_change(tmp_path):
+    body = p(r("Оплата "), _nested("в течение 5 дней ", "Они", "Они2"), r("производится по счёту."))
+    doc = read_docx(str(make_docx(tmp_path / "n2.docx", body)))
+    assert extract_tracked(doc, ours={"Мы"}) == []
+
+
+def test_nested_whole_paragraph_inserted_and_deleted_gives_no_change(tmp_path):
+    body = p(r("1.1. Остаётся.")) + p(_nested("Новый пункт, который потом убрали.", "Они", "Они2"),
+                                      ppr=f'<w:rPr><w:ins w:id="9" {A}/></w:rPr>')
+    doc = read_docx(str(make_docx(tmp_path / "n3.docx", body)))
+    assert extract_tracked(doc, ours={"Мы"}) == []
+    assert [t for _, t in view_paragraphs(doc, "rejected", {"Мы"})] == ["1.1. Остаётся."]
+
+
+def test_nested_our_insertion_deleted_by_them_returns_on_reject_and_is_reported(tmp_path):
+    body = p(r("Срок "), _nested("30", "Мы", "Они"), r(" дней."))
+    doc = read_docx(str(make_docx(tmp_path / "n4.docx", body)))
+    assert view_paragraphs(doc, "rejected", {"Мы"})[0][1] == "Срок 30 дней."
+    assert view_paragraphs(doc, "accepted", {"Мы"})[0][1] == "Срок  дней."
+    assert [(c.kind, c.before) for c in extract_tracked(doc, ours={"Мы"})] == [("delete", "30")]
+
+
+def test_nested_both_ours_is_gone(tmp_path):
+    body = p(r("Срок "), _nested("30", "Мы", "Мы"), r(" дней."))
+    doc = read_docx(str(make_docx(tmp_path / "n5.docx", body)))
+    assert view_paragraphs(doc, "rejected", {"Мы"})[0][1] == "Срок  дней."
+
+
+def test_nested_unknown_insertion_author_is_still_nested(tmp_path):
+    # у вставки нет автора (обезличенный файл): удаление всё равно вложенное
+    inner = f'<w:ins w:id="1" w:date="2026-10-01T00:00:00Z">{dele("текст", 2, "Они")}</w:ins>'
+    doc = read_docx(str(make_docx(tmp_path / "n6.docx", p(r("А "), inner, r(" Б.")))))
+    assert view_paragraphs(doc, "rejected", {"Мы"})[0][1] == "А  Б."
+    assert extract_tracked(doc, ours={"Мы"}) == []

@@ -1,6 +1,8 @@
 """Извлечение правок из docx с отслеживанием изменений (w:ins / w:del / w:moveFrom / w:moveTo) и комментариев."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 from .model import Change, DocxDoc, Paragraph, Segment
 from .textdiff import flags_for_change, normalize, strip_label
 
@@ -10,6 +12,11 @@ CONTEXT_LIMIT = 1200
 def _short(text: str, limit: int = CONTEXT_LIMIT) -> str:
     text = normalize(text)
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _net_zero(s: Segment, ours) -> bool:
+    """Чужая вставка, удалённая внутри самого документа: в итоге текста нет и в исходной версии его не было."""
+    return s.kind == "del" and s.ins_author is not None and s.ins_author not in ours
 
 
 def _groups(segs: list[Segment]) -> list[list[Segment]]:
@@ -83,6 +90,8 @@ def extract_tracked(doc: DocxDoc, ours: set[str] | frozenset[str] = frozenset())
     """
     changes: list[Change] = []
     for para in doc.paragraphs:
+        if any(_net_zero(s, ours) for s in para.segments):
+            para = replace(para, segments=[s for s in para.segments if not _net_zero(s, ours)])
         state = para.state()
         if state == "inserted":
             author, date = para.first_author("ins")
