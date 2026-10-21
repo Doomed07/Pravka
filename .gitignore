@@ -13,3 +13,11 @@ company*.yaml
 !tests/fixtures/**/*.docx
 demo/
 .env
+
+# Сборка и окружения
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.DS_Store
