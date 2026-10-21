@@ -7,7 +7,7 @@ import tempfile
 from collections import defaultdict
 
 from .pipeline import review_files
-from .synth import generate_case
+from .synth import generate_case, side_config
 from .textdiff import normalize
 
 IMPORTANT = {"высокая", "средняя"}
@@ -84,7 +84,7 @@ def run_synthetic(n_pairs: int = 40, seed0: int = 1000, playbooks: dict | None =
             truth = case["truth"]
             pb = playbooks.get(template)
             for variant, key in (("tracked", "source_tracked"), ("clean", "source_clean")):
-                rv = review_files(case["paths"][variant], case["paths"]["base"], pb)
+                rv = review_files(case["paths"][variant], case["paths"]["base"], pb, side=side_config(case))
                 pairs, extras = match_changes(truth["edits"], rv.changes, key)
                 for t, ch in pairs:
                     stats["truth"] += 1

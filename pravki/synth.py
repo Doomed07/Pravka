@@ -79,6 +79,34 @@ RENT = [
 ]
 
 
+# Преамбулы: в рабочих договорах стороны описаны до первого пункта, по ним определяется наша сторона (C9).
+PREAMBLES = {
+    "services": [
+        "ДОГОВОР ОКАЗАНИЯ УСЛУГ № 12/2026",
+        "г. Москва                                                                                          01.10.2026",
+        "Общество с ограниченной ответственностью «Альфа Софт», ИНН 7701234567, ОГРН 1027700000001, именуемое в дальнейшем "
+        "«Исполнитель», в лице генерального директора Петрова Петра Петровича, действующего на основании Устава, с одной стороны, "
+        "и Акционерное общество «Бета Групп», ИНН 7702345678, ОГРН 1027700000002, именуемое в дальнейшем «Заказчик», в лице "
+        "директора Сидорова Сергея Сергеевича, действующего на основании Устава, с другой стороны, заключили настоящий "
+        "договор о нижеследующем:",
+    ],
+    "rent": [
+        "ДОГОВОР АРЕНДЫ НЕЖИЛОГО ПОМЕЩЕНИЯ № 7/2026",
+        "г. Москва                                                                                          01.10.2026",
+        "Акционерное общество «Дельта Недвижимость», ИНН 7703456789, именуемое в дальнейшем «Арендодатель», в лице директора "
+        "Орлова Олега Олеговича, действующего на основании Устава, с одной стороны, и Общество с ограниченной ответственностью "
+        "«Гамма Торг», ИНН 7704567890, именуемое в дальнейшем «Арендатор», в лице генерального директора Волкова Владимира "
+        "Владимировича, действующего на основании Устава, с другой стороны, заключили настоящий договор о нижеследующем:",
+    ],
+}
+
+# Кто мы в синтетических договорах: роль совпадает с примерами плейбуков (services — Исполнитель, rent — Арендатор).
+OUR_COMPANY = {
+    "services": {"role": "Исполнитель", "names": ["Общество с ограниченной ответственностью «Альфа Софт»"], "inn": ["7701234567"]},
+    "rent": {"role": "Арендатор", "names": ["ООО «Гамма Торг»"], "inn": ["7704567890"]},
+}
+
+
 @dataclass(frozen=True)
 class EditSpec:
     key: str
@@ -174,13 +202,14 @@ class GPara:
     heading: bool = False
     mark: str = ""
     comment: int | None = None
+    plain: bool = False  # абзац без нумерации и стиля заголовка (преамбула)
 
     def text(self) -> str:
         return "".join(s.text for s in self.segs if s.kind in ("equal", "ins"))
 
 
-def build_paragraphs(tpl, numbering: str) -> list[GPara]:
-    out = []
+def build_paragraphs(tpl, numbering: str, preamble: list[str] | None = None) -> list[GPara]:
+    out = [GPara(level=0, label="", segs=[GSeg("equal", t)], plain=True) for t in (preamble or [])]
     for level, label, text in tpl:
         body = text if numbering == "auto" else (f"{label}. {text}" if level == 0 else f"{label}. {text}")
         out.append(GPara(level=level, label=label, segs=[GSeg("equal", body)], heading=(level == 0)))
@@ -345,7 +374,7 @@ def _para_xml(p: GPara, ids: _Ids, rng: random.Random, numbering: str, noise: bo
     ppr = ""
     if p.heading:
         ppr += '<w:pStyle w:val="Heading1"/>'
-    if numbering == "auto":
+    if numbering == "auto" and not p.plain:
         ppr += f'<w:numPr><w:ilvl w:val="{p.level}"/><w:numId w:val="1"/></w:numPr>'
     if p.mark:
         ppr += f'<w:rPr><w:{p.mark} w:id="{ids.next()}" w:author="{AUTHOR}" w:date="{DATE}"/></w:rPr>'
@@ -415,9 +444,10 @@ def generate_case(out_dir: str, template: str, seed: int, numbering: str | None 
         chosen = pick_edits(catalog, rng, 0.9)
     delivery = {e.key: ("silent" if (e.op != "comment" and rng.random() < silent_share) else "tracked") for e in chosen}
 
-    base = build_paragraphs(tpl, numbering)
-    tracked = build_paragraphs(tpl, numbering)
-    clean = build_paragraphs(tpl, numbering)
+    pre = PREAMBLES.get(template)
+    base = build_paragraphs(tpl, numbering, pre)
+    tracked = build_paragraphs(tpl, numbering, pre)
+    clean = build_paragraphs(tpl, numbering, pre)
     c_tracked: list[tuple[str, str]] = []
     c_clean: list[tuple[str, str]] = []
     truth_edits = []
@@ -447,4 +477,12 @@ def generate_case(out_dir: str, template: str, seed: int, numbering: str | None 
     truth = {"template": template, "seed": seed, "numbering": numbering, "edits": truth_edits}
     with open(paths["truth"], "w", encoding="utf-8") as f:
         json.dump(truth, f, ensure_ascii=False, indent=2)
-    return {"paths": paths, "truth": truth}
+    return {"paths": paths, "truth": truth, "company": OUR_COMPANY.get(template)}
+
+
+def side_config(case: dict):
+    """Профиль нашей компании для синтетического договора: по нему определяется сторона (C9)."""
+    from .parties import CompanyProfile, SideConfig
+
+    c = case.get("company") or {}
+    return SideConfig(profile=CompanyProfile(names=list(c.get("names", [])), inns=list(c.get("inn", []))))

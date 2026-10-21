@@ -9,6 +9,7 @@ from . import journal
 from .docx_reader import DocxError
 from .evaluate import print_report, run_synthetic
 from .llm import Explainer, LLMError, OpenAICompatClient
+from .parties import PartiesError, RoleCheckError, SideConfig, canon_role, profile_from_args
 from .pipeline import DISCLAIMER, review_files
 from .playbook import PlaybookError, load_playbook
 from .report import render_html, render_xlsx, write_json
@@ -28,7 +29,15 @@ def cmd_review(a) -> int:
     explainer = None
     if a.llm_url:
         explainer = Explainer(OpenAICompatClient(a.llm_url, a.llm_model, allow_remote=a.allow_remote))
-    rv = review_files(a.theirs, a.base, pb, our_authors=a.our_author, explainer=explainer, ordering=a.order)
+    side = SideConfig(profile=profile_from_args(a.our_name, a.our_inn, a.company), confirm_role=a.confirm_role or "")
+    if a.project and pb is not None and not a.confirm_role:
+        prev = journal.last_role(a.project)
+        if prev and canon_role(prev) != canon_role(pb.our_role):
+            print(f"Роль не совпала с предыдущими раундами проекта: раньше разбирали за «{prev}», сейчас плейбук роли "
+                  f"«{pb.our_role}». Отчёт не создан. Если роль сменилась намеренно, подтвердите её: --confirm-role {pb.our_role}",
+                  file=sys.stderr)
+            return 3
+    rv = review_files(a.theirs, a.base, pb, our_authors=a.our_author, explainer=explainer, ordering=a.order, side=side)
     out = a.out
     round_n = None
     if a.project:
@@ -46,6 +55,8 @@ def cmd_review(a) -> int:
     print(f"Правок: {c['всего']} (в рецензировании {c['в рецензировании']}, комментариев {c['комментарии']}, "
           f"тихих {c['тихие правки']}, найдено сравнением {c['найдено сравнением']})")
     print(f"Нужно решение юриста: {c['нужно решение юриста']}; красные линии: {c['красные линии']}; вне плейбука: {c['вне плейбука']}")
+    if rv.side is not None:
+        print(f"Сторона договора: {rv.side.message}")
     for w in rv.warnings:
         print("Внимание:", w)
     if round_n:
@@ -92,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--base", help="docx, который отправили мы (нужен для поиска «тихих» правок)")
     r.add_argument("--playbook", help="файл плейбука .yaml")
     r.add_argument("--our-author", action="append", default=[], help="автор наших правок в рецензировании (можно несколько раз)")
+    r.add_argument("--company", help="профиль нашей компании .yaml (names, inn): по нему определяется наша сторона в договоре")
+    r.add_argument("--our-name", action="append", default=[], help="наименование нашей компании, как в договоре (можно несколько раз)")
+    r.add_argument("--our-inn", action="append", default=[], help="ИНН нашей компании (можно несколько раз)")
+    r.add_argument("--confirm-role", help="подтвердить нашу роль вручную, например «Исполнитель»; без этого при "
+                                          "несовпадении или неопределённости стороны разбор не запускается")
     r.add_argument("--out", help="папка для отчётов")
     r.add_argument("--project", help="папка проекта: раунд запишется в журнал")
     r.add_argument("--name", help="название проекта (при первом раунде)")
@@ -132,7 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.fn(args)
-    except (DocxError, PlaybookError, journal.JournalError, LLMError) as e:
+    except RoleCheckError as e:
+        print(f"Сторона договора не подтверждена. {e}\nОтчёт не создан.", file=sys.stderr)
+        return 3
+    except (DocxError, PlaybookError, PartiesError, journal.JournalError, LLMError) as e:
         print(f"Ошибка: {e}", file=sys.stderr)
         return 2
     except FileNotFoundError as e:

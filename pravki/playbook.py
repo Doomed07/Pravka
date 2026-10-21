@@ -423,6 +423,6 @@ PRIORITY_DEFAULT = [
 def sort_key(ch: Change, pb: Playbook | None = None):
     """Порядок показа: сначала возмещение убытков, ограничение ответственности и расторжение (как в домашнем плейбуке)."""
     prio = (pb.priority_topics if pb and pb.priority_topics else PRIORITY_DEFAULT)
-    rank = prio.index(ch.topic) if ch.topic in prio else len(prio)
+    rank = -1 if ch.rule_id == "PARTY" else (prio.index(ch.topic) if ch.topic in prio else len(prio))
     mat = {"высокая": 0, "средняя": 1, "низкая": 2, "техническая": 3}.get(ch.materiality, 2)
     return (rank, mat, ch.order)

@@ -9,6 +9,7 @@ from .classify import classify
 from .compare import compare_versions
 from .docx_reader import read_docx
 from .model import Change
+from .parties import PARTY_TOPIC, RoleCheckError, SideConfig, SideResult, check_side, parties_of, party_changes
 from .playbook import Playbook, analyze, load_playbook, sort_key
 
 DISCLAIMER = "Черновик — требует вашей проверки перед отправкой (draft — needs your review before sending)."
@@ -26,6 +27,7 @@ class Review:
     warnings: list[str] = field(default_factory=list)
     created: str = ""
     llm_used: bool = False
+    side: SideResult | None = None  # проверка нашей стороны договора (C9)
 
     def counts(self) -> dict:
         c = self.changes
@@ -39,6 +41,7 @@ class Review:
             "вне плейбука": sum(1 for x in c if x.out_of_playbook),
             "красные линии": sum(1 for x in c if x.level == "reject"),
             "технические": sum(1 for x in c if x.materiality == "техническая"),
+            "стороны и реквизиты": sum(1 for x in c if x.topic == PARTY_TOPIC),
         }
 
 
@@ -49,13 +52,34 @@ def review_files(
     our_authors: list[str] | None = None,
     explainer=None,
     ordering: str = "priority",
+    side: SideConfig | None = None,
 ) -> Review:
+    """Разобрать версию контрагента.
+
+    Если задан плейбук, сначала проверяется наша сторона договора (C9): при несовпадении или невозможности её
+    определить бросается RoleCheckError и разбор не выполняется. Затем сверяются стороны между версиями (C10).
+    """
     theirs = read_docx(theirs_path)
     base = read_docx(base_path) if base_path else None
     pb = load_playbook(playbook) if isinstance(playbook, str) else playbook
     warnings: list[str] = []
+    ours = {a for a in (set(our_authors or []) | set(base.authors if base else [])) if a}
+
+    # C9: стороны берём из нашей версии текста: без правок контрагента, с нашими правками
+    our_doc, our_mode = (base, "accepted") if base is not None else (theirs, "rejected")
+    side_res = check_side(pb.our_role if pb else "", parties_of(our_doc, our_mode, ours), side or SideConfig())
+    if pb is None:
+        side_res.status = "not_checked"
+        side_res.message = "Плейбук не указан: сторона договора не проверялась."
+    if side_res.blocked:
+        raise RoleCheckError(side_res)
 
     changes = compare_versions(base, theirs, our_authors)
+    # C10: стороны и реквизиты между версиями — отдельные правки высшего приоритета
+    changes = party_changes(base, theirs, ours) + changes
+    if any(c.topic == PARTY_TOPIC for c in changes):
+        warnings.append("Изменились стороны или реквизиты договора: проверьте их в первую очередь, "
+                        "от этого зависит смысл всех остальных правок.")
     if base is None:
         mode = "tracked"
         if theirs.has_tracked:
@@ -75,12 +99,13 @@ def review_files(
         if n_silent:
             warnings.append(f"Найдено правок без отметки в рецензировании: {n_silent}. Проверьте их в первую очередь.")
 
-    for c in changes:
+    regular = [c for c in changes if c.topic != PARTY_TOPIC]
+    for c in regular:
         classify(c)
     if pb is not None:
-        analyze(changes, pb)
+        analyze(regular, pb)
     if explainer is not None:
-        for c in changes:
+        for c in regular:
             explainer.apply(c)
 
     if ordering == "priority":
@@ -99,6 +124,7 @@ def review_files(
         warnings=warnings,
         created=datetime.now().strftime("%Y-%m-%d %H:%M"),
         llm_used=explainer is not None,
+        side=side_res,
     )
 
 

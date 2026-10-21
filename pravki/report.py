@@ -15,6 +15,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .model import Change
+from .parties import PARTY_TOPIC
 from .pipeline import DISCLAIMER, Review, file_label
 from .playbook import PRIORITY_DEFAULT
 
@@ -30,6 +31,10 @@ KIND_RU = {
 LEVEL_RU = {"accept": "принять", "fallback": "уступка", "reject": "отклонить / встречная", "review": "решает юрист"}
 LEVEL_CSS = {"accept": "ok", "fallback": "fb", "reject": "bad", "review": "rev"}
 ORDER = {"reject": 0, "review": 1, "fallback": 2, "accept": 3}
+SIDE_RU = {
+    "ok": "подтверждена преамбулой", "confirmed": "подтверждена юристом", "override": "подтверждена юристом вопреки преамбуле",
+    "skipped": "не проверялась", "not_checked": "не проверялась", "mismatch": "не совпала", "unknown": "не определена",
+}
 
 
 def _e(s: str) -> str:
@@ -173,9 +178,10 @@ def _short(s: str, n: int = 110) -> str:
 
 def render_html(rv: Review, priority_topics: list[str] | None = None) -> str:
     prio = priority_topics or PRIORITY_DEFAULT
-    pr = [c for c in rv.changes if c.topic in prio and c.materiality != "техническая"]
+    parties = [c for c in rv.changes if c.topic == PARTY_TOPIC]
+    pr = [c for c in rv.changes if c.topic in prio and c.materiality != "техническая" and c not in parties]
     tech = [c for c in rv.changes if c.materiality == "техническая" and c.kind != "comment"]
-    rest = [c for c in rv.changes if c not in pr and c not in tech]
+    rest = [c for c in rv.changes if c not in pr and c not in tech and c not in parties]
     counts = rv.counts()
     area_counter: Counter = Counter()
     for c in rv.changes:
@@ -190,6 +196,10 @@ def render_html(rv: Review, priority_topics: list[str] | None = None) -> str:
            f"<div class='meta'>Версия контрагента: {_e(file_label(rv.theirs_path))} · "
            f"Наша отправленная версия: {_e(file_label(rv.base_path)) or 'не указана'} · "
            f"Плейбук: {_e(rv.playbook_name) or 'не указан'}{' · мы — ' + _e(rv.our_role) if rv.our_role else ''} · {_e(rv.created)}</div>"]
+    if rv.side is not None and rv.side.message:
+        strong = rv.side.status in ("ok", "confirmed")
+        out.append(f"<div class='{'meta' if strong else 'warn'}'><b>Сторона договора:</b> {_e(rv.side.message)}"
+                   + (f" {_e(rv.side.evidence)}" if rv.side.evidence and strong else "") + "</div>")
     for w in rv.warnings:
         out.append(f"<div class='warn'>{_e(w)}</div>")
     out.append("<div class='stats'>" + "".join(
@@ -198,6 +208,9 @@ def render_html(rv: Review, priority_topics: list[str] | None = None) -> str:
         out.append("<p class='muted'>Кого подключить (существенные правки вне юридической области): " +
                    _e(", ".join(f"{a} — {n}" for a, n in area_counter.most_common())) + "</p>")
 
+    if parties:
+        out.append("<h2>Сначала проверьте: стороны и реквизиты изменились</h2>")
+        out.extend(_item_html(c) for c in parties)
     if pr:
         out.append("<h2>Сначала: возмещение убытков, ограничение ответственности, расторжение</h2>")
         out.extend(_item_html(c) for c in pr)
@@ -249,7 +262,8 @@ def render_xlsx(rv: Review, path: str) -> None:
     ws.freeze_panes = "C2"
 
     prio = PRIORITY_DEFAULT
-    rows = sorted(rv.changes, key=lambda c: (0 if (c.topic in prio and c.materiality != "техническая") else 1,
+    rows = sorted(rv.changes, key=lambda c: (-1 if c.topic == PARTY_TOPIC else
+                                             (0 if (c.topic in prio and c.materiality != "техническая") else 1),
                                              ORDER.get(c.level, 1), c.order))
     for r, ch in enumerate(rows, 2):
         comment_text = ch.after if ch.kind == "comment" else ""
@@ -283,6 +297,7 @@ def render_xlsx(rv: Review, path: str) -> None:
     s.append(["Отправленная нами версия", file_label(rv.base_path) or "не указана"])
     s.append(["Плейбук", rv.playbook_name or "не указан"])
     s.append(["Мы", rv.our_role or ""])
+    s.append(["Сторона договора", (SIDE_RU.get(rv.side.status, rv.side.status) if rv.side else "не проверялась")])
     s.append(["Дата разбора", rv.created])
     s.append([])
     for k, v in rv.counts().items():
@@ -306,7 +321,7 @@ def render_xlsx(rv: Review, path: str) -> None:
         s.append([w])
     s.append([])
     s.append([DISCLAIMER])
-    for row in s.iter_rows(min_row=1, max_row=5):
+    for row in s.iter_rows(min_row=1, max_row=6):
         row[0].font = Font(bold=True)
 
     b = wb.create_sheet("Для бизнеса")
@@ -335,6 +350,7 @@ def write_json(rv: Review, path: str) -> None:
         "base": file_label(rv.base_path),
         "playbook": rv.playbook_name,
         "our_role": rv.our_role,
+        "side": rv.side.to_dict() if rv.side else None,
         "mode": rv.mode,
         "created": rv.created,
         "warnings": rv.warnings,

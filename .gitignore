@@ -3,3 +3,13 @@ __pycache__/
 .pytest_cache/
 out/
 projects/
+
+# Конфиденциальное: реальные договоры, плейбуки, профиль компании, журналы, ключи — только локально
+data/
+playbooks/private/
+company*.yaml
+!tests/fixtures/company*.yaml
+*.docx
+!tests/fixtures/**/*.docx
+demo/
+.env

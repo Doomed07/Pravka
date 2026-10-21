@@ -80,6 +80,7 @@ def add_round(project_dir: str, rv: Review, copy_files: bool = True) -> int:
         "theirs": os.path.basename(rv.theirs_path),
         "base": os.path.basename(rv.base_path) if rv.base_path else "",
         "counts": rv.counts(),
+        "side": rv.side.to_dict() if rv.side else None,
         "changes": [
             {
                 "id": c.id, "fingerprint": c.fingerprint(), "clause": c.clause, "topic": c.topic, "kind": c.kind,
@@ -91,6 +92,17 @@ def add_round(project_dir: str, rv: Review, copy_files: bool = True) -> int:
     })
     save(project_dir, data)
     return n
+
+
+def last_role(project_dir: str) -> str:
+    """Роль, за которую разбирали предыдущий раунд проекта (пусто, если проекта или раундов ещё нет)."""
+    if not os.path.exists(os.path.join(project_dir, "journal.json")):
+        return ""
+    for r in reversed(load(project_dir)["rounds"]):
+        role = (r.get("side") or {}).get("expected_role", "")
+        if role:
+            return role
+    return ""
 
 
 def round_dir(project_dir: str, n: int) -> str:
@@ -125,6 +137,9 @@ def history_text(project_dir: str) -> str:
             f"Раунд {r['n']} ({r['date'][:10]}): {r['theirs']} — правок {cnt.get('всего', 0)}, "
             f"тихих {cnt.get('тихие правки', 0)}, красных линий {cnt.get('красные линии', 0)}"
         )
+        sd = r.get("side") or {}
+        if sd.get("expected_role"):
+            lines.append(f"  мы — {sd['expected_role']} (сторона: {sd.get('status', '?')})")
         by = {}
         for c in r["changes"]:
             by[c["status"]] = by.get(c["status"], 0) + 1

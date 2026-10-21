@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 from pravki.pipeline import review_files
+from pravki.synth import side_config
 from pravki.synth import generate_case
 
 PB = os.path.join(os.path.dirname(os.path.dirname(__file__)), "playbooks")
@@ -32,7 +33,7 @@ def test_roundtrip_through_libreoffice(tmp_path, template, seed, numbering):
         check=True, capture_output=True, timeout=180,
     )
     pb = os.path.join(PB, f"{template}_example.yaml")
-    a = review_files(case["paths"]["tracked"], case["paths"]["base"], pb)
-    b = review_files(str(out / "theirs_tracked.docx"), str(out / "base.docx"), pb)
+    a = review_files(case["paths"]["tracked"], case["paths"]["base"], pb, side=side_config(case))
+    b = review_files(str(out / "theirs_tracked.docx"), str(out / "base.docx"), pb, side=side_config(case))
     assert sorted(map(_key, a.changes)) == sorted(map(_key, b.changes))
     assert [c.level for c in sorted(a.changes, key=_key)] == [c.level for c in sorted(b.changes, key=_key)]

@@ -10,7 +10,8 @@ from pravki.llm import Explainer, LLMError, OpenAICompatClient, check_output, is
 from pravki.model import Change
 from pravki.pipeline import DISCLAIMER, review_files
 from pravki.report import render_html, render_xlsx
-from pravki.synth import generate_case
+from pravki.parties import SideConfig
+from pravki.synth import generate_case, side_config
 from tests.helpers import dele, ins, make_docx, p, r
 
 PB = os.path.join(os.path.dirname(os.path.dirname(__file__)), "playbooks", "services_example.yaml")
@@ -23,7 +24,8 @@ def case(tmp_path):
 
 def test_cli_review_writes_reports(case, tmp_path, capsys):
     out = tmp_path / "out"
-    rc = main(["review", case["paths"]["tracked"], "--base", case["paths"]["base"], "--playbook", PB, "--out", str(out)])
+    rc = main(["review", case["paths"]["tracked"], "--base", case["paths"]["base"], "--playbook", PB, "--our-inn", "7701234567",
+               "--out", str(out)])
     assert rc == 0
     for f in ("report.html", "report.xlsx", "changes.json"):
         assert (out / f).exists()
@@ -35,7 +37,7 @@ def test_cli_review_writes_reports(case, tmp_path, capsys):
 
 
 def test_report_ends_with_disclaimer_everywhere(case, tmp_path):
-    rv = review_files(case["paths"]["tracked"], case["paths"]["base"], PB)
+    rv = review_files(case["paths"]["tracked"], case["paths"]["base"], PB, side=side_config(case))
     render_xlsx(rv, str(tmp_path / "r.xlsx"))
     wb = load_workbook(tmp_path / "r.xlsx")
     assert set(wb.sheetnames) == {"Правки", "Сводка", "Для бизнеса"}
@@ -67,18 +69,18 @@ def test_priority_topics_come_first(tmp_path):
     body = p(r("1.1. Срок оплаты "), dele("10"), ins("30"), r(" дней.")) + \
         p(r("1.2. Каждая из сторон вправе отказаться от договора, уведомив за "), dele("30"), ins("5"), r(" календарных дней."))
     t = make_docx(tmp_path / "t.docx", body)
-    rv = review_files(str(t), None, PB)
+    rv = review_files(str(t), None, PB, side=SideConfig(confirm_role="Исполнитель"))
     assert rv.changes[0].topic == "расторжение и отказ от договора"
 
 
 def test_journal_marks_repeated_rejected_edit(case, tmp_path):
     proj = str(tmp_path / "proj")
-    rv1 = review_files(case["paths"]["tracked"], case["paths"]["base"], PB)
+    rv1 = review_files(case["paths"]["tracked"], case["paths"]["base"], PB, side=side_config(case))
     journal.init_project(proj, "Тест")
     journal.add_round(proj, rv1)
     first = next(c for c in rv1.changes if c.materiality != "техническая")
     journal.decide(proj, first.id, "rejected", "не согласны")
-    rv2 = review_files(case["paths"]["tracked"], case["paths"]["base"], PB)
+    rv2 = review_files(case["paths"]["tracked"], case["paths"]["base"], PB, side=side_config(case))
     n = journal.add_round(proj, rv2)
     assert n == 2
     again = next(c for c in rv2.changes if c.fingerprint() == first.fingerprint())
@@ -110,7 +112,7 @@ def test_cli_errors_are_readable(tmp_path, capsys):
 def test_cli_project_flow(case, tmp_path, capsys):
     proj = str(tmp_path / "proj")
     assert main(["review", case["paths"]["tracked"], "--base", case["paths"]["base"], "--playbook", PB,
-                 "--project", proj, "--name", "Демо"]) == 0
+                 "--our-inn", "7701234567", "--project", proj, "--name", "Демо"]) == 0
     assert os.path.exists(os.path.join(proj, "rounds", "01", "report.html"))
     assert main(["decide", proj, "E001", "counter", "--note", "встречная"]) == 0
     assert main(["history", proj]) == 0
@@ -166,5 +168,5 @@ def test_llm_unavailable_keeps_template(case):
         def complete(self, s, u):
             raise LLMError("нет соединения")
 
-    rv = review_files(case["paths"]["tracked"], case["paths"]["base"], PB, explainer=Explainer(Broken()))
+    rv = review_files(case["paths"]["tracked"], case["paths"]["base"], PB, explainer=Explainer(Broken()), side=side_config(case))
     assert rv.changes and all(c.explanation or c.materiality == "техническая" for c in rv.changes)
