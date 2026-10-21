@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .classify import classify
-from .compare import compare_versions
+from .compare import compare_versions, resolve_ours
 from .docx_reader import read_docx
 from .model import Change
 from .parties import PARTY_TOPIC, RoleCheckError, SideConfig, SideResult, check_side, parties_of, party_changes
@@ -63,7 +63,8 @@ def review_files(
     base = read_docx(base_path) if base_path else None
     pb = load_playbook(playbook) if isinstance(playbook, str) else playbook
     warnings: list[str] = []
-    ours = {a for a in (set(our_authors or []) | set(base.authors if base else [])) if a}
+    ours, ours_warnings = resolve_ours(our_authors, base)
+    warnings.extend(ours_warnings)
 
     # C9: стороны берём из нашей версии текста: без правок контрагента, с нашими правками
     our_doc, our_mode = (base, "accepted") if base is not None else (theirs, "rejected")
@@ -94,6 +95,10 @@ def review_files(
     else:
         mode = "compare"
         warnings.append("В файле контрагента нет рецензирования: все отличия найдены сравнением с отправленной версией.")
+    n_carried = sum(1 for c in changes if c.detail.get("carried"))
+    if n_carried:
+        warnings.append(f"Правок контрагента из прошлого раунда, оставшихся нерешёнными в нашей версии: {n_carried} "
+                        "(помечены «из прошлого раунда»).")
     if theirs.has_tracked and base is not None:
         n_silent = sum(1 for c in changes if c.source == "silent")
         if n_silent:

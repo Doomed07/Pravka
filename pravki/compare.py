@@ -60,13 +60,42 @@ def _pair_block(a, b, i1, i2, j1, j2):
     return out
 
 
+def resolve_ours(our_authors: list[str] | None, base: DocxDoc | None) -> tuple[set[str], list[str]]:
+    """Какие авторы правок считать нашими. Возвращает (авторы, предупреждения).
+
+    Если наши авторы указаны явно, наши только они: в отправленной версии могут остаться ещё не решённые правки
+    контрагента прошлого раунда, и принимать их автора за своего нельзя (его новые правки пропали бы из отчёта).
+    Без явного указания нашим считается единственный автор отправленной версии; если авторов несколько,
+    нашим не считается никто, а юристу показывается предупреждение: лучше лишние правки в отчёте, чем пропущенная.
+    """
+    explicit = {a for a in (our_authors or []) if a}
+    authors = [a for a in (base.authors if base else []) if a]
+    if explicit:
+        extra = [a for a in authors if a not in explicit]
+        warn = []
+        if extra:
+            warn.append("В отправленной версии есть авторы правок, не указанные как наши: " + ", ".join(extra) +
+                        ". Их правки считаются правками контрагента.")
+        return explicit, warn
+    if len(authors) <= 1:
+        return set(authors), []
+    return set(), ["В отправленной версии правки нескольких авторов (" + ", ".join(authors) + "), а наши авторы не указаны "
+                   "(--our-author): ни один не считается нашим, поэтому наши прежние правки могут попасть в отчёт как правки "
+                   "контрагента. Укажите, кто из авторов наш."]
+
+
+def _tracked_key(c: Change) -> tuple:
+    return (c.kind, c.author, c.date, normalize(c.before), normalize(c.after))
+
+
 def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -> list[Change]:
     """Отличия текста, не отмеченные в рецензировании.
 
-    Сравнивается наша отправленная версия (все правки приняты) с версией контрагента, в которой
-    все его отмеченные правки отклонены. Если ничего не менялось втихую, тексты совпадают.
+    Сравнивается наша отправленная версия с версией контрагента. В обеих версиях наши правки приняты,
+    а чужие отклонены: так не мешают нерешённые правки контрагента прошлых раундов, которые остались
+    в файле и в отправленной нами версии. Если ничего не менялось втихую, тексты совпадают.
     """
-    base_view = [(p, t) for p, t in view_paragraphs(base, "accepted", ours) if normalize(t)]
+    base_view = [(p, t) for p, t in view_paragraphs(base, "rejected", ours) if normalize(t)]
     their_view = [(p, t) for p, t in view_paragraphs(theirs, "rejected", ours) if normalize(t)]
     pairs = _align([t for _, t in base_view], [t for _, t in their_view])
     changes: list[Change] = []
@@ -115,12 +144,16 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
 
 def compare_versions(base: DocxDoc | None, theirs: DocxDoc, our_authors: list[str] | None = None) -> list[Change]:
     """Все правки контрагента. base — версия, которую отправили мы (может отсутствовать)."""
-    ours = set(our_authors or [])
-    if base is not None:
-        ours |= set(base.authors)
-    ours = {a for a in ours if a}
+    ours, _ = resolve_ours(our_authors, base)
     changes = extract_tracked(theirs, ours)
     if base is not None:
+        # правки контрагента, которые уже были в отправленной нами версии и не решены: это не новый раунд
+        seen = {_tracked_key(x) for x in extract_tracked(base, ours)}
+        for ch in changes:
+            if ch.source == "tracked" and _tracked_key(ch) in seen:
+                ch.detail["carried"] = True
+                ch.flags.append("из прошлого раунда")
+                ch.notes.append("Правка уже была в отправленной нами версии и осталась нерешённой")
         label = "silent" if theirs.has_tracked else "diff"
         changes.extend(find_untracked(base, theirs, ours, label))
     changes.sort(key=lambda c: (c.order, c.source != "tracked"))

@@ -168,3 +168,23 @@ def test_nested_unknown_insertion_author_is_still_nested(tmp_path):
     doc = read_docx(str(make_docx(tmp_path / "n6.docx", p(r("А "), inner, r(" Б.")))))
     assert view_paragraphs(doc, "rejected", {"Мы"})[0][1] == "А  Б."
     assert extract_tracked(doc, ours={"Мы"}) == []
+
+
+def test_number_at_paragraph_start_is_not_a_clause_label(tmp_path):
+    # «75 % от суммы…» и «475 000 руб.» — условия договора, а не номера пунктов
+    body = (p(r("4.11. Размер удержания.")) + p(r("75 % от суммы предоплаты удерживается Организатором.")) +
+            p(r("475 000 рублей составляет предоплата.")) + p(r("30 (тридцать) дней на оплату.")) +
+            p(r("10.5 % годовых.")))
+    doc = read_docx(str(make_docx(tmp_path / "lab.docx", body)))
+    assert [x.label for x in doc.paragraphs] == ["4.11", "", "", "", ""]
+    assert [x.clause for x in doc.paragraphs] == ["4.11"] * 5
+    assert doc.paragraphs[1].segments[0].text.startswith("75 %")
+
+
+@pytest.mark.parametrize("text,label", [
+    ("3.2. Текст", "3.2"), ("3.2 Текст", "3.2"), ("5. Предмет", "5"), ("5) Предмет", "5"), ("5 Предмет договора", "5"),
+    ("3.4. (Исключён)", "3.4"), ("1.1.1. Подпункт", "1.1.1"),
+])
+def test_real_clause_labels_are_kept(tmp_path, text, label):
+    doc = read_docx(str(make_docx(tmp_path / "l.docx", p(r(text)))))
+    assert doc.paragraphs[0].label == label
