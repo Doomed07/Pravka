@@ -42,4 +42,5 @@
 ## Устройство
 Веб-сервис на Go (каркас из проекта Bookshelf) в `cmd/`, `internal/`, `web/`, `migrations/`; движок на Python — `pravki/`,
 связь через `pravki/engine_api.py` ↔ `internal/engine`. Решения по правкам принимает только движок (плейбук).
-См. раздел «Устройство» в `README.md`, решения проекта в `docs/DECISIONS.md`, состояние и следующие шаги в `STATUS.md`.
+См. раздел «Устройство» в `README.md`, решения проекта в `docs/DECISIONS.md`, состояние и следующие шаги в `STATUS.md`,
+контекст прошлых обсуждений с владельцем — в `docs/HANDOFF.md`.
