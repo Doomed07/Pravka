@@ -214,6 +214,30 @@ def _raise(level: str, steps: int = 1) -> str:
     return _LEVELS[min(len(_LEVELS) - 1, _LEVELS.index(level) + steps)]
 
 
+_AGREE = re.compile(
+    r"^\s*(?:в\s+целом\s+)?(?:\+|ок|ok|окей|да|согласн\w*|согласовано|принято|принимается|принимаем|не\s+возража\w*|совершенно\s+верно|верно|"
+    r"хорошо|поддерживаем|устраивает|нам\s+ок)\b",
+    re.IGNORECASE)
+_CONDITION = re.compile(r"\b(?:но|при\s+условии|при\s+нашей|если|с\s+коррек\w*|в\s+целом|с\s+уточнени\w*|потребуется|только|кроме)\b",
+                        re.IGNORECASE)
+AGREED = "согласие в комментарии"
+AGREED_IF = "согласие с условием"
+
+
+def agreement(text: str) -> str:
+    """Комментарий контрагента — согласие? «+», «ок», «не возражаю» → согласие; «ок, но…», «ок с корректировкой» →
+    согласие с условием; остальное — не согласие. Согласие в переписке означает, что условие согласовано и правку
+    можно принимать (решение юриста, 2026-10-22); условие юрист проверяет сам."""
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if t in ("+", "++", "+1"):
+        return AGREED
+    if not _AGREE.search(t):
+        return ""
+    return AGREED_IF if _CONDITION.search(t) else AGREED
+
+
 def classify(change: Change) -> Change:
     scores = topic_scores(change)
     if change.kind == "comment":
@@ -245,5 +269,13 @@ def classify(change: Change) -> Change:
         level = "средняя"
     if change.kind == "comment":
         level = "средняя" if base != "низкая" else "низкая"
+        agreed = agreement(change.after)
+        if agreed and agreed not in change.flags:
+            change.flags.append(agreed)
+            change.notes.append("Контрагент согласился в комментарии: условие согласовано, правку можно принимать."
+                                if agreed == AGREED else
+                                "Контрагент согласен с условием: проверьте условие, прежде чем принимать правку.")
+            if agreed == AGREED:
+                level = "низкая"
     change.materiality = level
     return change

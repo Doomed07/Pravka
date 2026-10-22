@@ -16,7 +16,7 @@ import yaml
 from .model import Change
 from .textdiff import normalize, numbers
 
-LEVEL_ORDER = {"accept": 1, "fallback": 2, "reject": 3}
+LEVEL_ORDER = {"accept": 1, "fallback": 2, "review": 2.5, "reject": 3}
 
 UNIT_PATTERNS = {
     "percent": r"(\d+(?:[.,]\d+)?)\s*(?:%|процент\w*)",
@@ -194,13 +194,29 @@ def _check_number(ch: Change, c: dict, res: Result):
     u = UNIT_RU.get(unit, "")
     label = c.get("label", "значение")
     res.applied = True
+    if direction == "eq":
+        # значение фиксировано («всегда 10%»): любое отклонение в любую сторону — решение юриста
+        if pref is not None and abs(v - pref) < 1e-9:
+            res.reasons.append(f"{label}: {_fmt(v)} {u}".rstrip() + " — как в позиции плейбука")
+            _upgrade(res, "accept")
+        else:
+            res.reasons.append(f"{label}: {_fmt(v)} {u}".rstrip() + f" — отличается от позиции плейбука ({_fmt(pref)} {u}".rstrip()
+                               + "), отклонение согласует юрист")
+            _upgrade(res, "review")
+        return
     if direction == "max":
         ok_pref = pref is None or v <= pref
-        ok_fb = fb is None or v <= fb
+        ok_fb = fb is not None and v <= fb
     else:
         ok_pref = pref is None or v >= pref
-        ok_fb = fb is None or v >= fb
+        ok_fb = fb is not None and v >= fb
     sign = "не более" if direction == "max" else "не менее"
+    if not ok_pref and fb is None:
+        # граница уступки не задана: «хуже предпочтительного» — не уступка по умолчанию, а вопрос юристу
+        res.reasons.append(f"{label}: {_fmt(v)} {u}".rstrip() + f" — хуже позиции плейбука ({sign} {_fmt(pref)} {u}".rstrip()
+                           + "), граница уступки в плейбуке не задана — решает юрист")
+        _upgrade(res, "review")
+        return
     if ok_pref:
         res.reasons.append(f"{label}: {_fmt(v)} {u}".rstrip() + f" — в пределах предпочтительной позиции ({sign} {_fmt(pref)} {u}".rstrip() + ")")
         _upgrade(res, "accept")
@@ -308,6 +324,22 @@ def evaluate(rule: Rule, ch: Change) -> Result:
     return res
 
 
+def _number_in_rule_context(rule: Rule, ch: Change) -> bool:
+    """Правка меняет только число («1» → «5»), а тема определилась неточно: правило всё равно подходит, если изменённое
+    число стоит в предложении, о котором его числовая проверка (`context`), и правило совпало с абзацем."""
+    if not ("число" in ch.flags or "сумма" in ch.flags) or not ch.after or not rule.hits(f"{ch.context} {ch.context_after}"):
+        return False
+    text = ch.context_after or ""
+    for c in rule.checks:
+        sel = c.get("context") if c.get("type") in ("number", "change") else None
+        if not sel:
+            continue
+        for sent in _sentences(text):
+            if ch.after in sent and re.search(sel, sent, re.IGNORECASE):
+                return True
+    return False
+
+
 def _candidates(pb: Playbook, ch: Change) -> list[tuple[int, Rule]]:
     changed = f"{ch.before} {ch.after}"
     ctx = f"{ch.context} {ch.context_after}"
@@ -320,6 +352,8 @@ def _candidates(pb: Playbook, ch: Change) -> list[tuple[int, Rule]]:
             score += 3
         if r.hits(ctx):
             score += 1
+        if score < 3 and _number_in_rule_context(r, ch):
+            score += 3
         if score >= 3:
             out.append((score, r))
     out.sort(key=lambda x: -x[0])
@@ -347,6 +381,13 @@ def _analyze_one(ch: Change, pb: Playbook) -> None:
         if ch.source != "tracked":
             ch.action = "Принять после беглой проверки (техническая правка, но не отмечена в рецензировании)"
         ch.explanation = "Смысл условия не меняется."
+        return
+
+    if ch.kind == "comment" and "согласие в комментарии" in ch.flags:
+        # решение юриста 2026-10-22: согласие контрагента в переписке — условие согласовано
+        ch.level = "accept"
+        ch.action = "Согласовано в переписке: нашу правку можно принять"
+        ch.explanation = "Контрагент согласился в комментарии без условий."
         return
 
     if ch.kind == "comment":
@@ -405,7 +446,7 @@ def _analyze_one(ch: Change, pb: Playbook) -> None:
     if level == "review":
         ch.lawyer_decision_needed = True
         ch.action = "Нужно решение юриста"
-    if level == "reject" and rule.escalate_to:
+    if level in ("reject", "review") and rule.escalate_to:
         ch.escalate_to = rule.escalate_to
     expl = [rule.title, reason]
     if level in ("reject", "fallback", "review") and rule.preferred:
