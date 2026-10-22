@@ -169,7 +169,7 @@ def form_page(msg: str = "", values: dict | None = None, need_confirm: str = "")
  Наша сторона в договоре называется иначе, чем в плейбуке (например, «Участник» вместо «Заказчика») — подтверждаю роль плейбука вручную</label>
 <div class=row>
  <div><label>Авторы наших правок в Word <span class=hint>(через запятую)</span></label>
- <input type=text name=our_authors value='{e(v.get('our_authors', ''))}' placeholder='например: kandu, Zuev Pavel'></div>
+ <input type=text name=our_authors value='{e(v.get('our_authors', ''))}' placeholder='например: Иванов И.И., Петрова А.С.'></div>
  <div><label>ИНН или наименование нашей компании <span class=hint>(по ним программа найдёт нашу сторону)</span></label>
  <input type=text name=company value='{e(v.get('company', ''))}' placeholder='например: 7701234567'></div>
 </div>

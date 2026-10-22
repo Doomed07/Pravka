@@ -81,7 +81,7 @@ function formView(playbooks, memo) {
       <div class="form__row">
         <div class="form__field">
           <label class="form__label" for="f-authors">Авторы ваших правок в Word</label>
-          <input class="form__input" id="f-authors" name="our_authors" type="text" maxlength="500" value="${memo.our_authors || ''}" placeholder="через запятую, например: kandu, Zuev Pavel">
+          <input class="form__input" id="f-authors" name="our_authors" type="text" maxlength="500" value="${memo.our_authors || ''}" placeholder="через запятую, как они подписаны в Word: Иванов И.И., Петрова А.С.">
         </div>
         <div class="form__field">
           <label class="form__label" for="f-company">ИНН или наименование вашей компании</label>
