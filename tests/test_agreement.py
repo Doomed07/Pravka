@@ -30,3 +30,14 @@ def test_classify_marks_comment_and_lowers_materiality():
     assert AGREED_IF in c2.flags and c2.materiality != "низкая"
     c3 = classify(Change(kind="insert", before="", after="ок"))
     assert AGREED not in c3.flags
+
+
+def test_agreed_comment_needs_no_decision_conditional_does():
+    from pravki.playbook import Playbook, analyze
+
+    pb = Playbook(name="t")
+    a = classify(Change(kind="comment", before="Датой оплаты считается дата поступления средств", after="+"))
+    b = classify(Change(kind="comment", before="Оплата не позднее 12 апреля", after="Ок, но не позднее 8 апреля"))
+    analyze([a, b], pb)
+    assert a.level == "accept" and not a.lawyer_decision_needed and "Согласовано" in a.action
+    assert b.level == "review" and b.lawyer_decision_needed

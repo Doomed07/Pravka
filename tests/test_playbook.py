@@ -125,3 +125,38 @@ def test_bad_playbook_errors(tmp_path):
     f.write_text("не словарь", encoding="utf-8")
     with pytest.raises(PlaybookError):
         load_playbook(str(f))
+
+
+def test_number_without_fallback_goes_to_lawyer_not_concession(tmp_path):
+    """Нет границы уступки — значит, уступка не задана: правка хуже позиции уходит юристу, а не «принять как уступку»."""
+    from pravki.pipeline import review_files
+    from tests.helpers import dele, ins, make_docx, p, r
+
+    pb = tmp_path / "pb.yaml"
+    pb.write_text(
+        "name: t\nrules:\n  - id: T-1\n    title: Срок оплаты\n    topic: порядок и сроки оплаты\n"
+        "    match: ['оплат']\n    checks:\n      - {type: number, unit: days, direction: max, preferred: 5, context: 'оплат'}\n",
+        encoding="utf-8")
+    doc = make_docx(tmp_path / "t.docx", p(r("4.2. Оплата производится в течение "), dele("5 (пяти)"), ins("30 (тридцати)"),
+                                           r(" рабочих дней с момента подписания Акта.")))
+    ch = [c for c in review_files(str(doc), None, str(pb)).changes if c.rule_id == "T-1"][0]
+    assert ch.level == "review" and ch.lawyer_decision_needed
+    assert "граница уступки" in ch.explanation
+
+
+def test_number_edit_matched_by_rule_context_when_topic_is_off(tmp_path):
+    """Правка меняет только число, классификатор ошибся темой («уведомление» → обмен документами): правило о сроке приёмки
+    всё равно применяется, потому что число стоит в предложении о приёмке."""
+    from pravki.pipeline import review_files
+    from tests.helpers import dele, ins, make_docx, p, r
+
+    pb = tmp_path / "pb.yaml"
+    pb.write_text(
+        "name: t\nrules:\n  - id: T-2\n    title: Срок приёмки\n    topic: приёмка и качество\n"
+        "    match: ['приня\\w+\\s+выполненн\\w+\\s+Работ']\n"
+        "    checks:\n      - {type: number, unit: days, direction: max, preferred: 1, fallback: 3, context: 'приня'}\n",
+        encoding="utf-8")
+    doc = make_docx(tmp_path / "t.docx", p(r("4.1.6. Заказчик обязан в течение "), dele("1 (одного)"), ins("5 (пяти)"),
+                                           r(" календарного дня с момента получения уведомления осмотреть и принять выполненные Работы.")))
+    ch = [c for c in review_files(str(doc), None, str(pb)).changes if c.kind == "replace"][0]
+    assert ch.rule_id == "T-2" and ch.level == "reject"
