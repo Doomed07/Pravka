@@ -1,7 +1,8 @@
 """Внутренний HTTP-сервис движка «Правки» для веб-сервиса на Go.
 
 Запускается в отдельном контейнере (`python -m pravki engine`) и доступен только из внутренней сети Docker.
-Принимает договор, возвращает разбор: сводку, HTML-отчёт, Excel (base64) и список правок. Хранением, входом
+Принимает договор, возвращает разбор: сводку, HTML-отчёт, Excel (base64), список правок, единую версию
+(абзацы с правками) и её docx с примечаниями (base64). Хранением, входом
 и пользователями занимается Go-сервис; движок ничего не сохраняет на диск дольше одного запроса.
 
 Эндпоинты:
@@ -31,6 +32,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from .annotate import annotate_docx
 from .docx_reader import DocxError
 from .llm import Explainer, LLMError, OpenAICompatClient, is_local
 from .parties import PartiesError, RoleCheckError, SideConfig, profile_from_args
@@ -130,6 +132,10 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
         render_xlsx(rv, xlsx_path)
         with open(xlsx_path, "rb") as f:
             xlsx = base64.b64encode(f.read()).decode("ascii")
+        unified_path = os.path.join(d, "unified.docx")
+        annotate_docx(theirs, unified_path, rv.changes, rv.document)
+        with open(unified_path, "rb") as f:
+            unified = base64.b64encode(f.read()).decode("ascii")
     return 200, {
         "counts": rv.counts(),
         "warnings": rv.warnings,
@@ -139,6 +145,8 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
         "report_html": render_html(rv, pb.priority_topics if pb else None),
         "report_xlsx": xlsx,
         "changes": [c.to_dict() for c in rv.changes],
+        "document": rv.document,
+        "unified_docx": unified,
         "disclaimer": DISCLAIMER,
     }
 

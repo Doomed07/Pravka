@@ -58,11 +58,7 @@ function header({ nav = '', navDetail = false }) {
     <header class="site-header">
       <div class="container site-header__inner">
         <a class="logo" href="/">
-          <svg class="logo__mark" viewBox="0 0 22 20" aria-hidden="true" focusable="false">
-            <rect x="0" y="5" width="6" height="15" rx="1" fill="#c69b5d"/>
-            <rect x="8" y="0" width="6" height="20" rx="1" fill="#756ab4"/>
-            <rect x="16" y="7" width="6" height="13" rx="1" fill="#b55280"/>
-          </svg>
+          <span class="logo__mark" aria-hidden="true"></span>
           <span class="logo__word">Правки</span>
         </a>
         <nav class="main-nav" aria-label="Основное меню">${links}</nav>

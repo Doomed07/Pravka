@@ -45,7 +45,8 @@ func TestReviewsRepository_Integration(t *testing.T) {
 	saved, err := repo.CreateReview(ctx, core_domain.ContractReview{
 		UserID: u1, TheirsName: "Договор 03.04.docx", Playbook: "private/s.yaml", PlaybookName: "Услуги", OurRole: "Заказчик",
 		Counts: map[string]int{"всего": 30, "красные линии": 2}, Warnings: []string{"Найдено правок без отметки: 3"},
-	}, core_domain.ReviewFiles{ReportHTML: []byte("<h1>Отчёт</h1>"), ReportXLSX: []byte("PK\x03\x04"), Changes: []byte(`[{"id":"E001"}]`)})
+	}, core_domain.ReviewFiles{ReportHTML: []byte("<h1>Отчёт</h1>"), ReportXLSX: []byte("PK\x03\x04"), Changes: []byte(`[{"id":"E001"}]`),
+		Document: []byte(`[{"index":0}]`), Unified: []byte("PKdocx")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,8 @@ func TestReviewsRepository_Integration(t *testing.T) {
 	if _, err := repo.GetReview(ctx, u2, saved.ID); !errors.Is(err, core_errors.ErrNotFound) {
 		t.Fatalf("other user's review: err = %v, want not found", err)
 	}
-	for kind, want := range map[string]string{"html": "<h1>Отчёт</h1>", "xlsx": "PK\x03\x04", "changes": `[{"id": "E001"}]`} {
+	for kind, want := range map[string]string{"html": "<h1>Отчёт</h1>", "xlsx": "PK\x03\x04", "changes": `[{"id": "E001"}]`,
+		"document": `[{"index": 0}]`, "docx": "PKdocx"} {
 		got, err := repo.GetFile(ctx, u1, saved.ID, kind)
 		if err != nil || string(got) != want {
 			t.Errorf("file %s = %q, err = %v", kind, got, err)

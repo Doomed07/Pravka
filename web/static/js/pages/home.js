@@ -30,15 +30,24 @@ function memoSave(v) {
 
 function guestView() {
   return html`
-    <section class="hero hero--compact">
-      <h1 class="hero__title"><span class="hero__line">Разбор правок контрагента в договоре.</span></h1>
-      <p class="hero__note">Загрузите версию контрагента — получите отчёт: какие правки внесены, какие из них «тихие»,
-      и что по ним говорит ваш плейбук.</p>
+    <section class="hero">
+      <p class="eyebrow">Разбор правок контрагента</p>
+      <h1 class="hero__title">Две редакции — один договор с правками</h1>
+      <p class="hero__note">Загрузите вашу редакцию и ответ контрагента. «Правки» сведут их в одну версию: что вставлено,
+      что удалено, что изменено без отметки, и что по каждой правке говорит ваш плейбук.</p>
       <p class="hero__actions">
         <a class="button button--cta" href="/login">Войти</a>
         <a class="button button--ghost" href="/signup">Регистрация</a>
       </p>
-    </section>`;
+    </section>
+    <ol class="steps">
+      <li class="steps__item"><span class="steps__num">01</span><span class="steps__title">Загрузите две редакции</span>
+        <span class="steps__text">Свою отправленную и ответ контрагента, .docx.</span></li>
+      <li class="steps__item"><span class="steps__num">02</span><span class="steps__title">Получите единую версию</span>
+        <span class="steps__text">Правки в тексте, правки без отметки выделены отдельно.</span></li>
+      <li class="steps__item"><span class="steps__num">03</span><span class="steps__title">Решения на полях</span>
+        <span class="steps__text">Плейбук решает, ИИ поясняет, сомнения — юристу. Тот же файл в Word.</span></li>
+    </ol>`;
 }
 
 function formView(playbooks, memo) {
@@ -46,19 +55,21 @@ function formView(playbooks, memo) {
   return html`
     <header class="page-header">
       <h1 class="page-title">Новый разбор</h1>
-      <p class="page-subtitle">Версия контрагента обязательна. Ваша отправленная версия нужна, чтобы найти правки без режима рецензирования.</p>
+      <p class="page-subtitle">Редакция контрагента обязательна. Ваша отправленная редакция нужна, чтобы найти правки без режима рецензирования.</p>
     </header>
     <p class="alert" role="alert" id="review-alert" hidden></p>
     <form class="form form--wide" id="review-form" novalidate>
-      <div class="form__row">
-        <div class="form__field">
-          <label class="form__label" for="f-theirs">Версия контрагента (.docx)</label>
-          <input class="form__input" id="f-theirs" name="theirs" type="file" accept=".docx" required>
-        </div>
-        <div class="form__field">
-          <label class="form__label" for="f-base">Ваша отправленная версия (.docx)</label>
-          <input class="form__input" id="f-base" name="base" type="file" accept=".docx">
-        </div>
+      <div class="drops">
+        <label class="drop" for="f-base">
+          <span class="drop__title">Наша редакция</span>
+          <span class="drop__file" data-empty="Отправленная контрагенту, .docx — перетащите или выберите">Отправленная контрагенту, .docx — перетащите или выберите</span>
+          <input id="f-base" name="base" type="file" accept=".docx">
+        </label>
+        <label class="drop drop--main" for="f-theirs">
+          <span class="drop__title">Редакция контрагента</span>
+          <span class="drop__file" data-empty="Его ответ, .docx — перетащите или выберите">Его ответ, .docx — перетащите или выберите</span>
+          <input id="f-theirs" name="theirs" type="file" accept=".docx" required>
+        </label>
       </div>
       <div class="form__field">
         <label class="form__label" for="f-playbook">Плейбук</label>
@@ -81,7 +92,7 @@ function formView(playbooks, memo) {
         <input type="checkbox" id="f-confirm"${memo.confirm ? ' checked' : ''}>
         <span>Ваша сторона в договоре называется иначе, чем в плейбуке (например, «Участник» вместо «Заказчика») — подтверждаю роль плейбука вручную</span>
       </label>
-      <button class="button button--cta" type="submit" id="review-submit">Разобрать</button>
+      <p><button class="button button--cta" type="submit" id="review-submit">Свести и разобрать →</button></p>
       <p class="form__hint" id="review-progress" hidden role="status">Разбираю договор… Это может занять до нескольких минут.</p>
     </form>`;
 }
@@ -125,7 +136,25 @@ async function loggedInView() {
   wireForm();
 }
 
+// Зоны загрузки: показать имя выбранного файла и подсветить зону, когда над ней держат файл.
+function wireDrops() {
+  document.querySelectorAll('.drop').forEach((drop) => {
+    const input = drop.querySelector('input');
+    const label = drop.querySelector('.drop__file');
+    const show = () => {
+      const f = input.files[0];
+      label.textContent = f ? f.name : label.dataset.empty;
+      drop.classList.toggle('has-file', !!f);
+    };
+    input.addEventListener('change', show);
+    input.addEventListener('dragenter', () => drop.classList.add('is-over'));
+    ['dragleave', 'drop'].forEach((e) => input.addEventListener(e, () => drop.classList.remove('is-over')));
+    show();
+  });
+}
+
 function wireForm() {
+  wireDrops();
   const form = $('#review-form');
   const alertBox = $('#review-alert');
   const submit = $('#review-submit');
@@ -142,7 +171,7 @@ function wireForm() {
     show('');
     const theirs = $('#f-theirs').files[0];
     if (!theirs) {
-      show('Выберите файл версии контрагента (.docx).');
+      show('Выберите файл редакции контрагента (.docx).');
       $('#f-theirs').focus();
       return;
     }
@@ -170,7 +199,7 @@ function wireForm() {
       if (status === 422 && err.data && err.data.role) {
         confirmRole = err.data.role;
         show(`Сторона договора не подтверждена: ${err.message} Если вы действительно «${err.data.role}», нажмите «Разобрать» ещё раз — роль будет подтверждена вручную.`);
-        submit.textContent = `Подтвердить роль «${err.data.role}» и разобрать`;
+        submit.textContent = `Подтвердить роль «${err.data.role}» и разобрать →`;
       } else if (status === 400) {
         show(`Не удалось разобрать: ${err.message}`);
       } else if (status === 502) {

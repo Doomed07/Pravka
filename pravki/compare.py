@@ -11,7 +11,7 @@ from difflib import SequenceMatcher
 
 from .docx_reader import view_paragraphs
 from .extract import _short, extract_tracked
-from .model import Change, DocxDoc
+from .model import ANNOTATOR, Change, DocxDoc
 from .textdiff import diff_changes, flags_for_change, normalize, strip_label
 
 PAIR_THRESHOLD = 0.5
@@ -69,17 +69,17 @@ def resolve_ours(our_authors: list[str] | None, base: DocxDoc | None) -> tuple[s
     нашим не считается никто, а юристу показывается предупреждение: лучше лишние правки в отчёте, чем пропущенная.
     """
     explicit = {a for a in (our_authors or []) if a}
-    authors = [a for a in (base.authors if base else []) if a]
+    authors = [a for a in (base.authors if base else []) if a and a != ANNOTATOR]
     if explicit:
         extra = [a for a in authors if a not in explicit]
         warn = []
         if extra:
             warn.append("В отправленной версии есть авторы правок, не указанные как наши: " + ", ".join(extra) +
                         ". Их правки считаются правками контрагента.")
-        return explicit, warn
+        return explicit | {ANNOTATOR}, warn
     if len(authors) <= 1:
-        return set(authors), []
-    return set(), ["В отправленной версии правки нескольких авторов (" + ", ".join(authors) + "), а наши авторы не указаны "
+        return set(authors) | {ANNOTATOR}, []
+    return {ANNOTATOR}, ["В отправленной версии правки нескольких авторов (" + ", ".join(authors) + "), а наши авторы не указаны "
                    "(--our-author): ни один не считается нашим, поэтому наши прежние правки могут попасть в отчёт как правки "
                    "контрагента. Укажите, кто из авторов наш."]
 

@@ -11,7 +11,7 @@ from collections import Counter
 
 from lxml import etree
 
-from .model import Comment, DocxDoc, Paragraph, Segment
+from .model import ANNOTATOR, Comment, DocxDoc, Paragraph, Segment
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -431,6 +431,8 @@ def view_paragraphs(doc: DocxDoc, mode: str, ours: frozenset[str] | set[str] = f
     def seg_included(s: Segment) -> bool:
         if s.kind == "equal":
             return True
+        if s.author == ANNOTATOR:
+            return s.kind == "del"  # примечания программы (annotate.py) — как будто их нет
         mine = s.author in ours
         if mode == "accepted":
             return s.kind == "ins"

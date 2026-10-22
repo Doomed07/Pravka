@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 
 from .textdiff import normalize
 
+# Автор примечаний и дисклеймера в единой версии Word (annotate.py). Всегда считается нашим.
+ANNOTATOR = "Правки (черновик)"
+
 
 @dataclass
 class Segment:
@@ -152,6 +155,7 @@ class Change:
             "level": self.level,
             "action": self.action,
             "explanation": self.explanation,
+            "ai_explained": "template_explanation" in self.detail,  # пояснение написала модель
             "suggested": self.suggested,
             "escalate_to": self.escalate_to,
             "lawyer_decision_needed": self.lawyer_decision_needed,

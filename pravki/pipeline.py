@@ -11,6 +11,7 @@ from .docx_reader import read_docx
 from .model import Change
 from .parties import PARTY_TOPIC, RoleCheckError, SideConfig, SideResult, check_side, parties_of, party_changes
 from .playbook import Playbook, analyze, load_playbook, sort_key
+from .unified import build_unified
 
 DISCLAIMER = "Черновик — требует вашей проверки перед отправкой (draft — needs your review before sending)."
 
@@ -28,6 +29,7 @@ class Review:
     created: str = ""
     llm_used: bool = False
     side: SideResult | None = None  # проверка нашей стороны договора (C9)
+    document: list[dict] = field(default_factory=list)  # единая версия договора (unified.build_unified)
 
     def counts(self) -> dict:
         c = self.changes
@@ -130,6 +132,7 @@ def review_files(
         created=datetime.now().strftime("%Y-%m-%d %H:%M"),
         llm_used=explainer is not None,
         side=side_res,
+        document=build_unified(base, theirs, ours, changes),
     )
 
 

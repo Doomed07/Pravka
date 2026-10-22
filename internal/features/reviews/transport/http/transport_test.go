@@ -47,6 +47,15 @@ func (f *fakeService) File(_ context.Context, userID, id int, kind string) ([]by
 	if userID != 1 {
 		return nil, core_errors.ErrNotFound
 	}
+	switch kind {
+	case "document":
+		return []byte(`[{"index":0}]`), nil
+	case "docx":
+		if id == 4 { // разбор, сделанный до появления единой версии
+			return nil, core_errors.ErrNotFound
+		}
+		return []byte("PKdocx"), nil
+	}
 	return []byte("<h1>отчёт</h1>"), nil
 }
 func (f *fakeService) Delete(context.Context, int, int) error { return nil }
@@ -142,5 +151,30 @@ func TestReport_CSPAndOwnership(t *testing.T) {
 	router(&fakeService{}, 1).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/reviews/abc", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("bad id: status = %d, want 404", rec.Code)
+	}
+}
+
+func TestUnifiedVersion(t *testing.T) {
+	get := func(userID int, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		router(&fakeService{}, userID).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	if rec := get(1, "/reviews/5/document"); rec.Code != http.StatusOK || rec.Body.String() != `[{"index":0}]` ||
+		!strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("document: status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	rec := get(1, "/reviews/5/docx")
+	if rec.Code != http.StatusOK || rec.Body.String() != "PKdocx" ||
+		!strings.Contains(rec.Header().Get("Content-Disposition"), "pravki_5.docx") {
+		t.Fatalf("docx: status = %d, disposition = %q", rec.Code, rec.Header().Get("Content-Disposition"))
+	}
+	for _, path := range []string{"/reviews/5/document", "/reviews/5/docx"} {
+		if rec := get(2, path); rec.Code != http.StatusNotFound {
+			t.Errorf("someone else's %s: status = %d, want 404", path, rec.Code)
+		}
+	}
+	if rec := get(1, "/reviews/4/docx"); rec.Code != http.StatusNotFound {
+		t.Errorf("old review without docx: status = %d, want 404", rec.Code)
 	}
 }

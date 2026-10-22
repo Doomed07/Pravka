@@ -77,6 +77,7 @@ func (s *ReviewsService) Create(ctx context.Context, userID int, req core_domain
 	}
 	out, err := s.repo.CreateReview(ctx, rev, core_domain.ReviewFiles{
 		ReportHTML: []byte(res.ReportHTML), ReportXLSX: xlsx, Changes: res.Changes,
+		Document: res.Document, Unified: res.Unified,
 	})
 	if err != nil {
 		return core_domain.ContractReview{}, fmt.Errorf("save review: %w", err)

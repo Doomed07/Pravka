@@ -53,11 +53,16 @@ var req = core_domain.ReviewRequest{Theirs: core_domain.UploadedFile{Name: "Се
 
 func TestReview_OK(t *testing.T) {
 	x := base64.StdEncoding.EncodeToString([]byte("PKxlsx"))
-	srv := fakeEngine(t, 200, `{"counts":{"всего":2},"warnings":[],"report_html":"<p>r</p>","report_xlsx":"`+x+`","changes":[]}`)
+	d := base64.StdEncoding.EncodeToString([]byte("PKdocx"))
+	srv := fakeEngine(t, 200, `{"counts":{"всего":2},"warnings":[],"report_html":"<p>r</p>","report_xlsx":"`+x+
+		`","changes":[],"document":[{"index":0}],"unified_docx":"`+d+`"}`)
 	defer srv.Close()
 	res, xlsx, err := client(srv.URL).Review(context.Background(), req)
 	if err != nil || res.Counts["всего"] != 2 || string(xlsx) != "PKxlsx" || res.ReportHTML != "<p>r</p>" {
 		t.Fatalf("res=%+v xlsx=%q err=%v", res, xlsx, err)
+	}
+	if string(res.Unified) != "PKdocx" || string(res.Document) != `[{"index":0}]` || res.UnifiedDOCX != "" {
+		t.Fatalf("unified=%q document=%s", res.Unified, res.Document)
 	}
 }
 
