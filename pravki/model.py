@@ -34,6 +34,7 @@ class Paragraph:
     heading: str = ""  # ближайший выше заголовок раздела
     style: str = ""
     in_table: bool = False
+    table: tuple = ()  # (номер таблицы, строка, столбец, ширина в столбцах) — для абзацев внутри таблицы
     mark: str = ""  # '', 'ins', 'del': отслеживаемая правка знака абзаца
     mark_author: str = ""
     segments: list[Segment] = field(default_factory=list)

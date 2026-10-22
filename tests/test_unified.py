@@ -70,3 +70,44 @@ def test_auto_numbering_label_is_shown_separately(tmp_path):
 def test_cosmetic_differences_are_not_marked(tmp_path):
     doc, _ = _unified(tmp_path, p(r("1.1. Услуги «Заказчика» – срок 10 дней.")), p(r('1.1. Услуги "Заказчика" - срок 20 дней.')))
     assert _marked(doc) == [("silent_del", "10"), ("silent_ins", "20")]
+
+
+# ---------------------------------------------------------------- таблицы
+def _tc(*paras, span=1):
+    pr = f'<w:tcPr><w:gridSpan w:val="{span}"/></w:tcPr>' if span > 1 else ""
+    return f"<w:tc>{pr}{''.join(paras)}</w:tc>"
+
+
+def _tbl(*rows):
+    return "<w:tbl>" + "".join(f"<w:tr>{''.join(r)}</w:tr>" for r in rows) + "</w:tbl>"
+
+
+def test_table_cells_keep_coordinates_and_empty_cells(tmp_path):
+    """Таблица из Word не рассыпается: у каждой ячейки есть номер таблицы, строка, столбец; пустые ячейки на месте."""
+    from pravki.pipeline import review_files
+    from tests.helpers import make_docx, p, r
+
+    def doc(price):
+        return (p(r("1.2. Перечень оказываемых услуг")) +
+                _tbl([_tc(p(r("№"))), _tc(p(r("Наименование услуги"))), _tc(p(r("Сумма, руб.")))],
+                     [_tc(p(r("1"))), _tc(p(r("Участие в мероприятии"))), _tc(p(r(price)))],
+                     [_tc(p(r("Итого")), span=2), _tc(p(r("")))]) +
+                p(r("Содержание услуги закреплено в Приложении № 1.")))
+
+    base = make_docx(tmp_path / "base.docx", doc("475 000"))
+    theirs = make_docx(tmp_path / "theirs.docx", doc("500 000"))  # цену поменяли без отметки
+    rv = review_files(str(theirs), str(base))
+    cells = [d for d in rv.document if d["table"]]
+    assert len(cells) == 9  # 3 + 3 + 2 ячейки, включая пустую, и старое значение цены в её ячейке
+    assert {tuple(d["table"][:3]) for d in cells} == {(0, 0, 0), (0, 0, 1), (0, 0, 2), (0, 1, 0), (0, 1, 1), (0, 1, 2),
+                                                      (0, 2, 0), (0, 2, 2)}
+    itogo = next(d for d in cells if d["table"][1] == 2 and d["table"][2] == 0)
+    assert itogo["table"][3] == 2  # объединённая ячейка шириной в два столбца
+    price = [s for d in cells if d["table"][1] == 1 and d["table"][2] == 2 for s in d["segments"]]
+    # тихая правка цены видна в своей ячейке: было 475 000, стало 500 000
+    assert {(s["k"], s["t"]) for s in price} == {("silent_del", "475 000"), ("silent_ins", "500 000")}
+    # таблица идёт одним куском: между её ячейками нет абзацев вне таблицы
+    flags = [bool(d["table"]) for d in rv.document]
+    assert flags == [False] + [True] * 9 + [False]
+    outside = [d for d in rv.document if not d["table"]]
+    assert all(d["table"] is None for d in outside) and len(outside) == 2

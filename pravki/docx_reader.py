@@ -314,6 +314,40 @@ def _in_table(p) -> bool:
     return any(a.tag == q("tc") for a in p.iterancestors())
 
 
+def _table_pos(p, table_ids: dict) -> tuple:
+    """(номер таблицы, строка, столбец, ширина) для абзаца в ячейке; () вне таблицы. Берётся ближайшая (внутренняя) ячейка.
+
+    Столбец считается по сетке таблицы: объединённые по горизонтали ячейки (gridSpan) занимают несколько столбцов.
+    """
+    tc = next((a for a in p.iterancestors() if a.tag == q("tc")), None)
+    if tc is None:
+        return ()
+    tr = tc.getparent()
+    tbl = tr.getparent() if tr is not None else None
+    if tr is None or tbl is None or tbl.tag != q("tbl"):
+        return ()
+    tid = table_ids.get(tbl)
+    if tid is None:
+        return ()
+    rows = [r for r in tbl if r.tag == q("tr")]
+    col = 0
+    for cell in tr:
+        if cell.tag != q("tc"):
+            continue
+        span = 1
+        tcpr = cell.find(q("tcPr"))
+        gs = tcpr.find(q("gridSpan")) if tcpr is not None else None
+        if gs is not None:
+            try:
+                span = max(1, int(gs.get(q("val"), "1")))
+            except ValueError:
+                span = 1
+        if cell is tc:
+            return (tid, rows.index(tr) if tr in rows else 0, col, span)
+        col += span
+    return ()
+
+
 def _is_heading(para: Paragraph, text: str, style_name: str) -> bool:
     sn = (style_name or "").lower()
     if sn.startswith("heading") or sn.startswith("заголовок") or sn == "title":
@@ -348,6 +382,8 @@ def read_docx(path: str) -> DocxDoc:
         raise DocxError("в document.xml нет тела документа")
 
     paragraphs: list[Paragraph] = []
+    # номера таблиц по порядку; словарь держит ссылки на элементы, поэтому lxml отдаёт те же объекты-обёртки
+    table_ids = {tbl: i for i, tbl in enumerate(body.iter(q("tbl")))}
     open_comments: dict[str, list[str]] = {}
     comment_para: dict[str, int] = {}
     anchors_all: dict[str, str] = {}
@@ -364,6 +400,7 @@ def read_docx(path: str) -> DocxDoc:
         style_id = style_el.get(q("val"), "") if style_el is not None else ""
         para.style = numbering.style_name(style_id)
         para.in_table = _in_table(p)
+        para.table = _table_pos(p, table_ids) if para.in_table else ()
         para.mark, para.mark_author = _paragraph_mark(p)
         # текст «как показан»: для нумерации берём исходный текст абзаца без удалённого
         visible = "".join(s.text for s in para.segments if s.kind in ("equal", "ins"))

@@ -1050,3 +1050,29 @@ del + ins {
     scroll-behavior: smooth;
   }
 }
+
+/* ---------- Таблицы договора в единой версии ---------- */
+
+.doc__text--table {
+  overflow-x: auto;
+}
+
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.doc-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.doc-table__p {
+  margin: 0;
+}
+
+.doc-table__p + .doc-table__p {
+  margin-top: 4px;
+}

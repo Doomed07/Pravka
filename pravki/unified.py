@@ -85,8 +85,24 @@ def _auto_label(para: Paragraph) -> str:
     return "" if para.label_in_text else para.label
 
 
+def _removed_cell(bp: Paragraph, prev: dict | None):
+    """Ячейка для абзаца, удалённого без отметки из таблицы: в той же таблице версии контрагента, что и абзац перед ним.
+
+    Так короткое значение ячейки («475 000» → «500 000») показывается в своей ячейке, а не отдельной строкой,
+    разрывающей таблицу. Номер таблицы берём у соседнего абзаца: в двух версиях таблицы могут нумероваться по-разному.
+    """
+    if not bp.table:
+        return None
+    if prev is not None and prev.get("table"):
+        return [prev["table"][0], bp.table[1], bp.table[2], bp.table[3]]
+    return list(bp.table)
+
+
 def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Change]) -> list[dict]:
-    """Список абзацев единой версии: {index, clause, label, style, segments, changes}.
+    """Список абзацев единой версии: {index, clause, label, style, segments, changes, table}.
+
+    table — [номер таблицы, строка, столбец, ширина] для абзаца в ячейке таблицы (None вне таблицы): по нему таблица
+    собирается обратно целиком, а не рассыпается на отдельные абзацы.
 
     label — номер пункта из автонумерации Word (его нет в тексте абзаца); пусто, если номер напечатан в тексте.
 
@@ -97,10 +113,10 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
     paras: dict[int, dict] = {}
     for para in theirs.paragraphs:
         segs = _tracked_segments(para, ours)
-        if not "".join(s["t"] for s in segs).strip():
-            continue
+        if not "".join(s["t"] for s in segs).strip() and not para.table:
+            continue  # пустой абзац; пустую ячейку таблицы оставляем, иначе таблица «съезжает»
         paras[para.index] = {"index": para.index, "clause": para.clause, "label": _auto_label(para), "style": para.style,
-                             "segments": segs, "changes": []}
+                             "segments": segs, "changes": [], "table": list(para.table) if para.table else None}
 
     removed: list[tuple[int, dict]] = []  # абзацы, удалённые без отметки: (после какого абзаца, абзац)
     if base is not None:
@@ -121,7 +137,7 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
                 bp, btext = base_view[i]
                 removed.append((last, {"index": -1, "clause": bp.clause, "label": _auto_label(bp), "style": bp.style,
                                        "segments": [{"k": "silent_del", "t": _squash(btext), "a": ""}],
-                                       "changes": []}))
+                                       "changes": [], "table": _removed_cell(bp, paras.get(last))}))
 
     out: list[dict] = []
     pending = sorted(removed, key=lambda x: x[0])

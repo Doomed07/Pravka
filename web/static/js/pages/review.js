@@ -129,10 +129,60 @@ function row(para, i, total, byID, order) {
     </div>`;
 }
 
+// Таблица из Word собирается обратно по координатам ячеек (table = [номер, строка, столбец, ширина]):
+// один блок слева — вся таблица, справа — заметки ко всем её правкам.
+function tableRow(paras, i, total, byID, order) {
+  const changes = paras.flatMap((p) => p.changes.map((id) => byID.get(id)).filter(Boolean));
+  const changed = changes.length > 0 || paras.some((p) => p.segments.some((s) => s.k !== 'equal'));
+  const silent = paras.some((p) => p.segments.some((s) => s.k.startsWith('silent')));
+  const cls = ['doc__text', 'doc__text--table'];
+  if (silent) cls.push('doc__text--silent');
+  else if (changed) cls.push('doc__text--changed');
+  if (i === 0) cls.push('doc__text--first');
+  if (i === total - 1) cls.push('doc__text--last');
+  const rows = new Map();
+  for (const p of paras) {
+    const [, r, c, span] = p.table;
+    if (!rows.has(r)) rows.set(r, new Map());
+    const cells = rows.get(r);
+    if (!cells.has(c)) cells.set(c, { span: span || 1, paras: [] });
+    cells.get(c).paras.push(p);
+  }
+  const first = changes[0];
+  const body = [...rows.keys()].sort((a, b) => a - b).map((r) => {
+    const cells = rows.get(r);
+    return html`<tr>${[...cells.keys()].sort((a, b) => a - b).map((c) => {
+      const cell = cells.get(c);
+      return html`<td${cell.span > 1 ? html` colspan="${cell.span}"` : ''}>${cell.paras.map((p) => html`
+        <p class="doc-table__p" id="p-${p.index}" ${p.changes[0] ? html`data-change="${p.changes[0]}"` : ''}>${p.label ? `${p.label} ` : ''}${p.segments.map(segment)}</p>`)}</td>`;
+    })}</tr>`;
+  });
+  return html`
+    <div class="doc__row">
+      <div class="doc__num${first && verdict(first).mod === 'reject' ? ' doc__num--hot' : ''}">${first ? num(order.get(first.id)) : ''}</div>
+      <div class="${cls.join(' ')}" ${first ? html`data-change="${first.id}"` : ''}>
+        <table class="doc-table"><tbody>${body}</tbody></table>
+      </div>
+      <div class="doc__notes">${changes.map((ch) => note(ch, order))}</div>
+    </div>`;
+}
+
+// blocks группирует подряд идущие абзацы одной таблицы в один блок.
+function blocks(doc) {
+  const out = [];
+  for (const p of doc) {
+    const last = out[out.length - 1];
+    if (p.table && last && last.table && last.paras[0].table[0] === p.table[0]) last.paras.push(p);
+    else out.push(p.table ? { table: true, paras: [p] } : { table: false, para: p });
+  }
+  return out;
+}
+
 function documentView(doc, changes, order) {
   const byID = new Map(changes.map((c) => [c.id, c]));
   const placed = new Set(doc.flatMap((p) => p.changes));
   const orphans = changes.filter((c) => !placed.has(c.id));
+  const parts = blocks(doc);
   return html`
     <div class="doc">
       ${orphans.length ? html`
@@ -140,7 +190,7 @@ function documentView(doc, changes, order) {
           <p class="eyebrow">Без места в тексте: стороны, реквизиты, общие замечания</p>
           ${orphans.map((ch) => note(ch, order))}
         </div>` : ''}
-      ${doc.map((para, i) => row(para, i, doc.length, byID, order))}
+      ${parts.map((b, i) => (b.table ? tableRow(b.paras, i, parts.length, byID, order) : row(b.para, i, parts.length, byID, order)))}
     </div>`;
 }
 
@@ -212,7 +262,7 @@ function select(id, scroll) {
   document.querySelectorAll('.is-current').forEach((el) => el.classList.remove('is-current'));
   const item = document.querySelector(`.rv-list__item[data-change="${CSS.escape(id)}"]`);
   const card = document.getElementById('c-' + id);
-  const para = card ? card.closest('.doc__row')?.querySelector('.doc__text') : null;
+  const para = card ? card.closest('.doc__row')?.querySelector('.doc__text') : null; // для таблицы — вся таблица
   [item, card, para].forEach((el) => el && el.classList.add('is-current'));
   if (scroll === 'doc' && (para || card)) (para || card).scrollIntoView({ block: 'center' });
   if (scroll === 'list' && item) item.scrollIntoView({ block: 'nearest' });
