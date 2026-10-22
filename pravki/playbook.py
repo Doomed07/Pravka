@@ -194,6 +194,16 @@ def _check_number(ch: Change, c: dict, res: Result):
     u = UNIT_RU.get(unit, "")
     label = c.get("label", "значение")
     res.applied = True
+    if direction == "eq":
+        # значение фиксировано («всегда 10%»): любое отклонение в любую сторону — решение юриста
+        if pref is not None and abs(v - pref) < 1e-9:
+            res.reasons.append(f"{label}: {_fmt(v)} {u}".rstrip() + " — как в позиции плейбука")
+            _upgrade(res, "accept")
+        else:
+            res.reasons.append(f"{label}: {_fmt(v)} {u}".rstrip() + f" — отличается от позиции плейбука ({_fmt(pref)} {u}".rstrip()
+                               + "), отклонение согласует юрист")
+            _upgrade(res, "review")
+        return
     if direction == "max":
         ok_pref = pref is None or v <= pref
         ok_fb = fb is not None and v <= fb
@@ -436,7 +446,7 @@ def _analyze_one(ch: Change, pb: Playbook) -> None:
     if level == "review":
         ch.lawyer_decision_needed = True
         ch.action = "Нужно решение юриста"
-    if level == "reject" and rule.escalate_to:
+    if level in ("reject", "review") and rule.escalate_to:
         ch.escalate_to = rule.escalate_to
     expl = [rule.title, reason]
     if level in ("reject", "fallback", "review") and rule.preferred:
