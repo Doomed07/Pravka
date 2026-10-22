@@ -27,6 +27,8 @@
     python -m pravki eval                    # метрики на синтетических договорах
     python -m pravki anonymize ... --out data/golden/anon --map data/golden/anon_map.json   # см. README «Золотой набор»
     python -m pravki worksheet --pair "Имя=theirs.docx::base.docx" --out data/golden/anketa.xlsx
+    make env-init && make up                 # веб-сервис в Docker (Go + движок на Python), http://127.0.0.1:8080
+    go test ./...                            # тесты Go; хранилище — с PRAVKI_TEST_DB=1 и PostgreSQL
 
 ## Как вносить изменения
 * Работа в ветках `feature/...` или `fix/...`, в `main` через pull request; перед коммитом `python -m pytest -q`.
@@ -38,4 +40,6 @@
 * Коммиты на русском, коротко: что и зачем.
 
 ## Устройство
+Веб-сервис на Go (каркас из проекта Bookshelf) в `cmd/`, `internal/`, `web/`, `migrations/`; движок на Python — `pravki/`,
+связь через `pravki/engine_api.py` ↔ `internal/engine`. Решения по правкам принимает только движок (плейбук).
 См. раздел «Устройство» в `README.md`, решения проекта в `docs/DECISIONS.md`, состояние и следующие шаги в `STATUS.md`.

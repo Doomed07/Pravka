@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: pravki
+    static_configs:
+      - targets: ["pravkiapp:2112"]

@@ -1,0 +1,12 @@
+.git
+.env
+out/
+data/
+projects/
+demo/
+.venv/
+venv/
+**/__pycache__
+*.docx
+*.xlsx
+playbooks/private/

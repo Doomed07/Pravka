@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход · Правки</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#14181c">
+  <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <script type="module" src="/static/js/pages/login.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Перейти к содержимому</a>
+  <div id="site-header"></div>
+  <main class="site-main" id="main">
+    <div id="app">
+      <div class="container page page--narrow">
+        <header class="page-header">
+          <h1 class="page-title">Вход</h1>
+          <p class="page-subtitle">Войдите по имени пользователя или email.</p>
+        </header>
+        <p class="alert" role="alert" id="login-alert" hidden></p>
+        <form class="form" id="login-form" action="/login" method="post" novalidate>
+          <div class="form__field">
+            <label class="form__label" for="login-login">Имя пользователя или email</label>
+            <input class="form__input" id="login-login" name="login" type="text" required maxlength="254" autocomplete="username" autocapitalize="none" spellcheck="false">
+          </div>
+          <div class="form__field">
+            <label class="form__label" for="login-password">Пароль</label>
+            <input class="form__input" id="login-password" name="password" type="password" required maxlength="72" autocomplete="current-password">
+          </div>
+          <button class="button button--cta" type="submit">Войти</button>
+        </form>
+        <p class="form__hint form__footnote">Нет аккаунта? <a href="/signup">Зарегистрируйтесь</a>.</p>
+      </div>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+</body>
+</html>
