@@ -194,6 +194,12 @@ def cmd_labels(a) -> int:
     return 0
 
 
+def cmd_web(a) -> int:
+    from .web import serve
+    serve(a.port, not a.no_browser)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="pravki", description="Разбор правок контрагента в договоре (docx)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -258,6 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
     lb.add_argument("xlsx")
     lb.add_argument("--out")
     lb.set_defaults(fn=cmd_labels)
+
+    wb = sub.add_parser("web", help="веб-приложение на этом компьютере: загрузить договор в браузере и получить отчёт")
+    wb.add_argument("--port", type=int, default=8765)
+    wb.add_argument("--no-browser", action="store_true", help="не открывать браузер")
+    wb.set_defaults(fn=cmd_web)
 
     s = sub.add_parser("synth", help="создать пример: наша версия + версия контрагента с правками")
     s.add_argument("out")
