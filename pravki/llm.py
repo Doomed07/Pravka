@@ -27,6 +27,13 @@ SYSTEM = (
 )
 
 
+GRAMMAR_SYSTEM = (
+    "Ты проверяешь правку в договоре. Ответь одним словом. ДА — если правка только исправляет грамматику, орфографию "
+    "или пунктуацию и не меняет смысл условия: не меняет, кто, что, когда и сколько обязан сделать, и не позволяет "
+    "трактовать условие иначе, в пользу одной из сторон. НЕТ — во всех остальных случаях и если сомневаешься."
+)
+
+
 class LLMError(Exception):
     pass
 
@@ -98,6 +105,19 @@ class Explainer:
         self.client = client
         self.rejected = 0
         self.used = 0
+
+    def confirms_technical(self, ch: Change) -> bool:
+        """Модель подтверждает, что техническая правка не меняет смысл. Модель может только отменить решение правила:
+        «НЕТ», неясный ответ или сбой проверки — правка уходит юристу как обычная."""
+        facts = {"было": ch.before, "стало": ch.after, "абзац до правки": ch.context[:600],
+                 "абзац после правки": ch.context_after[:600]}
+        try:
+            text = self.client.complete(GRAMMAR_SYSTEM, json.dumps(facts, ensure_ascii=False))
+        except LLMError as e:
+            ch.notes.append(f"Модель недоступна, грамматическую правку проверило только правило ({e})")
+            return True  # без модели действует правило, как и без подключённой модели
+        answer = re.sub(r"[^А-ЯЁA-Z]", "", text.strip().upper()[:5])
+        return answer.startswith("ДА")
 
     def apply(self, ch: Change) -> None:
         if ch.materiality == "техническая" or ch.kind == "comment" and not ch.rule_id:

@@ -115,8 +115,16 @@ def review_files(
     for c in from_base:
         mark_accepted_from_base(c)
     regular = [c for c in regular if c.topic != PARTY_TOPIC and not c.detail.get("accepted_from_base")]
+    if explainer is not None:
+        for c in regular:
+            if c.materiality == "техническая" and c.kind != "comment" and not explainer.confirms_technical(c):
+                undo_technical(c)
     if pb is not None:
         analyze(regular, pb)
+    for c in regular:
+        if c.detail.get("technical_doubt"):  # сомнение модели — только юристу, «принять» по правилу не ставится
+            c.level, c.lawyer_decision_needed = "review", True
+            c.action = "Нужно решение юриста: правка похожа на грамматическую, но смысл может меняться"
     if explainer is not None:
         for c in regular:
             explainer.apply(c)
@@ -140,6 +148,15 @@ def review_files(
         side=side_res,
         document=build_unified(base, theirs, ours, changes),
     )
+
+
+def undo_technical(ch: Change) -> None:
+    """Модель усомнилась, что правка только техническая: правка идёт обычным путём, по плейбуку и к юристу."""
+    ch.detail.pop("grammar", None)
+    ch.detail["technical_doubt"] = True
+    ch.materiality = "средняя"
+    ch.explanation = ""
+    ch.notes.append("Модель усомнилась, что правка только грамматическая или техническая: проверьте смысл условия")
 
 
 def mark_accepted_from_base(ch: Change) -> None:

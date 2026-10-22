@@ -13,6 +13,7 @@ from typing import Any
 
 import yaml
 
+from .classify import technical_explanation
 from .model import Change
 from .textdiff import normalize, numbers
 
@@ -376,11 +377,12 @@ def analyze(changes: list[Change], pb: Playbook) -> list[Change]:
 
 def _analyze_one(ch: Change, pb: Playbook) -> None:
     if ch.materiality == "техническая" and ch.kind != "comment":
+        what = "грамматическая правка" if ch.detail.get("grammar") else "техническая правка"
         ch.level = "accept"
-        ch.action = "Принять (техническая правка: опечатка, знаки, регистр, пробелы)"
+        ch.action = f"Принять ({what}: опечатка, знаки, окончания, регистр, пробелы)"
         if ch.source != "tracked":
-            ch.action = "Принять после беглой проверки (техническая правка, но не отмечена в рецензировании)"
-        ch.explanation = "Смысл условия не меняется."
+            ch.action = f"Принять после беглой проверки ({what}, но не отмечена в рецензировании)"
+        ch.explanation = technical_explanation(ch)
         return
 
     if ch.kind == "comment" and "согласие в комментарии" in ch.flags:

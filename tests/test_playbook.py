@@ -90,9 +90,9 @@ def test_out_of_playbook_is_marked():
 
 
 def test_technical_edit_accepted_but_not_silently():
-    ch = run(SV, mk("разработке", "разработки", "услуги по разработке программного обеспечения"))
+    ch = run(SV, mk("разарботке", "разработке", "услуги по разарботке программного обеспечения"))
     assert ch.materiality == "техническая" and ch.level == "accept"
-    s = run(SV, mk("разработке", "разработки", "услуги по разработке программного обеспечения", source="silent"))
+    s = run(SV, mk("разарботке", "разработке", "услуги по разарботке программного обеспечения", source="silent"))
     assert "не отмечена" in s.action
 
 
