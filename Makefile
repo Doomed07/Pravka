@@ -3,7 +3,7 @@
 export
 
 DB_URL = postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@pravki-postgres:5432/$(POSTGRES_DB)?sslmode=disable
-MODEL ?= $(PRAVKI_LLM_MODEL)
+MODEL ?= $(or $(PRAVKI_LLM_MODEL),hf.co/ai-sage/GigaChat3.1-10B-A1.8B-GGUF:Q4_K_M)
 
 .PHONY: env-init up down restart logs migrate migrate-down ps ai-up ai-pull test test-go test-py
 
@@ -44,7 +44,7 @@ migrate-down:
 	@read -p "Откатить последнюю миграцию? [y/N]: " ans; [ "$$ans" = "y" ] && \
 		docker compose run --rm pravki-migrate -path /migrations -database "$(DB_URL)" down 1 || echo "Отменено"
 
-# Локальная модель в Docker (Ollama). На Mac без видеокарты в Docker она работает медленно —
+# Локальная модель GigaChat 3.1 Lightning через Ollama в Docker. На Mac без видеокарты в Docker она работает медленно —
 # быстрее поставить Ollama прямо на Mac и указать PRAVKI_LLM_URL=http://host.docker.internal:11434/v1
 ai-up:
 	@docker compose --profile ai up -d ollama
