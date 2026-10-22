@@ -294,7 +294,9 @@ def _round(tmp_path, ours_text, theirs_text, tracked_xml=None):
 
 
 def _party(rv):
-    return [c for c in rv.changes if c.topic == PARTY_TOPIC]
+    """Правки сверки сторон между версиями (C10). Правки текста преамбулы тоже идут в тему «стороны и реквизиты»,
+    но это отдельные правки E…, их проверяет test_preamble_edit_goes_to_lawyer_as_party_topic."""
+    return [c for c in rv.changes if c.topic == PARTY_TOPIC and c.id.startswith("S")]
 
 
 def test_same_parties_give_no_party_changes(tmp_path):
@@ -305,6 +307,12 @@ def test_same_parties_give_no_party_changes(tmp_path):
 def test_representative_change_is_not_a_party_change(tmp_path):
     rv = _round(tmp_path, STD, STD.replace("Петрова Петра Петровича", "Николаева Николая Николаевича"))
     assert _party(rv) == []
+
+
+def test_preamble_edit_goes_to_lawyer_as_party_topic(tmp_path):
+    rv = _round(tmp_path, STD, STD.replace("Петрова Петра Петровича", "Николаева Николая Николаевича"))
+    edits = [c for c in rv.changes if c.id.startswith("E")]
+    assert edits and all(c.topic == PARTY_TOPIC and c.lawyer_decision_needed and c.rule_id == "PARTY" for c in edits)
 
 
 def test_role_swap_is_flagged_and_first(tmp_path):
@@ -326,7 +334,7 @@ def test_tracked_role_swap_is_flagged_even_if_playbook_ignores_it(tmp_path):
         r("», с другой стороны")))
     rv = review_files(theirs, base, PB, side=EXEC)
     assert _party(rv) and "Изменились роли сторон" in _party(rv)[0].explanation
-    assert any(c.topic != PARTY_TOPIC for c in rv.changes)  # сами отмеченные правки тоже остаются в списке
+    assert any(c.id.startswith("E") for c in rv.changes)  # сами отмеченные правки тоже остаются в списке
 
 
 def test_inn_change_is_flagged(tmp_path):
@@ -377,7 +385,8 @@ def test_party_change_blocks_nothing_but_warns_and_reports_first(tmp_path):
             assert first < html.index(later)
     write_json(rv, str(tmp_path / "c.json"))
     data = json.loads((tmp_path / "c.json").read_text(encoding="utf-8"))
-    assert data["counts"]["стороны и реквизиты"] == 1 and data["changes"][0]["topic"] == PARTY_TOPIC
+    # сверка сторон (S001) идёт первой; сама правка ИНН в преамбуле — тоже в теме «стороны и реквизиты»
+    assert data["counts"]["стороны и реквизиты"] == 2 and data["changes"][0]["id"] == "S001"
 
 
 def test_party_changes_are_tracked_by_journal_as_repeats(tmp_path):

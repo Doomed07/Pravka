@@ -157,6 +157,7 @@ class Change:
             "action": self.action,
             "explanation": self.explanation,
             "ai_explained": "template_explanation" in self.detail,  # пояснение написала модель
+            "accepted_from_base": list(self.detail.get("accepted_from_base", [])),  # авторы принятой правки из нашей версии
             "suggested": self.suggested,
             "escalate_to": self.escalate_to,
             "lawyer_decision_needed": self.lawyer_decision_needed,

@@ -32,7 +32,9 @@ def comment_lines(ch: Change) -> list[str]:
     if ch.rule_id and ch.rule_id != "PARTY":
         head += f" · правило {ch.rule_id}"
     lines = [f"{ch.id} · {head}"]
-    if ch.source in ("silent", "diff"):
+    if ch.detail.get("accepted_from_base"):
+        lines.append(f"Принята правка из нашей версии: было «{ch.before or '—'}» → стало «{ch.after or '—'}».")
+    elif ch.source in ("silent", "diff"):
         lines.append(f"Изменено без отметки в рецензировании: было «{ch.before or '—'}» → стало «{ch.after or '—'}».")
     if ch.explanation:
         lines.append(("Пояснение ИИ: " if "template_explanation" in ch.detail else "Пояснение: ") + ch.explanation)

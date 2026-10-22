@@ -97,6 +97,8 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
     """
     base_view = [(p, t) for p, t in view_paragraphs(base, "rejected", ours) if normalize(t)]
     their_view = [(p, t) for p, t in view_paragraphs(theirs, "rejected", ours) if normalize(t)]
+    # наша версия со всеми правками принятыми: так видно, что контрагент просто принял правку из рецензирования
+    base_accepted = {p.index: normalize(t) for p, t in view_paragraphs(base, "accepted", ours)}
     pairs = _align([t for _, t in base_view], [t for _, t in their_view])
     changes: list[Change] = []
     last_order = -1.0
@@ -108,6 +110,9 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
             bp, btext = base_view[i]
             if normalize(btext) == normalize(ttext):
                 continue
+            accepted_by = []
+            if base_accepted.get(bp.index) == normalize(ttext):
+                accepted_by = sorted({s.author or "без имени" for s in bp.segments if s.kind != "equal" and s.author not in ours})
             for before, after in diff_changes(normalize(btext), normalize(ttext)):
                 kind = "replace" if before and after else ("insert" if after else "delete")
                 ch = Change(
@@ -116,6 +121,8 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
                     context=_short(btext), context_after=_short(ttext),
                 )
                 ch.flags = flags_for_change(before, after)
+                if accepted_by:
+                    ch.detail["accepted_from_base"] = accepted_by
                 changes.append(ch)
         elif i is not None:
             bp, btext = base_view[i]
@@ -159,7 +166,10 @@ def compare_versions(base: DocxDoc | None, theirs: DocxDoc, our_authors: list[st
     changes.sort(key=lambda c: (c.order, c.source != "tracked"))
     for n, c in enumerate(changes, 1):
         c.id = f"E{n:03d}"
-        if c.source == "silent":
+        if c.detail.get("accepted_from_base"):
+            c.notes.append("В отправленной версии эта правка была в рецензировании (автор: "
+                           + ", ".join(c.detail["accepted_from_base"]) + "), контрагент её принял")
+        elif c.source == "silent":
             c.notes.append("Правка не отмечена в рецензировании (найдена сравнением с отправленной версией)")
         if c.source == "diff":
             c.notes.append("Версия без рецензирования: правка найдена сравнением с отправленной версией")

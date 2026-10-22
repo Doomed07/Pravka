@@ -144,10 +144,19 @@ def _focus(change: Change) -> str:
     return " ".join(out)
 
 
+# Организационно-правовая форма в наименовании («общество с ограниченной ответственностью») — не тема договора:
+# иначе правка в преамбуле или реквизитах попадала в «ограничение ответственности».
+_LEGAL_FORM = re.compile(r"\bс\s+ограниченн\w*\s+ответственност\w*", re.IGNORECASE)
+
+
+def _no_form(text: str) -> str:
+    return _LEGAL_FORM.sub(" ", text) if text else text
+
+
 def topic_scores(change: Change) -> list[tuple[float, Topic]]:
-    changed = f"{change.before} {change.after}"
-    ctx = change.context or change.context_after
-    focus = _focus(change)
+    changed = _no_form(f"{change.before} {change.after}")
+    ctx = _no_form(change.context or change.context_after)
+    focus = _no_form(_focus(change))
     first_pos: dict[str, int] = {}
     parts_by_topic: dict[str, list[float]] = {}
     for topic, regs in _COMPILED:

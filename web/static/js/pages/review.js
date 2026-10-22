@@ -23,6 +23,8 @@ function verdict(ch) {
 }
 
 const isSilent = (ch) => ch.source === 'silent' || ch.source === 'diff';
+const fromBase = (ch) => (ch.accepted_from_base || []).length > 0;
+const silentLabel = (ch) => (fromBase(ch) ? ' · из нашей версии' : ' · без отметки');
 
 function num(n) {
   return String(n).padStart(2, '0');
@@ -58,7 +60,7 @@ function list(changes, order) {
         <button class="rv-list__item${isSilent(ch) ? ' rv-list__item--silent' : ''}" type="button" data-change="${ch.id}">
           <span class="rv-list__num">${num(order.get(ch.id))}</span>
           <span class="rv-list__title">${changeTitle(ch)}</span>
-          <span class="rv-list__level">${verdict(ch).label}${isSilent(ch) ? ' · без отметки' : ''}</span>
+          <span class="rv-list__level">${verdict(ch).label}${isSilent(ch) ? silentLabel(ch) : ''}</span>
         </button>`)}
     </nav>`;
 }
@@ -67,7 +69,9 @@ function list(changes, order) {
 
 function note(ch, order) {
   const v = verdict(ch);
-  const diff = isSilent(ch)
+  const diff = fromBase(ch)
+    ? html`<p class="note__diff">Принята правка из нашей версии (автор: ${ch.accepted_from_base.join(', ')}): было «${ch.before || '—'}», стало «${ch.after || '—'}».</p>`
+    : isSilent(ch)
     ? html`<p class="note__diff">Изменено без отметки в рецензировании: было «${ch.before || '—'}», стало «${ch.after || '—'}».</p>`
     : ch.kind === 'comment'
       ? html`<p class="note__diff">Комментарий контрагента: «${ch.after}»</p>`
@@ -84,7 +88,7 @@ function note(ch, order) {
       ${ch.explanation ? html`<p>${ch.explanation}</p>` : ''}
       ${ch.suggested ? html`<p class="note__suggest">Наша позиция: ${ch.suggested}</p>` : ''}
       ${ch.escalate_to ? html`<p class="note__foot">Согласовать: ${ch.escalate_to}</p>` : ''}
-      <p class="note__foot">${ch.ai_explained ? 'Пояснение ИИ' : 'Пояснение по правилу'}${ch.rule_id && ch.rule_id !== 'PARTY' ? ` · ${ch.rule_id}` : ''}${isSilent(ch) ? ' · найдено сравнением редакций' : ''}</p>
+      <p class="note__foot">${ch.ai_explained ? 'Пояснение ИИ' : ch.rule_id ? 'Пояснение по правилу' : 'Пояснение программы'}${ch.rule_id && ch.rule_id !== 'PARTY' ? ` · ${ch.rule_id}` : ''}${isSilent(ch) ? ' · найдено сравнением редакций' : ''}</p>
     </article>`;
 }
 

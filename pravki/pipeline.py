@@ -9,7 +9,8 @@ from .classify import classify
 from .compare import compare_versions, resolve_ours
 from .docx_reader import read_docx
 from .model import Change
-from .parties import PARTY_TOPIC, RoleCheckError, SideConfig, SideResult, check_side, parties_of, party_changes
+from .parties import (PARTY_TOPIC, RoleCheckError, SideConfig, SideResult, check_side, head_indices,
+                      mark_head_changes, parties_of, party_changes)
 from .playbook import Playbook, analyze, load_playbook, sort_key
 from .unified import build_unified
 
@@ -109,6 +110,11 @@ def review_files(
     regular = [c for c in changes if c.topic != PARTY_TOPIC]
     for c in regular:
         classify(c)
+    mark_head_changes(regular, head_indices(theirs))
+    from_base = [c for c in regular if c.detail.get("accepted_from_base")]
+    for c in from_base:
+        mark_accepted_from_base(c)
+    regular = [c for c in regular if c.topic != PARTY_TOPIC and not c.detail.get("accepted_from_base")]
     if pb is not None:
         analyze(regular, pb)
     if explainer is not None:
@@ -134,6 +140,22 @@ def review_files(
         side=side_res,
         document=build_unified(base, theirs, ours, changes),
     )
+
+
+def mark_accepted_from_base(ch: Change) -> None:
+    """Правка из нашей отправленной версии, которую контрагент принял: решить, чья она, может только юрист.
+
+    Автор правки не указан как наш, поэтому программа не знает, наша это правка (коллега юриста) или чужая правка
+    прошлого раунда, которую контрагент принял сам. Плейбук и модель к ней не применяются.
+    """
+    authors = ", ".join(ch.detail["accepted_from_base"])
+    ch.level, ch.rule_id, ch.rule_title = "review", "", ""
+    ch.action = "Нужно решение юриста: принята правка из нашей версии"
+    ch.explanation = (f"В отправленной нами версии это была правка в рецензировании (автор: {authors}), "
+                      "контрагент её принял. Если автор — ваш сотрудник, добавьте его в «Авторы ваших правок»: "
+                      "тогда такие правки не попадут в разбор. Если это чужая правка прошлого раунда, проверьте условие.")
+    ch.suggested = ""
+    ch.lawyer_decision_needed = True
 
 
 def file_label(path: str) -> str:
