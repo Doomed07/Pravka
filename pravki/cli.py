@@ -94,6 +94,7 @@ def cmd_eval(a) -> int:
     pbs = {
         "services": load_playbook(os.path.join(PLAYBOOK_DIR, "services_example.yaml")),
         "rent": load_playbook(os.path.join(PLAYBOOK_DIR, "rent_example.yaml")),
+        "supply": load_playbook(os.path.join(PLAYBOOK_DIR, "supply_example.yaml")),
     }
     res = run_synthetic(a.pairs, a.seed, pbs)
     print(print_report(res, a.errors))
@@ -297,7 +298,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("synth", help="создать пример: наша версия + версия контрагента с правками")
     s.add_argument("out")
-    s.add_argument("--template", choices=["services", "rent"], default="services")
+    s.add_argument("--template", choices=["supply", "services", "rent"], default="supply")
     s.add_argument("--seed", type=int, default=1)
     s.add_argument("--numbering", choices=["auto", "manual"])
     s.set_defaults(fn=cmd_synth)

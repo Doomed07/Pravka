@@ -72,7 +72,8 @@ def expected_level(t: dict, ch) -> str:
     return exp
 
 
-def run_synthetic(n_pairs: int = 40, seed0: int = 1000, playbooks: dict | None = None, workdir: str | None = None) -> dict:
+def run_synthetic(n_pairs: int = 40, seed0: int = 1000, playbooks: dict | None = None, workdir: str | None = None,
+                  templates: tuple[str, ...] = ("services", "rent", "supply")) -> dict:
     playbooks = playbooks or {}
     stats = defaultdict(int)
     errors: list[dict] = []
@@ -80,7 +81,7 @@ def run_synthetic(n_pairs: int = 40, seed0: int = 1000, playbooks: dict | None =
     root = workdir or cm.name  # type: ignore[union-attr]
     try:
         for k in range(n_pairs):
-            template = "services" if k % 2 == 0 else "rent"
+            template = templates[k % len(templates)]
             case = generate_case(os.path.join(root, f"case{k:03d}"), template, seed0 + k)
             truth = case["truth"]
             pb = playbooks.get(template)

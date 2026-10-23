@@ -77,3 +77,14 @@ def test_llm_trusted_docker_host(monkeypatch):
     monkeypatch.setenv("PRAVKI_LLM_URL", "https://api.example.com/v1")
     with pytest.raises(engine_api.LLMError):
         engine_api.make_explainer()
+
+
+def test_focus_playbooks_come_first(tmp_path):
+    from pravki.engine_api import list_playbooks
+
+    (tmp_path / "private").mkdir()
+    for name, kind in (("a_rent.yaml", "lease"), ("b_services.yaml", "services"), ("c_supply.yaml", "supply")):
+        (tmp_path / "private" / name).write_text(f"name: {name}\ncontract_type: {kind}\nour_role: X\n", encoding="utf-8")
+    (tmp_path / "z_supply.yaml").write_text("name: z\ncontract_type: supply\nour_role: Y\n", encoding="utf-8")
+    keys = [p["key"] for p in list_playbooks(str(tmp_path))]
+    assert keys == ["private/c_supply.yaml", "private/b_services.yaml", "private/a_rent.yaml", "z_supply.yaml"]

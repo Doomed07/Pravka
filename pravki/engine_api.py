@@ -45,6 +45,15 @@ PLAYBOOKS = os.environ.get("PRAVKI_PLAYBOOKS", os.path.join(ROOT, "playbooks"))
 MAX_UPLOAD = 30 * 1024 * 1024
 
 
+# Сейчас в работе договоры поставки и оказания услуг: их плейбуки идут в списке первыми (решение владельца 2026-10-23).
+FOCUS_TYPES = ("supply", "services")
+
+
+def _focus_rank(data: dict) -> int:
+    kind = str(data.get("contract_type", ""))
+    return FOCUS_TYPES.index(kind) if kind in FOCUS_TYPES else len(FOCUS_TYPES)
+
+
 def list_playbooks(root: str | None = None) -> list[dict]:
     root = root or PLAYBOOKS
     out = []
@@ -52,6 +61,7 @@ def list_playbooks(root: str | None = None) -> list[dict]:
         d = os.path.join(root, sub)
         if not os.path.isdir(d):
             continue
+        group = []
         for fn in sorted(os.listdir(d)):
             if not fn.endswith((".yaml", ".yml")):
                 continue
@@ -61,8 +71,9 @@ def list_playbooks(root: str | None = None) -> list[dict]:
                     data = yaml.safe_load(f) or {}
             except (OSError, yaml.YAMLError):
                 continue
-            out.append({"key": f"{sub}/{fn}" if sub else fn, "name": str(data.get("name", fn)) + label,
-                        "role": str(data.get("our_role", "")), "path": path})
+            group.append((_focus_rank(data), {"key": f"{sub}/{fn}" if sub else fn, "name": str(data.get("name", fn)) + label,
+                                              "role": str(data.get("our_role", "")), "path": path}))
+        out.extend(item for _, item in sorted(group, key=lambda g: g[0]))  # sorted устойчив: внутри типа — по имени файла
     return out
 
 

@@ -62,11 +62,16 @@ TOPICS: list[Topic] = [
           (r"\bакт(?:а|у|ом|е|ы|ов)?\b", r"\bупд\b", r"накладн", r"\bэдо\b", r"электронн\w+\s+документооборот", r"первичн\w+\s+документ"),
           (ACC,), "средняя"),
     Topic("сроки исполнения",
-          (r"срок\w*\s+(?:оказани|выполнени|поставк|исполнени)", r"(?:оказыва|выполня|исполня|поставля)\w*\s+(?:\w+\s+){0,3}до\s+\d{1,2}\.\d{1,2}\.\d{2,4}", r"этап", r"график"),
+          (r"срок\w*\s+(?:оказани|выполнени|поставк|исполнени)", r"(?:оказыва|выполня|исполня|поставля)\w*\s+(?:\w+\s+){0,3}до\s+\d{1,2}\.\d{1,2}\.\d{2,4}", r"этап", r"график",
+           r"поставля\w*\s+(?:\w+\s+){0,3}в\s+течение"),
           (COM,), "средняя"),
     Topic("приёмка и качество",
-          (r"приемк|приёмк", r"считаю?т\w*\s+принят", r"подписыва\w+\s+акт", r"недостатк", r"качеств", r"гаранти", r"мотивированн\w+\s+отказ"),
+          (r"приемк|приёмк", r"считаю?т\w*\s+принят", r"подписыва\w+\s+акт", r"недостатк", r"качеств", r"гаранти", r"мотивированн\w+\s+отказ",
+           r"(?:принять|принима\w+)\s+товар", r"хран(?:ит|ят|ени)\w*\s+(?:\w+\s+){0,2}товар"),
           (COM, LEGAL), "высокая"),
+    Topic("переход права собственности и риска",
+          (r"риск\w*\s+случайн", r"прав\w*\s+собственност\w*\s+(?:\w+\s+){0,8}переход", r"переход\w*\s+(?:\w+\s+){0,3}прав\w*\s+собственност"),
+          (LEGAL, COM), "высокая"),
     Topic("конфиденциальность",
           (r"конфиденциальн", r"разглаш", r"коммерческ\w+\s+тайн", r"\bnda\b"),
           (LEGAL, SEC), "высокая"),
@@ -124,6 +129,7 @@ WEIGHTS = {
     "персональные данные и ИБ": GOVERNING,
     "разрешение споров": GOVERNING,
     "форс-мажор": GOVERNING,
+    "переход права собственности и риска": GOVERNING,
     "субподряд, субаренда, передача прав": GOVERNING,
     "интеллектуальная собственность": GOVERNING,
     "первичные документы и ЭДО": 0.6,
@@ -153,10 +159,32 @@ def _no_form(text: str) -> str:
     return _LEGAL_FORM.sub(" ", text) if text else text
 
 
+def _lead_in(change: Change, words: int = 4) -> str:
+    """Несколько слов прямо перед изменённым числом: «НДС 20%», «оплачивает в течение 10 дней».
+
+    Без рецензирования правка находится сравнением и часто сводится к одному числу («20%» → «0%»): о чём это число,
+    говорят слова перед ним, а не начало предложения («Общая стоимость… в том числе НДС»).
+    """
+    out = []
+    for text, frag in ((change.context_after, change.after), (change.context, change.before)):
+        if not text or not frag:
+            continue
+        # отдельным словом или числом: «0» не должен найтись внутри «400 000»
+        m = re.search(r"(?<![\w\d])" + re.escape(frag) + r"(?![\d])", text)
+        if m:
+            out.append(" ".join(re.findall(r"\w+", text[: m.start()])[-words:]))
+    return " ".join(out)
+
+
 def topic_scores(change: Change) -> list[tuple[float, Topic]]:
     changed = _no_form(f"{change.before} {change.after}")
     ctx = _no_form(change.context or change.context_after)
     focus = _no_form(_focus(change))
+    # правка в числе, которая сама ни на какую тему не указывает («10 рабочих дней» → «45 календарных дней»,
+    # «20%» → «0%»): слова прямо перед ней весят почти как сама правка
+    lead = ""
+    if re.search(r"\d", changed) and not any(r.search(changed) for _, regs in _COMPILED for r in regs):
+        lead = _no_form(_lead_in(change))
     first_pos: dict[str, int] = {}
     parts_by_topic: dict[str, list[float]] = {}
     for topic, regs in _COMPILED:
@@ -165,6 +193,8 @@ def topic_scores(change: Change) -> list[tuple[float, Topic]]:
             p = 0.0
             if r.search(changed):
                 p += 5
+            elif lead and r.search(lead):
+                p += 4
             m = r.search(focus) if focus else None
             if m:
                 p += 2
