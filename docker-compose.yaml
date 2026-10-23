@@ -42,6 +42,7 @@ services:
       - ENGINE_TOKEN=${ENGINE_TOKEN}
       - PRAVKI_LLM_URL=${PRAVKI_LLM_URL}
       - PRAVKI_LLM_MODEL=${PRAVKI_LLM_MODEL}
+      - PRAVKI_EMBED_MODEL=${PRAVKI_EMBED_MODEL:-bge-m3}  # модель для поиска по смыслу (векторы), тот же Ollama
       - PRAVKI_LLM_TRUSTED_HOSTS=ollama,host.docker.internal
     volumes:
       - ./playbooks/private:/app/playbooks/private:ro

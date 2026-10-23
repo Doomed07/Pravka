@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -238,4 +239,72 @@ func (c *Client) Answer(ctx context.Context, unified, document, changes []byte, 
 		return AnswerResult{}, fmt.Errorf("движок: файл ответа повреждён: %w", err)
 	}
 	return AnswerResult{DOCX: docx, Stats: raw.Stats}, nil
+}
+
+// LawPage — часть пунктов ГК РФ из движка и версия всего набора.
+type LawPage struct {
+	Version string                 `json:"version"`
+	Total   int                    `json:"total"`
+	Points  []core_domain.LawPoint `json:"points"`
+}
+
+// Law отдаёт пункты ГК РФ начиная с offset (не больше limit).
+func (c *Client) Law(ctx context.Context, offset, limit int) (LawPage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/law?offset=%d&limit=%d", c.cfg.URL, offset, limit), nil)
+	if err != nil {
+		return LawPage{}, err
+	}
+	resp, err := c.do(req)
+	if err != nil {
+		return LawPage{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return LawPage{}, fmt.Errorf("движок: нормы ГК: статус %d: %w", resp.StatusCode, core_errors.ErrUnavailable)
+	}
+	var page LawPage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(&page); err != nil {
+		return LawPage{}, fmt.Errorf("движок: разбор норм ГК: %w", err)
+	}
+	return page, nil
+}
+
+// ErrNoEmbedModel — модель для векторов в движке не настроена: работает только поиск по словам.
+var ErrNoEmbedModel = errors.New("модель для векторов не настроена")
+
+// Embed — векторы текстов (для поиска по смыслу) и имя модели, которая их посчитала.
+func (c *Client) Embed(ctx context.Context, texts []string) (string, [][]float32, error) {
+	body, err := json.Marshal(map[string][]string{"texts": texts})
+	if err != nil {
+		return "", nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.URL+"/embed", bytes.NewReader(body))
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return "", nil, ErrNoEmbedModel
+	}
+	if resp.StatusCode != http.StatusOK {
+		var eb errorBody
+		_ = json.NewDecoder(resp.Body).Decode(&eb)
+		return "", nil, fmt.Errorf("движок: векторы: статус %d: %s: %w", resp.StatusCode, eb.Message, core_errors.ErrUnavailable)
+	}
+	var out struct {
+		Model   string      `json:"model"`
+		Vectors [][]float32 `json:"vectors"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(&out); err != nil {
+		return "", nil, fmt.Errorf("движок: разбор векторов: %w", err)
+	}
+	if len(out.Vectors) != len(texts) {
+		return "", nil, fmt.Errorf("движок: векторов %d, текстов %d: %w", len(out.Vectors), len(texts), core_errors.ErrUnavailable)
+	}
+	return out.Model, out.Vectors, nil
 }

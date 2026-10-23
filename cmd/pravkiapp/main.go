@@ -20,6 +20,8 @@ import (
 	auth_repository_postgres "github.com/Doomed07/Pravka/internal/features/auth/repository/postgres"
 	auth_service "github.com/Doomed07/Pravka/internal/features/auth/service"
 	auth_transport_http "github.com/Doomed07/Pravka/internal/features/auth/transport/http"
+	law_repository_postgres "github.com/Doomed07/Pravka/internal/features/law/repository/postgres"
+	law_service "github.com/Doomed07/Pravka/internal/features/law/service"
 	reviews_repository_postgres "github.com/Doomed07/Pravka/internal/features/reviews/repository/postgres"
 	reviews_service "github.com/Doomed07/Pravka/internal/features/reviews/service"
 	reviews_transport_http "github.com/Doomed07/Pravka/internal/features/reviews/transport/http"
@@ -72,6 +74,10 @@ func main() {
 	reviewsRepository := reviews_repository_postgres.NewReviewsRepository(pool)
 	reviewsService := reviews_service.NewReviewsService(reviewsRepository, engineClient)
 	reviewsTransportHTTP := reviews_transport_http.NewReviewsHTTPHandler(reviewsService)
+
+	// нормы ГК РФ для подсказок: загрузка в фоне, сайт работает и без них
+	lawService := law_service.NewLawService(law_repository_postgres.NewLawRepository(pool), engineClient)
+	go lawService.Run(ctx, logger)
 
 	logger.Debug("initializing HTTP server")
 	httpServer := core_http_server.NewHTTPServer(

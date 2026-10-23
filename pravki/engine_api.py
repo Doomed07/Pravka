@@ -31,7 +31,7 @@ from email.parser import BytesParser
 from email.policy import HTTP
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import yaml
 
@@ -81,14 +81,86 @@ def list_playbooks(root: str | None = None) -> list[dict]:
     return out
 
 
+LAW_FILE = os.environ.get("PRAVKI_LAW", os.path.join(os.path.dirname(__file__), "law", "gk.jsonl"))
+MAX_EMBED = 64  # текстов за один запрос векторов
+
+
+def _model_url_allowed(url: str) -> bool:
+    trusted = {h.strip() for h in os.environ.get("PRAVKI_LLM_TRUSTED_HOSTS", "ollama,host.docker.internal").split(",") if h.strip()}
+    return is_local(url) or (urlparse(url).hostname or "") in trusted
+
+
+def make_embedder():
+    """Клиент модели для векторов (по умолчанию bge-m3 на том же сервере Ollama, что и GigaChat). None — не настроена."""
+    url = (os.environ.get("PRAVKI_EMBED_URL") or os.environ.get("PRAVKI_LLM_URL", "")).strip()
+    if not url:
+        return None
+    return OpenAICompatClient(url, "", allow_remote=_model_url_allowed(url))
+
+
+def embed_model() -> str:
+    return os.environ.get("PRAVKI_EMBED_MODEL", "bge-m3")
+
+
+_LAW_CACHE: dict = {}
+
+
+def law_points() -> tuple[str, list[dict]]:
+    """Действующие пункты ГК РФ для загрузки в базу и версия набора (меняется вместе с текстом)."""
+    import hashlib
+
+    from .law import load_jsonl
+
+    if not _LAW_CACHE:
+        with open(LAW_FILE, "rb") as f:
+            version = hashlib.sha256(f.read()).hexdigest()[:16]
+        points = []
+        for a in load_jsonl(LAW_FILE):
+            if a.lost:
+                continue
+            for seq, p in enumerate(a.points):
+                points.append({"code": a.code, "article": a.number, "seq": seq, "point": p.number, "title": a.title, "section": a.section,
+                               "chapter": a.chapter, "paragraph": a.paragraph, "edited": a.edited, "text": p.text})
+        _LAW_CACHE.update(version=version, points=points)
+    return _LAW_CACHE["version"], _LAW_CACHE["points"]
+
+
+def law_page(query: str) -> tuple[int, dict]:
+    """GET /law?offset=0&limit=500 — часть пунктов ГК РФ и версия набора."""
+    q = parse_qs(query)
+    try:
+        offset, limit = int(q.get("offset", ["0"])[0]), int(q.get("limit", ["500"])[0])
+    except ValueError:
+        return 400, {"error": "bad_request", "message": "offset и limit — числа."}
+    if offset < 0 or not 0 < limit <= 1000:
+        return 400, {"error": "bad_request", "message": "offset ≥ 0, limit от 1 до 1000."}
+    version, points = law_points()
+    return 200, {"version": version, "total": len(points), "points": points[offset:offset + limit]}
+
+
+def embed(body: bytes) -> tuple[int, dict]:
+    """POST /embed {"texts": [...]} — векторы для поиска по смыслу. 503 — модель для векторов не настроена."""
+    try:
+        texts = json.loads(body.decode("utf-8")).get("texts")
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        return 400, {"error": "bad_request", "message": "Нужен JSON {\"texts\": [...]}."}
+    if not isinstance(texts, list) or not 0 < len(texts) <= MAX_EMBED or not all(isinstance(t, str) and t.strip() for t in texts):
+        return 400, {"error": "bad_request", "message": f"texts — от 1 до {MAX_EMBED} непустых строк."}
+    client = make_embedder()
+    if client is None:
+        return 503, {"error": "no_model", "message": "Модель для векторов не настроена (PRAVKI_EMBED_URL или PRAVKI_LLM_URL)."}
+    try:
+        vectors = client.embed([t[:4000] for t in texts], embed_model())
+    except LLMError as ex:
+        return 502, {"error": "llm", "message": str(ex)}
+    return 200, {"model": embed_model(), "vectors": vectors}
+
+
 def make_explainer():
     url = os.environ.get("PRAVKI_LLM_URL", "").strip()
     if not url:
         return None
-    trusted = {h.strip() for h in os.environ.get("PRAVKI_LLM_TRUSTED_HOSTS", "ollama,host.docker.internal").split(",") if h.strip()}
-    host = urlparse(url).hostname or ""
-    allow = is_local(url) or host in trusted
-    return Explainer(OpenAICompatClient(url, os.environ.get("PRAVKI_LLM_MODEL", "local"), allow_remote=allow))
+    return Explainer(OpenAICompatClient(url, os.environ.get("PRAVKI_LLM_MODEL", "local"), allow_remote=_model_url_allowed(url)))
 
 
 def parse_multipart(ctype: str, body: bytes) -> tuple[dict, dict]:
@@ -222,12 +294,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "llm": bool(os.environ.get("PRAVKI_LLM_URL"))})
         if path == "/playbooks":
             return self._json(200, [{k: p[k] for k in ("key", "name", "role")} for p in list_playbooks()])
+        if path == "/law":
+            return self._json(*law_page(urlparse(self.path).query))
         return self._json(404, {"error": "not_found", "message": "Нет такого адреса."})
 
     def do_POST(self):
         if not self._authorized():
             return
         path = urlparse(self.path).path
+        if path == "/embed":
+            length = int(self.headers.get("Content-Length") or 0)
+            if not 0 < length <= 1024 * 1024:
+                return self._json(413, {"error": "too_large", "message": "Запрос пустой или больше 1 МБ."})
+            return self._json(*embed(self.rfile.read(length)))
         if path not in ("/review", "/answer"):
             return self._json(404, {"error": "not_found", "message": "Нет такого адреса."})
         length = int(self.headers.get("Content-Length") or 0)

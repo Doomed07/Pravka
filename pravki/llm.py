@@ -90,6 +90,21 @@ class OpenAICompatClient:
             raise LLMError(f"модель не ответила: {e}")
 
 
+    def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """Векторы текстов для поиска по смыслу (модель для векторов, например bge-m3, — не та, что пишет пояснения)."""
+        body = json.dumps({"model": model, "input": texts}).encode("utf-8")
+        req = urllib.request.Request(f"{self.base_url}/embeddings", data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:  # noqa: S310 (адрес проверен выше)
+                data = json.loads(r.read().decode("utf-8"))
+            vectors = [d["embedding"] for d in sorted(data["data"], key=lambda d: d["index"])]
+        except (urllib.error.URLError, KeyError, TypeError, json.JSONDecodeError, TimeoutError) as e:
+            raise LLMError(f"модель для векторов не ответила: {e}")
+        if len(vectors) != len(texts):
+            raise LLMError("модель для векторов вернула не столько векторов, сколько текстов")
+        return vectors
+
+
 _ARTICLE = re.compile(r"(?:ст\.|статьи|статья|статье)\s*\d+(?:\.\d+)?", re.IGNORECASE)
 
 # Направление правки: удаление описано как удаление, вставка — как вставка (а не «условия нет в текущей редакции»).

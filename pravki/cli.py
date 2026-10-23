@@ -205,6 +205,17 @@ def cmd_labels(a) -> int:
     return 0
 
 
+def cmd_law(a) -> int:
+    from .law import build_gk, fetch_gk
+
+    if a.fetch:
+        print("Скачиваю ГК РФ с pravo.gov.ru:", ", ".join(fetch_gk(a.html)))
+    arts = build_gk(a.html, a.out)
+    live = [x for x in arts if not x.lost]
+    print(f"Статей: {len(arts)}, действующих: {len(live)}, пунктов: {sum(len(x.points) for x in live)}. Сохранено: {a.out}")
+    return 0
+
+
 def cmd_web(a) -> int:
     from .web import serve
     serve(a.port, not a.no_browser)
@@ -285,6 +296,12 @@ def build_parser() -> argparse.ArgumentParser:
     lb.add_argument("xlsx")
     lb.add_argument("--out")
     lb.set_defaults(fn=cmd_labels)
+
+    lw = sub.add_parser("law", help="ГК РФ для подсказок: скачать с pravo.gov.ru и разобрать на статьи и пункты")
+    lw.add_argument("html", help="папка с частями ГК (part1.html … part4.html)")
+    lw.add_argument("--fetch", action="store_true", help="сначала скачать действующую редакцию в эту папку")
+    lw.add_argument("--out", default="pravki/law/gk.jsonl")
+    lw.set_defaults(fn=cmd_law)
 
     wb = sub.add_parser("web", help="веб-приложение на этом компьютере: загрузить договор в браузере и получить отчёт")
     wb.add_argument("--port", type=int, default=8765)
