@@ -35,6 +35,8 @@ type ReviewFiles struct {
 	ReportHTML []byte
 	ReportXLSX []byte
 	Changes    []byte // JSON
+	Document   []byte // JSON: единая версия договора (абзацы с правками)
+	Unified    []byte // docx: единая версия с примечаниями; у разборов до версии 0.3 пусто
 }
 
 // UploadedFile — docx из формы.

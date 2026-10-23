@@ -144,10 +144,19 @@ def _focus(change: Change) -> str:
     return " ".join(out)
 
 
+# Организационно-правовая форма в наименовании («общество с ограниченной ответственностью») — не тема договора:
+# иначе правка в преамбуле или реквизитах попадала в «ограничение ответственности».
+_LEGAL_FORM = re.compile(r"\bс\s+ограниченн\w*\s+ответственност\w*", re.IGNORECASE)
+
+
+def _no_form(text: str) -> str:
+    return _LEGAL_FORM.sub(" ", text) if text else text
+
+
 def topic_scores(change: Change) -> list[tuple[float, Topic]]:
-    changed = f"{change.before} {change.after}"
-    ctx = change.context or change.context_after
-    focus = _focus(change)
+    changed = _no_form(f"{change.before} {change.after}")
+    ctx = _no_form(change.context or change.context_after)
+    focus = _no_form(_focus(change))
     first_pos: dict[str, int] = {}
     parts_by_topic: dict[str, list[float]] = {}
     for topic, regs in _COMPILED:
@@ -207,7 +216,77 @@ def _is_technical(change: Change) -> bool:
             return False
         if SequenceMatcher(None, x.lower(), y.lower()).ratio() < 0.8:
             return False
+        if _sensitive(x) or _sensitive(y):  # «Заказчика» → «Заказчику» похоже на опечатку, но меняет, кому платят
+            return False
+        if _stem_pair(x, y) and not (_agreeing(x) and _agreeing(y)):
+            return False  # другое окончание существительного: число или падеж («услуги» → «услуг»), не опечатка
     return True
+
+
+# Слова, у которых даже окончание меняет смысл условия: кто обязан, кому платят, вправе или обязан, «не».
+_SENSITIVE = re.compile(
+    r"^(?:заказчик|исполнител|поставщик|покупател|подрядчик|субподрядчик|арендатор|арендодател|продав|участник|"
+    r"организатор|лицензиар|лицензиат|агент|принципал|сторон|контрагент|вправ|обязан|обязуется|обязательств|"
+    r"долж|может|могут|исключительн|любо|кажд)",
+    re.IGNORECASE)
+_SENSITIVE_WORDS = {"не", "ни", "нет", "без", "кроме", "все", "всех", "весь", "вся", "всё", "только", "либо", "или", "и"}
+
+
+def _sensitive(word: str) -> bool:
+    return word.lower() in _SENSITIVE_WORDS or bool(_SENSITIVE.match(word))
+
+
+# Окончания прилагательных, причастий (полных и кратких) и глаголов. Их согласование и «-тся/-ться» — грамматика.
+# У существительных число и падеж меняют смысл («стоимость услуги» → «стоимость услуг»), такие правки решает юрист.
+_AGREEING = re.compile(r"(?:ый|ий|ой|ая|яя|ое|ее|ые|ие|ого|его|ому|ему|ым|им|ом|ем|ую|юю|ых|их|ыми|ими|"
+                       r"ен|ена|ено|ены|ан|ана|ано|аны|ян|т|та|то|ты|л|ла|ло|ли|ть|ся|сь)$")
+
+
+def _agreeing(word: str) -> bool:
+    return bool(_AGREEING.search(word.lower().replace("ё", "е")))
+
+
+def _stem_pair(x: str, y: str) -> bool:
+    """Два слова — формы одного слова: различаются только окончанием (не больше трёх последних букв)."""
+    x, y = x.lower().replace("ё", "е"), y.lower().replace("ё", "е")
+    if x == y:
+        return True
+    n = 0
+    while n < min(len(x), len(y)) and x[n] == y[n]:
+        n += 1
+    return n >= 4 and len(x) - n <= 3 and len(y) - n <= 3
+
+
+def grammar_only(change: Change) -> bool:
+    """Грамматическая или стилистическая правка: меняются только окончания слов и знаки препинания.
+
+    Решение принимает это правило, а не модель. Правка не грамматическая, если затронуты числа или слова, у которых
+    даже окончание меняет смысл (стороны договора, «не», «вправе», «обязан», «только» и т. п.).
+    """
+    if change.kind in ("comment", "move", "para_insert", "para_delete"):
+        return False
+    b, a = normalize(change.before), normalize(change.after)
+    if not (b and a) or re.search(r"\d", b + a):
+        return False
+    wb, wa = re.findall(r"\w+", b), re.findall(r"\w+", a)
+    if not wb or len(wb) != len(wa) or len(wb) > 4:
+        return False
+    for x, y in zip(wb, wa):
+        if x.lower() == y.lower():
+            continue
+        if not _stem_pair(x, y) or _sensitive(x) or _sensitive(y) or not (_agreeing(x) and _agreeing(y)):
+            return False
+    return True
+
+
+TECH_NOTE = "Подозрительных трактовок условия с учётом правки не замечено."
+
+
+def technical_explanation(change: Change) -> str:
+    """Короткое пояснение к технической правке: что за правка и что смысл условия не меняется. Без ссылок на плейбук."""
+    if change.detail.get("grammar"):
+        return f"Грамматическая (стилистическая) правка: «{change.before}» → «{change.after}». {TECH_NOTE}"
+    return f"Техническая правка: опечатка, знаки препинания, регистр или пробелы. {TECH_NOTE}"
 
 
 def _raise(level: str, steps: int = 1) -> str:
@@ -258,8 +337,14 @@ def classify(change: Change) -> Change:
         for a in (FIN,):
             if a not in change.areas:
                 change.areas.append(a)
+    if grammar_only(change):
+        change.materiality = "техническая"
+        change.detail["grammar"] = True
+        change.explanation = technical_explanation(change)
+        return change
     if _is_technical(change):
         change.materiality = "техническая"
+        change.explanation = technical_explanation(change)
         return change
     level = base
     sig = set(change.flags) & {"сумма", "процент", "срок", "отрицание", "дата", "число"}

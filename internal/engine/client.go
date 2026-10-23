@@ -50,6 +50,9 @@ type Result struct {
 	ReportHTML   string          `json:"report_html"`
 	ReportXLSX   string          `json:"report_xlsx"` // base64
 	Changes      json.RawMessage `json:"changes"`
+	Document     json.RawMessage `json:"document"`     // единая версия договора: абзацы с правками
+	UnifiedDOCX  string          `json:"unified_docx"` // base64: единая версия в Word с примечаниями
+	Unified      []byte          `json:"-"`            // UnifiedDOCX после декодирования
 }
 
 type errorBody struct {
@@ -161,5 +164,9 @@ func (c *Client) Review(ctx context.Context, r core_domain.ReviewRequest) (Resul
 	if err != nil {
 		return Result{}, nil, fmt.Errorf("движок: Excel в ответе повреждён: %w", err)
 	}
+	if res.Unified, err = base64.StdEncoding.DecodeString(res.UnifiedDOCX); err != nil {
+		return Result{}, nil, fmt.Errorf("движок: единая версия в ответе повреждена: %w", err)
+	}
+	res.UnifiedDOCX = ""
 	return res, xlsx, nil
 }

@@ -61,13 +61,21 @@ func (r *ReviewsRepository) CreateReview(ctx context.Context, rev core_domain.Co
 	if len(changes) == 0 {
 		changes = []byte("[]")
 	}
+	document := files.Document
+	if len(document) == 0 {
+		document = []byte("[]")
+	}
+	var unified []byte // NULL, если движок не прислал единую версию
+	if len(files.Unified) > 0 {
+		unified = files.Unified
+	}
 	query := `
 	INSERT INTO pravkiapp.reviews (user_id, theirs_name, base_name, playbook, playbook_name, our_role, side, counts, warnings,
-	                               report_html, report_xlsx, changes)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	                               report_html, report_xlsx, changes, document, unified_docx)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	RETURNING ` + columns + `;`
 	row := r.pool.QueryRow(ctx, query, rev.UserID, rev.TheirsName, rev.BaseName, rev.Playbook, rev.PlaybookName, rev.OurRole,
-		rev.Side, counts, warnings, string(files.ReportHTML), files.ReportXLSX, changes)
+		rev.Side, counts, warnings, string(files.ReportHTML), files.ReportXLSX, changes, document, unified)
 	out, err := scanReview(row)
 	if err != nil {
 		var ce *core_postgres_pool.ConstraintError
@@ -119,12 +127,15 @@ func (r *ReviewsRepository) GetReview(ctx context.Context, userID, id int) (core
 	return rev, nil
 }
 
-// GetFile отдаёт одну из тяжёлых частей разбора: "html", "xlsx" или "changes".
+// GetFile отдаёт одну из тяжёлых частей разбора: "html", "xlsx", "changes", "document" или "docx".
+// У разборов, сделанных до появления единой версии, "docx" нет: ErrNotFound.
 func (r *ReviewsRepository) GetFile(ctx context.Context, userID, id int, kind string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
 	defer cancel()
 
-	column := map[string]string{"html": "convert_to(report_html, 'UTF8')", "xlsx": "report_xlsx", "changes": "convert_to(changes::text, 'UTF8')"}[kind]
+	column := map[string]string{"html": "convert_to(report_html, 'UTF8')", "xlsx": "report_xlsx",
+		"changes": "convert_to(changes::text, 'UTF8')", "document": "convert_to(document::text, 'UTF8')",
+		"docx": "unified_docx"}[kind]
 	if column == "" {
 		return nil, fmt.Errorf("unknown file kind %q: %w", kind, core_errors.ErrInvalidArgument)
 	}
@@ -135,6 +146,9 @@ func (r *ReviewsRepository) GetFile(ctx context.Context, userID, id int, kind st
 			return nil, fmt.Errorf("review %d: %w", id, core_errors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("select review file: %w", err)
+	}
+	if data == nil {
+		return nil, fmt.Errorf("review %d: no %s: %w", id, kind, core_errors.ErrNotFound)
 	}
 	return data, nil
 }

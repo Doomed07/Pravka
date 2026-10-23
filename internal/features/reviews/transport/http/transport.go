@@ -48,6 +48,8 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 		{Method: http.MethodGet, Path: "/reviews/{id}/report", Handler: h.Report, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/xlsx", Handler: h.XLSX, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/changes", Handler: h.Changes, Middlewares: auth},
+		{Method: http.MethodGet, Path: "/reviews/{id}/document", Handler: h.Document, Middlewares: auth},
+		{Method: http.MethodGet, Path: "/reviews/{id}/docx", Handler: h.DOCX, Middlewares: auth},
 		{Method: http.MethodDelete, Path: "/reviews/{id}", Handler: h.Delete, Middlewares: auth},
 	}
 }
@@ -290,11 +292,34 @@ func (h *ReviewsHTTPHandler) XLSX(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ReviewsHTTPHandler) Changes(rw http.ResponseWriter, r *http.Request) {
-	data, _, ok := h.file(rw, r, "changes")
+	h.json(rw, r, "changes")
+}
+
+// Document — единая версия договора: абзацы с правками для страницы разбора.
+func (h *ReviewsHTTPHandler) Document(rw http.ResponseWriter, r *http.Request) {
+	h.json(rw, r, "document")
+}
+
+func (h *ReviewsHTTPHandler) json(rw http.ResponseWriter, r *http.Request, kind string) {
+	data, _, ok := h.file(rw, r, kind)
 	if !ok {
 		return
 	}
 	rw.Header().Set("Content-Type", "application/json; charset=utf-8")
+	rw.Header().Set("Cache-Control", "no-store")
+	rw.WriteHeader(http.StatusOK)
+	_, _ = rw.Write(data)
+}
+
+// DOCX — единая версия в Word: правки контрагента и наши примечания.
+func (h *ReviewsHTTPHandler) DOCX(rw http.ResponseWriter, r *http.Request) {
+	data, id, ok := h.file(rw, r, "docx")
+	if !ok {
+		return
+	}
+	name := fmt.Sprintf("Правки_единая_версия_%d.docx", id)
+	rw.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	rw.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"pravki_%d.docx\"; filename*=UTF-8''%s", id, url.PathEscape(name)))
 	rw.Header().Set("Cache-Control", "no-store")
 	rw.WriteHeader(http.StatusOK)
 	_, _ = rw.Write(data)

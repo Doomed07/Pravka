@@ -52,6 +52,8 @@ def test_review_roundtrip(engine, tmp_path):
     assert status == 200, data
     assert data["counts"]["всего"] == len(data["changes"]) > 0
     assert "Черновик" in data["report_html"] and base64.b64decode(data["report_xlsx"])[:2] == b"PK"
+    assert base64.b64decode(data["unified_docx"])[:2] == b"PK" and data["document"]
+    assert {i for para in data["document"] for i in para["changes"]} == {c["id"] for c in data["changes"]}
     assert data["our_role"] == "Исполнитель"
 
 

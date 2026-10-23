@@ -106,6 +106,8 @@ def extract_tracked(doc: DocxDoc, ours: set[str] | frozenset[str] = frozenset())
                 context="", context_after=_short(text),
             )
             ch.flags = flags_for_change("", text)
+            if para.label:
+                ch.detail["labeled"] = True
             if all(s.move for s in para.segments if s.kind == "ins"):
                 ch.detail["move"] = "in"
             changes.append(ch)
@@ -123,6 +125,8 @@ def extract_tracked(doc: DocxDoc, ours: set[str] | frozenset[str] = frozenset())
                 context=_short(text), context_after="",
             )
             ch.flags = flags_for_change(text, "")
+            if para.label:
+                ch.detail["labeled"] = True
             if all(s.move for s in para.segments if s.kind == "del"):
                 ch.detail["move"] = "out"
             changes.append(ch)

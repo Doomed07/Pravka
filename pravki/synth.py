@@ -154,7 +154,9 @@ SERVICES_EDITS = [
              topic="персональные данные и ИБ", expect="reject"),
     EditSpec("unilateral", "8.2", "insert_para", new="Заказчик вправе в одностороннем порядке изменять объём Услуг и сроки их оказания, уведомив Исполнителя за 3 рабочих дня.",
              topic="односторонние изменения условий", expect="reject"),
-    EditSpec("typo", "1.1", "replace", "разработке", "разработки", "", False, "accept"),
+    # опечатка внутри слова — техническая правка; смена падежа существительного — решает юрист (решение 2026-10-23)
+    EditSpec("typo", "1.1", "replace", "разработке", "разроботке", "", False, "accept", excl="w1.1"),
+    EditSpec("noun_form", "1.1", "replace", "разработке", "разработки", "", True, "review", excl="w1.1"),
     EditSpec("punct", "8.2", "append", new=".", topic="", important=False, expect="accept", excl="8.2p"),
 ]
 
@@ -178,7 +180,8 @@ RENT_EDITS = [
     EditSpec("sublease", "6.1", "replace", "вправе сдавать", "не вправе сдавать", "субподряд, субаренда, передача прав", True, "reject"),
     EditSpec("court", "7.1", "replace", "Арбитражном суде города Москвы", "Арбитражном суде Санкт-Петербурга и Ленинградской области",
              "разрешение споров", True, "review"),
-    EditSpec("typo", "1.2", "replace", "Помещение передаётся", "Помещения передаётся", "", False, "accept"),
+    EditSpec("typo", "1.2", "replace", "Помещение передаётся", "Помещение передаеться", "", False, "accept", excl="w1.2"),
+    EditSpec("noun_form", "1.2", "replace", "Помещение передаётся", "Помещения передаётся", "", True, "review", excl="w1.2"),
     EditSpec("comment", "5.1", "comment", new="Ставку неустойки просим пересмотреть.", topic="неустойка и штрафы", expect="review"),
 ]
 

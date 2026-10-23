@@ -100,6 +100,8 @@ export const reviews = {
   playbooks: () => api('/playbooks'),
   list: (limit = 21, offset = 0) => api('/reviews' + query({ limit, offset })),
   get: (id) => api('/reviews/' + id),
+  document: (id) => api('/reviews/' + id + '/document'),
+  changes: (id) => api('/reviews/' + id + '/changes'),
   create: (formData) => upload('/reviews', formData),
   remove: (id) => api('/reviews/' + id, { method: 'DELETE' }),
 };

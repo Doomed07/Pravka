@@ -47,7 +47,8 @@ func (f *fakeEngine) Review(_ context.Context, r core_domain.ReviewRequest) (eng
 		return engine.Result{}, nil, f.err
 	}
 	return engine.Result{Counts: map[string]int{"всего": 3}, Warnings: []string{"w"}, PlaybookName: "pb", OurRole: "Заказчик",
-		ReportHTML: "<p>отчёт</p>", Changes: []byte(`[{"id":"E001"}]`)}, []byte("PKxlsx"), nil
+		ReportHTML: "<p>отчёт</p>", Changes: []byte(`[{"id":"E001"}]`), Document: []byte(`[{"index":0}]`),
+		Unified: []byte("PKdocx")}, []byte("PKxlsx"), nil
 }
 
 var docx = core_domain.UploadedFile{Name: "C:\\Users\\юрист\\Договор 03.04.docx", Data: []byte("PK\x03\x04data")}
@@ -63,7 +64,8 @@ func TestCreate_SavesReportsNotContracts(t *testing.T) {
 		t.Errorf("saved review = %+v", rev)
 	}
 	f := repo.files[0]
-	if string(f.ReportHTML) != "<p>отчёт</p>" || string(f.ReportXLSX) != "PKxlsx" || string(f.Changes) != `[{"id":"E001"}]` {
+	if string(f.ReportHTML) != "<p>отчёт</p>" || string(f.ReportXLSX) != "PKxlsx" || string(f.Changes) != `[{"id":"E001"}]` ||
+		string(f.Document) != `[{"index":0}]` || string(f.Unified) != "PKdocx" {
 		t.Errorf("saved files = %+v", f)
 	}
 }

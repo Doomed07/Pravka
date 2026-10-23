@@ -10,6 +10,7 @@ from . import journal
 from .anonymize import Anonymizer, anonymize_docx, learn_docx, residual_candidates, scan_leaks
 from .docx_reader import DocxError
 from .evaluate import print_report, run_synthetic
+from .annotate import annotate_docx
 from .llm import Explainer, LLMError, OpenAICompatClient
 from .parties import PartiesError, RoleCheckError, SideConfig, canon_role, profile_from_args
 from .pipeline import DISCLAIMER, review_files
@@ -54,6 +55,7 @@ def cmd_review(a) -> int:
     _write(os.path.join(out, "report.html"), render_html(rv, prio))
     render_xlsx(rv, os.path.join(out, "report.xlsx"))
     write_json(rv, os.path.join(out, "changes.json"))
+    annotate_docx(a.theirs, os.path.join(out, "unified.docx"), rv.changes, rv.document)
     c = rv.counts()
     print(f"Правок: {c['всего']} (в рецензировании {c['в рецензировании']}, комментариев {c['комментарии']}, "
           f"тихих {c['тихие правки']}, найдено сравнением {c['найдено сравнением']})")
@@ -65,6 +67,7 @@ def cmd_review(a) -> int:
     if round_n:
         print(f"Раунд {round_n} записан в журнал проекта {a.project}")
     print(f"Отчёты: {os.path.join(out, 'report.html')}, {os.path.join(out, 'report.xlsx')}, {os.path.join(out, 'changes.json')}")
+    print(f"Единая версия с примечаниями: {os.path.join(out, 'unified.docx')}")
     print(DISCLAIMER)
     return 0
 

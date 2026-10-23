@@ -210,6 +210,40 @@ def head_text(doc: DocxDoc, mode: str, ours: set[str] | frozenset[str] = frozens
     return " ".join(parts)[:MAX_HEAD_CHARS]
 
 
+_PREAMBLE = re.compile(r"именуем\w*\s+(?:в\s+дальнейшем|далее)|в\s+дальнейшем\s+именуем|далее\s*[-–—]?\s*[«\"„]", re.IGNORECASE)
+
+
+def head_indices(doc: DocxDoc) -> set[int]:
+    """Номера абзацев начала договора (название, город и дата, преамбула со сторонами).
+
+    Начало — до абзаца, где определены стороны («именуемое в дальнейшем…»), включительно, и не дальше первого пункта.
+    Нет такого абзаца (приложение, письмо, договор без преамбулы) — начала нет: иначе любые правки попадали
+    в «стороны и реквизиты».
+    """
+    last = -1
+    for i, para in enumerate(doc.paragraphs):
+        if i >= MAX_HEAD_PARAS:
+            break
+        text = "".join(s.text for s in para.segments)
+        if para.label or _FIRST_CLAUSE.match(text):
+            break
+        if _PREAMBLE.search(text):
+            last = i
+    return {p.index for p in doc.paragraphs[:last + 1]}
+
+
+def mark_head_changes(changes: list[Change], head: set[int]) -> None:
+    """Правки в преамбуле — стороны и реквизиты: решает юрист, правила плейбука к ним не применяются."""
+    for ch in changes:
+        if ch.topic == PARTY_TOPIC or ch.kind == "comment" or ch.paragraph_index not in head:
+            continue
+        ch.topic, ch.areas, ch.materiality = PARTY_TOPIC, ["юридическая"], "высокая"
+        ch.rule_id, ch.rule_title, ch.level = "PARTY", "Стороны и реквизиты", "review"
+        ch.action = "Нужно решение юриста: правка в преамбуле (стороны и реквизиты)"
+        ch.explanation = "Правка в начале договора: наименования, реквизиты, город или дата. Сверьте с данными сторон."
+        ch.lawyer_decision_needed = True
+
+
 def _find_name(block: str) -> str:
     for rx in (_NAME_QUOTED, _NAME_COMPANY_WORD, _NAME_IP, _NAME_FOREIGN, _NAME_PERSON):
         found = list(rx.finditer(block))

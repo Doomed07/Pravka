@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 
+from .classify import topic_scores
 from .docx_reader import view_paragraphs
 from .extract import _short, extract_tracked
-from .model import Change, DocxDoc
+from .model import ANNOTATOR, Change, DocxDoc
 from .textdiff import diff_changes, flags_for_change, normalize, strip_label
 
 PAIR_THRESHOLD = 0.5
@@ -69,17 +70,17 @@ def resolve_ours(our_authors: list[str] | None, base: DocxDoc | None) -> tuple[s
     нашим не считается никто, а юристу показывается предупреждение: лучше лишние правки в отчёте, чем пропущенная.
     """
     explicit = {a for a in (our_authors or []) if a}
-    authors = [a for a in (base.authors if base else []) if a]
+    authors = [a for a in (base.authors if base else []) if a and a != ANNOTATOR]
     if explicit:
         extra = [a for a in authors if a not in explicit]
         warn = []
         if extra:
             warn.append("В отправленной версии есть авторы правок, не указанные как наши: " + ", ".join(extra) +
                         ". Их правки считаются правками контрагента.")
-        return explicit, warn
+        return explicit | {ANNOTATOR}, warn
     if len(authors) <= 1:
-        return set(authors), []
-    return set(), ["В отправленной версии правки нескольких авторов (" + ", ".join(authors) + "), а наши авторы не указаны "
+        return set(authors) | {ANNOTATOR}, []
+    return {ANNOTATOR}, ["В отправленной версии правки нескольких авторов (" + ", ".join(authors) + "), а наши авторы не указаны "
                    "(--our-author): ни один не считается нашим, поэтому наши прежние правки могут попасть в отчёт как правки "
                    "контрагента. Укажите, кто из авторов наш."]
 
@@ -97,6 +98,8 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
     """
     base_view = [(p, t) for p, t in view_paragraphs(base, "rejected", ours) if normalize(t)]
     their_view = [(p, t) for p, t in view_paragraphs(theirs, "rejected", ours) if normalize(t)]
+    # наша версия со всеми правками принятыми: так видно, что контрагент просто принял правку из рецензирования
+    base_accepted = {p.index: normalize(t) for p, t in view_paragraphs(base, "accepted", ours)}
     pairs = _align([t for _, t in base_view], [t for _, t in their_view])
     changes: list[Change] = []
     last_order = -1.0
@@ -108,6 +111,9 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
             bp, btext = base_view[i]
             if normalize(btext) == normalize(ttext):
                 continue
+            accepted_by = []
+            if base_accepted.get(bp.index) == normalize(ttext):
+                accepted_by = sorted({s.author or "без имени" for s in bp.segments if s.kind != "equal" and s.author not in ours})
             for before, after in diff_changes(normalize(btext), normalize(ttext)):
                 kind = "replace" if before and after else ("insert" if after else "delete")
                 ch = Change(
@@ -116,6 +122,8 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
                     context=_short(btext), context_after=_short(ttext),
                 )
                 ch.flags = flags_for_change(before, after)
+                if accepted_by:
+                    ch.detail["accepted_from_base"] = accepted_by
                 changes.append(ch)
         elif i is not None:
             bp, btext = base_view[i]
@@ -127,6 +135,8 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
                 context=_short(btext), context_after="",
             )
             ch.flags = flags_for_change(btext, "")
+            if bp.label:
+                ch.detail["labeled"] = True
             changes.append(ch)
         else:
             tp, ttext = their_view[j]
@@ -138,12 +148,73 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
                 context="", context_after=_short(ttext),
             )
             ch.flags = flags_for_change("", ttext)
+            if tp.label:
+                ch.detail["labeled"] = True
             changes.append(ch)
     return changes
 
 
-def compare_versions(base: DocxDoc | None, theirs: DocxDoc, our_authors: list[str] | None = None) -> list[Change]:
-    """Все правки контрагента. base — версия, которую отправили мы (может отсутствовать)."""
+def _replaced(d: Change, i: Change, by_model: bool) -> Change:
+    """Удалённый абзац и вставленный на его место — одна правка: пункт в новой редакции."""
+    ch = Change(
+        source=d.source, kind="replace", clause=i.clause or d.clause, heading=i.heading or d.heading,
+        paragraph_index=i.paragraph_index, order=min(d.order, i.order), before=d.before, after=i.after,
+        context=d.context, context_after=i.context_after, author=i.author or d.author, date=i.date or d.date,
+    )
+    ch.flags = flags_for_change(ch.before, ch.after) + [f for f in d.flags + i.flags if f == "из прошлого раунда"]
+    ch.detail.update(d.detail)
+    ch.detail.update(i.detail)
+    ch.detail.pop("move", None)
+    ch.detail.pop("labeled", None)
+    ch.detail["replaced_para"] = "model" if by_model else "clause"
+    if d.paragraph_index >= 0:
+        ch.detail["replaced_index"] = d.paragraph_index
+    ch.notes.extend(d.notes + i.notes)
+    ch.notes.append("Пункт заменён целиком: прежняя и новая редакция показаны одной правкой"
+                    + (" (замену распознала модель — проверьте)" if by_model else ""))
+    return ch
+
+
+def _same_topic(before: str, after: str) -> bool:
+    """Темы абзацев по классификатору не противоречат друг другу: одна и та же или у одного не определена.
+    Защита от ошибки модели: абзацы на разные темы (субподряд и НДС) не объединяются, что бы она ни ответила."""
+    tb = topic_scores(Change(kind="para_delete", before=before, context=before))
+    ta = topic_scores(Change(kind="para_insert", after=after, context_after=after))
+    return not tb or not ta or tb[0][1].name == ta[0][1].name
+
+
+def merge_replaced(changes: list[Change], judge=None) -> list[Change]:
+    """Пункт удалён и на его место вставлен новый — одна правка.
+
+    Собственный номер пункта у обоих абзацев совпадает — объединяет правило. Номера нет или он разный — решает judge(было, стало) (модель):
+    объединение только меняет вид отчёта, а такая правка всегда уходит юристу (pipeline).
+    """
+    out: list[Change] = []
+    i = 0
+    while i < len(changes):
+        a = changes[i]
+        b = changes[i + 1] if i + 1 < len(changes) else None
+        if b is not None and {a.kind, b.kind} == {"para_delete", "para_insert"} and a.source == b.source \
+                and a.author == b.author and a.detail.get("move") is None and b.detail.get("move") is None:
+            d, n = (a, b) if a.kind == "para_delete" else (b, a)
+            # номер свой у обоих абзацев (а не ближайший выше) и совпадает
+            same = bool(d.clause) and d.clause == n.clause and d.detail.get("labeled") and n.detail.get("labeled")
+            by_model = not same and judge is not None and _same_topic(d.before, n.after) and judge(d.before, n.after)
+            if same or by_model:
+                out.append(_replaced(d, n, by_model))
+                i += 2
+                continue
+        out.append(a)
+        i += 1
+    return out
+
+
+def compare_versions(base: DocxDoc | None, theirs: DocxDoc, our_authors: list[str] | None = None,
+                     judge=None) -> list[Change]:
+    """Все правки контрагента. base — версия, которую отправили мы (может отсутствовать).
+
+    judge(было, стало) -> bool — необязательная проверка моделью, что удалённый и вставленный абзацы — одно условие.
+    """
     ours, _ = resolve_ours(our_authors, base)
     changes = extract_tracked(theirs, ours)
     if base is not None:
@@ -157,9 +228,13 @@ def compare_versions(base: DocxDoc | None, theirs: DocxDoc, our_authors: list[st
         label = "silent" if theirs.has_tracked else "diff"
         changes.extend(find_untracked(base, theirs, ours, label))
     changes.sort(key=lambda c: (c.order, c.source != "tracked"))
+    changes = merge_replaced(changes, judge)
     for n, c in enumerate(changes, 1):
         c.id = f"E{n:03d}"
-        if c.source == "silent":
+        if c.detail.get("accepted_from_base"):
+            c.notes.append("В отправленной версии эта правка была в рецензировании (автор: "
+                           + ", ".join(c.detail["accepted_from_base"]) + "), контрагент её принял")
+        elif c.source == "silent":
             c.notes.append("Правка не отмечена в рецензировании (найдена сравнением с отправленной версией)")
         if c.source == "diff":
             c.notes.append("Версия без рецензирования: правка найдена сравнением с отправленной версией")

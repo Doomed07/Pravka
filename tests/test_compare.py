@@ -126,3 +126,63 @@ def test_single_author_of_sent_version_is_still_ours(tmp_path):
     b = read_docx(str(make_docx(tmp_path / "b.docx", base)))
     t = read_docx(str(make_docx(tmp_path / "t.docx", theirs)))
     assert compare_versions(b, t) == []
+
+
+def test_accepted_tracked_change_from_our_version_is_named(tmp_path):
+    # правку в нашей версии внёс коллега (его нет среди наших авторов), контрагент принял её без отметки
+    base = p(r("1.1. Срок "), ins("10", author="Коллега"), r(" дней."))
+    b, t = _docs(tmp_path, base, p(r("1.1. Срок 10 дней.")))
+    ch = compare_versions(b, t, ["kandu"])
+    assert len(ch) == 1 and ch[0].detail.get("accepted_from_base") == ["Коллега"]
+    assert "Коллега" in ch[0].notes[0]
+
+
+def test_real_silent_edit_is_not_taken_for_accepted_change(tmp_path):
+    base = p(r("1.1. Срок "), ins("10", author="Коллега"), r(" дней."))
+    b, t = _docs(tmp_path, base, p(r("1.1. Срок 15 дней.")))
+    ch = compare_versions(b, t, ["kandu"])
+    assert ch and not any(c.detail.get("accepted_from_base") for c in ch)
+
+
+def _unlabeled(tmp_path):
+    base = p(r("Вводный абзац.")) + p(r("Список делегатов направляется на почту.")) + p(r("Заключительный абзац."))
+    theirs = p(r("Вводный абзац.")) + p(r("Делегатов регистрируют через форму на сайте.")) + p(r("Заключительный абзац."))
+    return _docs(tmp_path, base, theirs)
+
+
+def test_unnumbered_replacement_is_merged_only_if_model_says_so(tmp_path):
+    b, t = _unlabeled(tmp_path)
+    assert [c.kind for c in compare_versions(b, t)] == ["para_delete", "para_insert"]
+    assert [c.kind for c in compare_versions(b, t, judge=lambda x, y: False)] == ["para_delete", "para_insert"]
+    merged = compare_versions(b, t, judge=lambda x, y: True)
+    assert [c.kind for c in merged] == ["replace"] and merged[0].detail["replaced_para"] == "model"
+
+
+def test_model_merged_replacement_goes_to_lawyer(tmp_path):
+    from pravki.parties import SideConfig
+    from pravki.pipeline import review_files
+
+    class Judge:
+        def same_condition(self, a, b):
+            return True
+
+        def confirms_technical(self, ch):
+            return True
+
+        def apply(self, ch, neighbours=()):
+            pass
+
+    clause = p(r("1. Предмет договора"))
+    base = clause + p(r("Список делегатов направляется на почту.")) + p(r("Заключительный абзац."))
+    theirs = clause + p(r("Делегатов регистрируют через форму на сайте.")) + p(r("Заключительный абзац."))
+    rv = review_files(str(make_docx(tmp_path / "t.docx", theirs)), str(make_docx(tmp_path / "b.docx", base)),
+                      "playbooks/services_example.yaml", explainer=Judge(), side=SideConfig(confirm_role="Исполнитель"))
+    ch = next(c for c in rv.changes if c.detail.get("replaced_para"))
+    assert ch.lawyer_decision_needed and "заменён" in ch.action
+
+
+def test_model_cannot_merge_paragraphs_on_different_topics(tmp_path):
+    base = p(r("Вводный абзац.")) + p(r("Исполнитель вправе привлекать субподрядчиков.")) + p(r("Заключительный абзац."))
+    theirs = p(r("Вводный абзац.")) + p(r("Стоимость услуг включает НДС 20%.")) + p(r("Заключительный абзац."))
+    b, t = _docs(tmp_path, base, theirs)
+    assert [c.kind for c in compare_versions(b, t, judge=lambda x, y: True)] == ["para_delete", "para_insert"]

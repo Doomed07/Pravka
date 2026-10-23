@@ -11,7 +11,7 @@ from collections import Counter
 
 from lxml import etree
 
-from .model import Comment, DocxDoc, Paragraph, Segment
+from .model import ANNOTATOR, Comment, DocxDoc, Paragraph, Segment
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -85,6 +85,8 @@ class Numbering:
         self.style_num: dict[str, tuple[str | None, int | None]] = {}
         self.style_based: dict[str, str] = {}
         self.style_names: dict[str, str] = {}
+        self.style_font: dict[str, tuple[bool | None, bool | None]] = {}  # стиль → (жирный, курсив) из w:rPr
+        self.last_kind, self.last_level = "", 0  # вид списка и уровень последнего абзаца (label_for)
         if num_root is not None:
             self._load_numbering(num_root)
         if styles_root is not None:
@@ -127,6 +129,9 @@ class Numbering:
             based = st.find(q("basedOn"))
             if based is not None:
                 self.style_based[sid] = based.get(q("val"))
+            rpr = st.find(q("rPr"))
+            if rpr is not None:
+                self.style_font[sid] = (_flag(rpr, "b"), _flag(rpr, "i"))
             numpr = st.find(f"{q('pPr')}/{q('numPr')}")
             if numpr is not None:
                 nid = numpr.find(q("numId"))
@@ -135,6 +140,17 @@ class Numbering:
                     nid.get(q("val")) if nid is not None else None,
                     int(il.get(q("val"))) if il is not None else None,
                 )
+
+    def font(self, sid: str, depth: int = 0) -> tuple[bool, bool]:
+        """Жирный и курсив по стилю с учётом наследования (basedOn)."""
+        if not sid or depth > 8:
+            return False, False
+        b, i = self.style_font.get(sid, (None, None))
+        if b is None or i is None:
+            pb, pi = self.font(self.style_based.get(sid, ""), depth + 1)
+            b = pb if b is None else b
+            i = pi if i is None else i
+        return bool(b), bool(i)
 
     def style_name(self, sid: str) -> str:
         return self.style_names.get(sid, sid or "")
@@ -159,6 +175,7 @@ class Numbering:
             sn = self._style_numpr(style_id)
             if sn:
                 num_id, ilvl = sn[0], sn[1]
+        self.last_kind, self.last_level = "", 0
         if num_id is None or num_id == "0":
             return ""
         if ilvl is None:
@@ -167,6 +184,8 @@ class Numbering:
         levels = self.abstract.get(aid or "")
         if not levels or ilvl not in levels:
             return ""
+        self.last_kind = "bullet" if levels[ilvl]["fmt"] in ("bullet", "none") else "number"
+        self.last_level = ilvl
         ctr = self.counters.setdefault(aid, [None] * 9)
         if num_id not in self.seen_num:
             self.seen_num.add(num_id)
@@ -208,6 +227,45 @@ def _clean_label(label: str) -> str:
     return label.strip().rstrip(".)").strip()
 
 
+def _flag(rpr, name: str) -> bool | None:
+    """Свойство шрифта w:b / w:i: None — не задано, иначе включено ли (w:val="0" выключает)."""
+    el = rpr.find(q(name)) if rpr is not None else None
+    if el is None:
+        return None
+    return (el.get(q("val")) or "true").lower() not in ("0", "false", "off")
+
+
+def _run_font(r, para_font: tuple[bool, bool], numbering) -> tuple[bool, bool]:
+    rpr = r.find(q("rPr"))
+    b, i = para_font
+    if rpr is not None:
+        rs = rpr.find(q("rStyle"))
+        if rs is not None and numbering is not None:
+            sb, si = numbering.font(rs.get(q("val"), ""))
+            b, i = b or sb, i or si
+        fb, fi = _flag(rpr, "b"), _flag(rpr, "i")
+        b = b if fb is None else fb
+        i = i if fi is None else fi
+    return b, i
+
+
+def _layout(ppr) -> tuple[int, str]:
+    """Отступ слева (твипы) и выравнивание абзаца — только заданные прямо в абзаце."""
+    if ppr is None:
+        return 0, ""
+    indent = 0
+    ind = ppr.find(q("ind"))
+    if ind is not None:
+        raw = ind.get(q("left")) or ind.get(q("start")) or "0"
+        try:
+            indent = max(0, int(float(raw)))
+        except ValueError:
+            indent = 0
+    jc = ppr.find(q("jc"))
+    align = jc.get(q("val"), "") if jc is not None else ""
+    return indent, {"center": "center", "right": "right", "end": "right", "both": "both", "distribute": "both"}.get(align, "")
+
+
 def _run_text(r) -> str:
     out = []
     for ch in r:
@@ -233,20 +291,25 @@ _TRANSPARENT = {
 }
 
 
-def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_para: dict[str, int]):
+def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_para: dict[str, int],
+                     numbering=None):
     """Разобрать абзац. Возвращает (Paragraph, {id комментария: якорный текст})."""
     para = Paragraph(index=idx)
+    ppr0 = p.find(q("pPr"))
+    style0 = ppr0.find(q("pStyle")) if ppr0 is not None else None
+    para_font = numbering.font(style0.get(q("val"), "")) if numbering is not None and style0 is not None else (False, False)
     segs: list[Segment] = []
     anchors: dict[str, str] = {}
 
-    def add(kind, text, author, date, move, ins_by):
+    def add(kind, text, author, date, move, ins_by, font=(False, False)):
         if not text:
             return
         if segs and segs[-1].kind == kind and segs[-1].author == author and segs[-1].date == date \
-                and segs[-1].move == move and segs[-1].ins_author == ins_by:
+                and segs[-1].move == move and segs[-1].ins_author == ins_by \
+                and (segs[-1].bold, segs[-1].italic) == font:
             segs[-1].text += text
         else:
-            segs.append(Segment(kind, text, author, date, move, ins_by))
+            segs.append(Segment(kind, text, author, date, move, ins_by, font[0], font[1]))
 
     def note_comment(cid):
         if cid is not None and cid not in para.comment_ids:
@@ -259,7 +322,7 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
             tag = ch.tag
             if tag == q("r"):
                 text = _run_text(ch)
-                add(kind, text, author, date, move, ins_by)
+                add(kind, text, author, date, move, ins_by, _run_font(ch, para_font, numbering))
                 if text:
                     for buf in open_comments.values():
                         buf.append(text)
@@ -314,6 +377,40 @@ def _in_table(p) -> bool:
     return any(a.tag == q("tc") for a in p.iterancestors())
 
 
+def _table_pos(p, table_ids: dict) -> tuple:
+    """(номер таблицы, строка, столбец, ширина) для абзаца в ячейке; () вне таблицы. Берётся ближайшая (внутренняя) ячейка.
+
+    Столбец считается по сетке таблицы: объединённые по горизонтали ячейки (gridSpan) занимают несколько столбцов.
+    """
+    tc = next((a for a in p.iterancestors() if a.tag == q("tc")), None)
+    if tc is None:
+        return ()
+    tr = tc.getparent()
+    tbl = tr.getparent() if tr is not None else None
+    if tr is None or tbl is None or tbl.tag != q("tbl"):
+        return ()
+    tid = table_ids.get(tbl)
+    if tid is None:
+        return ()
+    rows = [r for r in tbl if r.tag == q("tr")]
+    col = 0
+    for cell in tr:
+        if cell.tag != q("tc"):
+            continue
+        span = 1
+        tcpr = cell.find(q("tcPr"))
+        gs = tcpr.find(q("gridSpan")) if tcpr is not None else None
+        if gs is not None:
+            try:
+                span = max(1, int(gs.get(q("val"), "1")))
+            except ValueError:
+                span = 1
+        if cell is tc:
+            return (tid, rows.index(tr) if tr in rows else 0, col, span)
+        col += span
+    return ()
+
+
 def _is_heading(para: Paragraph, text: str, style_name: str) -> bool:
     sn = (style_name or "").lower()
     if sn.startswith("heading") or sn.startswith("заголовок") or sn == "title":
@@ -348,6 +445,8 @@ def read_docx(path: str) -> DocxDoc:
         raise DocxError("в document.xml нет тела документа")
 
     paragraphs: list[Paragraph] = []
+    # номера таблиц по порядку; словарь держит ссылки на элементы, поэтому lxml отдаёт те же объекты-обёртки
+    table_ids = {tbl: i for i, tbl in enumerate(body.iter(q("tbl")))}
     open_comments: dict[str, list[str]] = {}
     comment_para: dict[str, int] = {}
     anchors_all: dict[str, str] = {}
@@ -358,17 +457,20 @@ def read_docx(path: str) -> DocxDoc:
         if _in_fallback(p):
             continue
         idx = len(paragraphs)
-        para, p_anchors = _parse_paragraph(p, idx, open_comments, comment_para)
+        para, p_anchors = _parse_paragraph(p, idx, open_comments, comment_para, numbering)
         ppr = p.find(q("pPr"))
         style_el = ppr.find(q("pStyle")) if ppr is not None else None
         style_id = style_el.get(q("val"), "") if style_el is not None else ""
         para.style = numbering.style_name(style_id)
         para.in_table = _in_table(p)
+        para.table = _table_pos(p, table_ids) if para.in_table else ()
         para.mark, para.mark_author = _paragraph_mark(p)
         # текст «как показан»: для нумерации берём исходный текст абзаца без удалённого
         visible = "".join(s.text for s in para.segments if s.kind in ("equal", "ins"))
         full = "".join(s.text for s in para.segments)
         auto = numbering.label_for(ppr, style_id)
+        para.list_kind, para.level = numbering.last_kind, numbering.last_level
+        para.indent, para.align = _layout(ppr)
         label = _clean_label(auto) if auto else ""
         if not label:
             m = _LABEL_RE.match(visible or full)
@@ -431,6 +533,8 @@ def view_paragraphs(doc: DocxDoc, mode: str, ours: frozenset[str] | set[str] = f
     def seg_included(s: Segment) -> bool:
         if s.kind == "equal":
             return True
+        if s.author == ANNOTATOR:
+            return s.kind == "del"  # примечания программы (annotate.py) — как будто их нет
         mine = s.author in ours
         if mode == "accepted":
             return s.kind == "ins"

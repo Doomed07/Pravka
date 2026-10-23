@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 
 from .textdiff import normalize
 
+# Автор примечаний и дисклеймера в единой версии Word (annotate.py). Всегда считается нашим.
+ANNOTATOR = "Правки (черновик)"
+
 
 @dataclass
 class Segment:
@@ -20,6 +23,8 @@ class Segment:
     # Текст вставил один автор, а удалил другой: при «отклонить все» он вернётся, только если
     # вставка наша, а удаление чужое.
     ins_author: str | None = None
+    bold: bool = False
+    italic: bool = False
 
 
 @dataclass
@@ -31,6 +36,11 @@ class Paragraph:
     heading: str = ""  # ближайший выше заголовок раздела
     style: str = ""
     in_table: bool = False
+    table: tuple = ()  # (номер таблицы, строка, столбец, ширина в столбцах) — для абзацев внутри таблицы
+    list_kind: str = ""  # пусто, bullet (маркированный список) или number (нумерованный)
+    level: int = 0  # уровень вложенности списка (ilvl)
+    indent: int = 0  # отступ слева в твипах (1/20 пункта), из w:ind
+    align: str = ""  # пусто, center, right или both (по ширине)
     mark: str = ""  # '', 'ins', 'del': отслеживаемая правка знака абзаца
     mark_author: str = ""
     segments: list[Segment] = field(default_factory=list)
@@ -152,6 +162,9 @@ class Change:
             "level": self.level,
             "action": self.action,
             "explanation": self.explanation,
+            "ai_explained": "template_explanation" in self.detail,  # пояснение написала модель
+            "accepted_from_base": list(self.detail.get("accepted_from_base", [])),  # авторы принятой правки из нашей версии
+            "replaced_para": self.detail.get("replaced_para", ""),  # пункт заменён целиком: clause (по номеру) или model
             "suggested": self.suggested,
             "escalate_to": self.escalate_to,
             "lawyer_decision_needed": self.lawyer_decision_needed,
