@@ -51,7 +51,7 @@ services:
     # порт не публикуется: движок доступен только веб-сервису внутри сети Docker
 
   pravki-postgres:
-    image: postgres:18.6-bookworm
+    image: pgvector/pgvector:0.8.1-pg18-bookworm  # PostgreSQL 18 с pgvector: поиск по смыслу (шаг 3)
     container_name: pravki-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
