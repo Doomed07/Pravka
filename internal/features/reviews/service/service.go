@@ -27,6 +27,7 @@ type ReviewsRepository interface {
 	DeleteReview(ctx context.Context, userID, id int) error
 	ListChoices(ctx context.Context, userID, reviewID int) ([]core_domain.ReviewChoice, error)
 	SaveChoice(ctx context.Context, userID, reviewID int, c core_domain.ReviewChoice) error
+	ListPrecedents(ctx context.Context, userID, reviewID int) ([]core_domain.Precedent, error)
 }
 
 type Engine interface {
@@ -75,7 +76,7 @@ func (s *ReviewsService) Create(ctx context.Context, userID int, req core_domain
 	}
 	rev := core_domain.ContractReview{
 		UserID: userID, TheirsName: req.Theirs.Name, Playbook: req.Playbook, PlaybookName: res.PlaybookName,
-		OurRole: res.OurRole, Side: res.Side, Counts: res.Counts, Warnings: res.Warnings,
+		OurRole: res.OurRole, ContractType: res.ContractType, Side: res.Side, Counts: res.Counts, Warnings: res.Warnings,
 	}
 	if req.Base != nil {
 		rev.BaseName = req.Base.Name
@@ -125,6 +126,11 @@ func (s *ReviewsService) SaveChoice(ctx context.Context, userID, id int, c core_
 		return err
 	}
 	return s.repo.SaveChoice(ctx, userID, id, c)
+}
+
+// Precedents — «как решали раньше»: прошлые решения юриста по похожим правкам. Только подсказка.
+func (s *ReviewsService) Precedents(ctx context.Context, userID, id int) ([]core_domain.Precedent, error) {
+	return s.repo.ListPrecedents(ctx, userID, id)
 }
 
 // MaxAuthor — предел имени автора наших правок в ответе.

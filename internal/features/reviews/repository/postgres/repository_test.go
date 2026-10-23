@@ -7,7 +7,9 @@ package reviews_repository_postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
@@ -81,4 +83,128 @@ func TestReviewsRepository_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE id IN ($1, $2)`, u1, u2)
+}
+
+// «Как решали раньше»: подсказка — только из прошлых разборов того же юриста, того же типа договора и той же нашей роли;
+// та же правка, записанная иначе («30» → «10» и «30 календарных дней» → «10 календарных дней»), — первой.
+func TestReviewsRepository_Precedents(t *testing.T) {
+	if os.Getenv("PRAVKI_TEST_DB") == "" {
+		t.Skip("PRAVKI_TEST_DB не задан: нужна настоящая PostgreSQL")
+	}
+	ctx := context.Background()
+	pool, err := core_postgres_pgx.NewConnPool(core_postgres_pgx.NewConfigMust(), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	users := map[string]int{}
+	for _, name := range []string{"prec_test_a", "prec_test_b"} {
+		_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE username = $1`, name)
+		var id int
+		if err := pool.QueryRow(ctx, `INSERT INTO pravkiapp.users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
+			name, name+"@example.com", "$2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234").Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		users[name] = id
+	}
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE username LIKE 'prec_test_%'`) }()
+	a, b := users["prec_test_a"], users["prec_test_b"]
+	repo := NewReviewsRepository(pool)
+
+	const ship = `Поставщик поставляет Товар в течение 30 календарных дней с даты получения аванса.`
+	const pen = `За просрочку поставки Поставщик уплачивает неустойку 0,1% от стоимости непоставленного Товара за каждый день.`
+	const court = `Споры рассматриваются в Арбитражном суде города Москвы.`
+	change := func(id, topic, before, after, context string) string {
+		return fmt.Sprintf(`{"id":%q,"kind":"replace","topic":%q,"before":%q,"after":%q,"context":%q}`, id, topic, before, after, context)
+	}
+	review := func(user int, typ, role, name string, changes ...string) int {
+		t.Helper()
+		rev, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: user, TheirsName: name, OurRole: role, ContractType: typ},
+			core_domain.ReviewFiles{ReportHTML: []byte("-"), ReportXLSX: []byte("-"), Changes: []byte("[" + strings.Join(changes, ",") + "]")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rev.ID
+	}
+	choose := func(user, id int, change, choice, text string) {
+		t.Helper()
+		if err := repo.SaveChoice(ctx, user, id, core_domain.ReviewChoice{ChangeID: change, Choice: choice, Text: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// прошлые разборы юриста A: поставка, мы — Поставщик
+	r1 := review(a, "supply", "Поставщик", "Поставка_ООО_Альфа.docx",
+		change("E001", "сроки исполнения", "30 календарных дней", "10 календарных дней", ship),
+		change("E002", "неустойка и штрафы", "0,1%", "0,5%", pen),
+		change("E003", "разрешение споров", "Москвы", "Казани", court))
+	choose(a, r1, "E001", "counter", "в течение 20 календарных дней")
+	choose(a, r1, "E002", "reject", "")
+	choose(a, r1, "E003", "reply", "Согласуем позже") // ответ на комментарий — не решение по правке
+	r2 := review(a, "supply", "Поставщик", "Поставка_ООО_Бета.docx",
+		change("E001", "сроки исполнения", "30 календарных дней", "45 календарных дней", ship))
+	choose(a, r2, "E001", "accept", "")
+	// та же правка в другом абзаце (абзац похож меньше) — выше похожей правки в том же абзаце
+	r3 := review(a, "supply", "Поставщик", "Поставка_ООО_Дельта.docx",
+		change("E001", "сроки исполнения", "30 календарных дней", "10 календарных рабочих дней", ship))
+	choose(a, r3, "E001", "reject", "")
+	r4 := review(a, "supply", "Поставщик", "Поставка_ООО_Эпсилон.docx",
+		change("E001", "сроки исполнения", "30", "10", `Товар поставляется партиями в течение 30 календарных дней с даты подписания спецификации.`))
+	choose(a, r4, "E001", "reject", "")
+	// та же правка, но мы — Покупатель, договор услуг или другой юрист: не подсказка
+	for _, x := range []struct {
+		user      int
+		typ, role string
+	}{{a, "supply", "Покупатель"}, {a, "services", "Поставщик"}, {b, "supply", "Поставщик"}} {
+		id := review(x.user, x.typ, x.role, "чужое.docx", change("E001", "сроки исполнения", "30", "10", ship))
+		choose(x.user, id, "E001", "reject", "")
+	}
+
+	// новый разбор: правки найдены сравнением редакций — записаны короче
+	cur := review(a, "supply", "Поставщик", "Поставка_ООО_Гамма.docx",
+		change("S001", "сроки исполнения", "30", "10", ship),
+		change("S002", "разрешение споров", "Москвы", "Казани", court),
+		change("S003", "прочее", "Товар", "Продукция", `Наименование и количество Товара указываются в спецификации.`),
+		// та же суть {+10, -30}, что и в сроке поставки, но это аванс: другая тема — не подсказка
+		change("S004", "порядок и сроки оплаты", "30%", "10%",
+			`Покупатель вносит аванс в размере 30% от стоимости Товара в течение 5 рабочих дней с даты подписания договора.`),
+		// та же суть и тема, но абзац о другом (монтаж, а не поставка): похожая правка, а не «та же»
+		change("S005", "сроки исполнения", "30", "10", `Монтаж оборудования выполняется Поставщиком в течение 30 календарных дней.`))
+	choose(a, cur, "S001", "reject", "") // решение по самому разбору — не «как решали раньше»
+
+	got, err := repo.ListPrecedents(ctx, a, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string][]core_domain.Precedent{}
+	for _, p := range got {
+		by[p.ChangeID] = append(by[p.ChangeID], p)
+	}
+	s1 := by["S001"]
+	if len(s1) == 0 || s1[0].ReviewID != r1 || !s1[0].Same || s1[0].Choice != "counter" || s1[0].Text != "в течение 20 календарных дней" ||
+		s1[0].PastChangeID != "E001" || s1[0].TheirsName != "Поставка_ООО_Альфа.docx" {
+		t.Fatalf("S001: same edit first, from our own role and type only: %+v", s1)
+	}
+	if len(s1) != core_domain.MaxPrecedents || s1[1].ReviewID != r4 || !s1[1].Same || s1[2].ReviewID != r3 || s1[2].Same {
+		t.Fatalf("S001: the same edit in another clause goes before a similar one, at most %d hints: %+v", core_domain.MaxPrecedents, s1)
+	}
+	if s5 := by["S005"]; len(s5) == 0 || s5[0].Same {
+		t.Fatalf("S005: another paragraph is a similar edit, not the same: %+v", s5)
+	}
+	for _, id := range []string{"S002", "S003", "S004"} {
+		if len(by[id]) != 0 {
+			t.Fatalf("%s: no decision, nothing similar or another topic → no hint: %+v", id, by[id])
+		}
+	}
+	if _, err := repo.ListPrecedents(ctx, b, cur); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("other user's review: err = %v", err)
+	}
+	// договор аренды: подсказок нет (работаем только с поставкой и услугами)
+	pastLease := review(a, "lease", "Поставщик", "Аренда_прошлая.docx", change("E001", "сроки исполнения", "30", "10", ship))
+	choose(a, pastLease, "E001", "reject", "")
+	lease := review(a, "lease", "Поставщик", "Аренда.docx", change("E001", "сроки исполнения", "30", "10", ship))
+	if got, err := repo.ListPrecedents(ctx, a, lease); err != nil || len(got) != 0 {
+		t.Fatalf("lease: %+v, err = %v", got, err)
+	}
 }

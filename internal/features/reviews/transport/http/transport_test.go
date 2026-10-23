@@ -38,7 +38,9 @@ func (f *fakeService) Create(_ context.Context, userID int, r core_domain.Review
 	}
 	return core_domain.ContractReview{ID: 5, UserID: userID, TheirsName: r.Theirs.Name, Counts: map[string]int{"всего": 1}}, nil
 }
-func (f *fakeService) List(context.Context, int, int, int) ([]core_domain.ContractReview, error) { return nil, nil }
+func (f *fakeService) List(context.Context, int, int, int) ([]core_domain.ContractReview, error) {
+	return nil, nil
+}
 func (f *fakeService) Get(_ context.Context, userID, id int) (core_domain.ContractReview, error) {
 	if userID != 1 {
 		return core_domain.ContractReview{}, core_errors.ErrNotFound
@@ -76,6 +78,13 @@ func (f *fakeService) SaveChoice(_ context.Context, userID, _ int, c core_domain
 	}
 	f.choice = c
 	return nil
+}
+func (f *fakeService) Precedents(_ context.Context, userID, _ int) ([]core_domain.Precedent, error) {
+	if userID != 1 {
+		return nil, core_errors.ErrNotFound
+	}
+	return []core_domain.Precedent{{ChangeID: "E002", ReviewID: 3, TheirsName: "Поставка_v2.docx", Choice: "counter",
+		Text: "15 дней", Same: true, Score: 0.8}}, nil
 }
 func (f *fakeService) Answer(_ context.Context, userID, _ int, author string) (engine.AnswerResult, error) {
 	if userID != 1 {
@@ -227,6 +236,11 @@ func TestChoicesAndAnswer(t *testing.T) {
 	if rec := do(1, http.MethodPut, "/reviews/5/choices/E007", `{"choice":"maybe"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad choice: %d", rec.Code)
 	}
+	if rec := do(1, http.MethodGet, "/reviews/5/precedents", ""); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"change_id":"E002"`) || !strings.Contains(rec.Body.String(), `"text":"15 дней"`) ||
+		!strings.Contains(rec.Body.String(), `"same":true`) {
+		t.Fatalf("precedents: %d %s", rec.Code, rec.Body.String())
+	}
 	rec := do(1, http.MethodPost, "/reviews/5/answer", `{"author":"Иванова А."}`)
 	if rec.Code != http.StatusOK || rec.Body.String() != "PKanswer" || svc.author != "Иванова А." ||
 		!strings.Contains(rec.Header().Get("Content-Disposition"), "pravki_answer_5.docx") || rec.Header().Get("X-Pravki-reject") != "2" ||
@@ -237,6 +251,7 @@ func TestChoicesAndAnswer(t *testing.T) {
 		{http.MethodGet, "/reviews/5/choices", ""},
 		{http.MethodPut, "/reviews/5/choices/E007", `{"choice":"accept"}`},
 		{http.MethodPost, "/reviews/5/answer", `{}`},
+		{http.MethodGet, "/reviews/5/precedents", ""},
 	} {
 		if rec := do(2, c.method, c.path, c.body); rec.Code != http.StatusNotFound {
 			t.Errorf("someone else's %s %s: %d, want 404", c.method, c.path, rec.Code)

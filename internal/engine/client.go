@@ -47,6 +47,7 @@ type Result struct {
 	Side         string          `json:"side"`
 	PlaybookName string          `json:"playbook_name"`
 	OurRole      string          `json:"our_role"`
+	ContractType string          `json:"contract_type"`
 	ReportHTML   string          `json:"report_html"`
 	ReportXLSX   string          `json:"report_xlsx"` // base64
 	Changes      json.RawMessage `json:"changes"`

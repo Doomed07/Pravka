@@ -30,6 +30,7 @@ type ReviewsService interface {
 	Delete(ctx context.Context, userID, id int) error
 	Choices(ctx context.Context, userID, id int) ([]core_domain.ReviewChoice, error)
 	SaveChoice(ctx context.Context, userID, id int, c core_domain.ReviewChoice) error
+	Precedents(ctx context.Context, userID, id int) ([]core_domain.Precedent, error)
 	Answer(ctx context.Context, userID, id int, author string) (engine.AnswerResult, error)
 }
 
@@ -55,6 +56,7 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 		{Method: http.MethodGet, Path: "/reviews/{id}/docx", Handler: h.DOCX, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/choices", Handler: h.Choices, Middlewares: auth},
 		{Method: http.MethodPut, Path: "/reviews/{id}/choices/{change}", Handler: h.SaveChoice, Middlewares: auth},
+		{Method: http.MethodGet, Path: "/reviews/{id}/precedents", Handler: h.Precedents, Middlewares: auth},
 		{Method: http.MethodPost, Path: "/reviews/{id}/answer", Handler: h.Answer, Middlewares: auth},
 		{Method: http.MethodDelete, Path: "/reviews/{id}", Handler: h.Delete, Middlewares: auth},
 	}
@@ -449,4 +451,47 @@ func (h *ReviewsHTTPHandler) Answer(rw http.ResponseWriter, r *http.Request) {
 	}
 	rw.WriteHeader(http.StatusOK)
 	_, _ = rw.Write(res.DOCX)
+}
+
+// ---------- как решали раньше ----------
+
+type PrecedentDTO struct {
+	ChangeID   string    `json:"change_id"`
+	ReviewID   int       `json:"review_id"`
+	PastChange string    `json:"past_change"`
+	TheirsName string    `json:"theirs_name"`
+	CreatedAt  time.Time `json:"created_at"`
+	Clause     string    `json:"clause"`
+	Topic      string    `json:"topic"`
+	Before     string    `json:"before"`
+	After      string    `json:"after"`
+	Choice     string    `json:"choice"`
+	Text       string    `json:"text"`
+	Same       bool      `json:"same"`
+	Score      float64   `json:"score"`
+}
+
+func (h *ReviewsHTTPHandler) Precedents(rw http.ResponseWriter, r *http.Request) {
+	resp := core_http_response.NewHTTPResponseHandler(core_logger.FromCtx(r.Context()), rw)
+	who, ok := identity(r, resp)
+	if !ok {
+		return
+	}
+	id, ok := pathID(r, resp)
+	if !ok {
+		return
+	}
+	list, err := h.service.Precedents(r.Context(), who.UserID, id)
+	if err != nil {
+		resp.ErrorResponse(err, "failed to list precedents")
+		return
+	}
+	out := make([]PrecedentDTO, 0, len(list))
+	for _, p := range list {
+		out = append(out, PrecedentDTO{ChangeID: p.ChangeID, ReviewID: p.ReviewID, PastChange: p.PastChangeID, TheirsName: p.TheirsName, CreatedAt: p.CreatedAt,
+			Clause: p.Clause, Topic: p.Topic, Before: p.Before, After: p.After, Choice: p.Choice, Text: p.Text, Same: p.Same,
+			Score: p.Score})
+	}
+	rw.Header().Set("Cache-Control", "no-store")
+	resp.JSONResponse(http.StatusOK, out)
 }

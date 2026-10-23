@@ -1251,6 +1251,60 @@ del + ins {
   font-size: 13px;
 }
 
+/* «как решали раньше»: прошлые решения юриста, свёрнуты, кроме той же правки */
+.past {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--ok);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.past__title {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.past__list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.past__item p {
+  margin: 0;
+}
+
+.past__head a {
+  color: inherit;
+}
+
+.past__diff,
+.past__foot {
+  color: var(--muted);
+}
+
+.past__foot {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.past__use {
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font: 700 12px/1.4 var(--font-sans);
+  cursor: pointer;
+}
+
+.past__use:hover {
+  border-color: var(--ink);
+}
+
 .decide {
   display: grid;
   gap: 6px;

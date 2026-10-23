@@ -41,7 +41,10 @@ func (f *fakeRepo) SaveChoice(_ context.Context, _, _ int, c core_domain.ReviewC
 	f.choices = append(f.choices, c)
 	return nil
 }
-func (f *fakeRepo) DeleteReview(context.Context, int, int) error              { return nil }
+func (f *fakeRepo) DeleteReview(context.Context, int, int) error { return nil }
+func (f *fakeRepo) ListPrecedents(context.Context, int, int) ([]core_domain.Precedent, error) {
+	return []core_domain.Precedent{{ChangeID: "E001", Choice: "reject"}}, nil
+}
 
 type fakeEngine struct {
 	err   error
@@ -64,7 +67,8 @@ func (f *fakeEngine) Review(_ context.Context, r core_domain.ReviewRequest) (eng
 		return engine.Result{}, nil, f.err
 	}
 	return engine.Result{Counts: map[string]int{"всего": 3}, Warnings: []string{"w"}, PlaybookName: "pb", OurRole: "Заказчик",
-		ReportHTML: "<p>отчёт</p>", Changes: []byte(`[{"id":"E001"}]`), Document: []byte(`[{"index":0}]`),
+		ContractType: "services",
+		ReportHTML:   "<p>отчёт</p>", Changes: []byte(`[{"id":"E001"}]`), Document: []byte(`[{"index":0}]`),
 		Unified: []byte("PKdocx")}, []byte("PKxlsx"), nil
 }
 
@@ -77,7 +81,8 @@ func TestCreate_SavesReportsNotContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rev.UserID != 7 || rev.TheirsName != "Договор 03.04.docx" || rev.Counts["всего"] != 3 || rev.OurRole != "Заказчик" {
+	if rev.UserID != 7 || rev.TheirsName != "Договор 03.04.docx" || rev.Counts["всего"] != 3 || rev.OurRole != "Заказчик" ||
+		repo.saved[0].ContractType != "services" {
 		t.Errorf("saved review = %+v", rev)
 	}
 	f := repo.files[0]

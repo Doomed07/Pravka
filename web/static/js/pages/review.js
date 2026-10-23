@@ -109,6 +109,35 @@ function replyBlock(ch) {
     </div>`;
 }
 
+// ---------- Как решали раньше ----------
+
+// Прошлые решения юриста по похожим правкам: id правки → список. Только подсказка: решает юрист.
+const PRECEDENTS = new Map();
+
+const PAST_CHOICE = { accept: 'приняли', reject: 'отклонили', counter: 'встречная редакция' };
+
+function precedentItem(p) {
+  const kind = p.same ? 'Та же правка' : 'Похожая правка';
+  return html`
+    <li class="past__item">
+      <p class="past__head"><b>${kind}</b> · <a href="/reviews/${p.review_id}#c-${p.past_change}">${short(p.theirs_name, 40)}</a>, ${fmtDate(p.created_at)}</p>
+      <p class="past__diff">было «${short(p.before, 60) || '—'}», стало «${short(p.after, 60) || '—'}»</p>
+      <p class="past__choice">Решение: ${PAST_CHOICE[p.choice] || p.choice}${p.choice === 'counter' && p.text ? html` — «${short(p.text, 160)}»` : ''}</p>
+      ${p.choice === 'counter' && p.text ? html`<button class="past__use" type="button" data-text="${p.text}">Взять эту формулировку</button>` : ''}
+    </li>`;
+}
+
+function precedentsBlock(ch) {
+  const list = PRECEDENTS.get(ch.id);
+  if (!list || !list.length || ch.kind === 'comment') return '';
+  return html`
+    <details class="past"${list[0].same ? ' open' : ''}>
+      <summary class="past__title">Как решали раньше: ${list.length}</summary>
+      <ul class="past__list">${list.map(precedentItem)}</ul>
+      <p class="past__foot">Из ваших прошлых разборов того же вида договора. Подсказка, решаете вы.</p>
+    </details>`;
+}
+
 function decideBlock(ch) {
   if (ch.kind === 'comment') return replyBlock(ch);
   const cur = CHOICES.get(ch.id) || {};
@@ -153,6 +182,7 @@ function note(ch, order) {
       ${ch.suggested ? html`<p class="note__suggest">Наша позиция: ${ch.suggested}</p>` : ''}
       ${ch.escalate_to ? html`<p class="note__foot">Согласовать: ${ch.escalate_to}</p>` : ''}
       ${ch.rule_id && ch.rule_id !== 'PARTY' || isSilent(ch) ? html`<p class="note__foot">${[ch.rule_id && ch.rule_id !== 'PARTY' ? `правило ${ch.rule_id}` : '', isSilent(ch) ? 'найдено сравнением редакций' : ''].filter(Boolean).join(' · ')}</p>` : ''}
+      ${precedentsBlock(ch)}
       ${decideBlock(ch)}
     </article>`;
 }
@@ -484,6 +514,22 @@ function wireDecisions(id, changes) {
     });
   });
 
+  // «Взять эту формулировку» из прошлого разбора: встречная редакция с этим текстом, юрист может поправить
+  document.querySelectorAll('.past__use').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const box = btn.closest('.note')?.querySelector('.decide');
+      if (!box) return;
+      const text = box.querySelector('.decide__text');
+      text.value = btn.dataset.text;
+      text.hidden = false;
+      box.querySelectorAll('.decide__btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.choice === 'counter')));
+      await saveChoice(id, box, 'counter', text.value);
+      refresh();
+      text.focus();
+    });
+  });
+
   const build = $('#answer-build');
   const author = $('#answer-author');
   const status = $('#answer-status');
@@ -549,8 +595,13 @@ async function load() {
     return;
   }
   const id = pathID();
-  const [r, doc, changes, choices] = await Promise.all([reviews.get(id), reviews.document(id), reviews.changes(id),
-    reviews.choices(id).catch(() => [])]);
+  const [r, doc, changes, choices, precedents] = await Promise.all([reviews.get(id), reviews.document(id), reviews.changes(id),
+    reviews.choices(id).catch(() => []), reviews.precedents(id).catch(() => [])]);
+  PRECEDENTS.clear();
+  for (const p of precedents || []) {
+    if (!PRECEDENTS.has(p.change_id)) PRECEDENTS.set(p.change_id, []);
+    PRECEDENTS.get(p.change_id).push(p);
+  }
   CHOICES.clear();
   for (const c of choices || []) CHOICES.set(c.change_id, { choice: c.choice, text: c.text });
   setTitle(r.theirs_name);
@@ -560,6 +611,9 @@ async function load() {
   mount(box, body);
   wire(id);
   if (doc && doc.length) wireDecisions(id, changes || []);
+  // ссылка из «как решали раньше» ведёт к правке прошлого разбора: /reviews/3#c-E001
+  const target = decodeURIComponent(location.hash.slice(1));
+  if (target.startsWith('c-') && document.getElementById(target)) select(target.slice(2), 'doc');
 }
 
 load().catch((err) => {

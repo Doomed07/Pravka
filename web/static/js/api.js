@@ -103,6 +103,8 @@ export const reviews = {
   document: (id) => api('/reviews/' + id + '/document'),
   changes: (id) => api('/reviews/' + id + '/changes'),
   choices: (id) => api('/reviews/' + id + '/choices'),
+  // «как решали раньше»: прошлые решения юриста по похожим правкам
+  precedents: (id) => api('/reviews/' + id + '/precedents'),
   // пустой choice снимает решение
   saveChoice: (id, change, choice, text = '') =>
     api('/reviews/' + id + '/choices/' + encodeURIComponent(change), { method: 'PUT', body: { choice, text } }),

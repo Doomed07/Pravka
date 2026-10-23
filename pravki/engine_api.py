@@ -157,6 +157,7 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
         "side": rv.side.message if rv.side else "",
         "playbook_name": pb.name if pb else "",
         "our_role": pb.our_role if pb else "",
+        "contract_type": pb.contract_type if pb else "",  # для «как решали раньше»: подсказки только того же типа
         "report_html": render_html(rv, pb.priority_topics if pb else None),
         "report_xlsx": xlsx,
         "changes": [c.to_dict() for c in rv.changes],

@@ -55,6 +55,7 @@ def test_review_roundtrip(engine, tmp_path):
     assert base64.b64decode(data["unified_docx"])[:2] == b"PK" and data["document"]
     assert {i for para in data["document"] for i in para["changes"]} == {c["id"] for c in data["changes"]}
     assert data["our_role"] == "Исполнитель"
+    assert data["contract_type"] == "services"  # «как решали раньше» ищет по типу договора
 
 
 def test_role_not_confirmed_and_bad_file(engine, tmp_path):
