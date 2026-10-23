@@ -102,6 +102,37 @@ export const reviews = {
   get: (id) => api('/reviews/' + id),
   document: (id) => api('/reviews/' + id + '/document'),
   changes: (id) => api('/reviews/' + id + '/changes'),
+  choices: (id) => api('/reviews/' + id + '/choices'),
+  // пустой choice снимает решение
+  saveChoice: (id, change, choice, text = '') =>
+    api('/reviews/' + id + '/choices/' + encodeURIComponent(change), { method: 'PUT', body: { choice, text } }),
+  answer: (id, author) => answerFile(id, author),
   create: (formData) => upload('/reviews', formData),
   remove: (id) => api('/reviews/' + id, { method: 'DELETE' }),
 };
+
+// answerFile скачивает ответ контрагенту в Word: {blob, stats}. Файл собирается на сервере по решениям юриста.
+async function answerFile(id, author) {
+  let response;
+  try {
+    response = await fetch('/api/v1/reviews/' + id + '/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author }),
+    });
+  } catch {
+    throw new ApiError(0, 'network error');
+  }
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    throw new ApiError(response.status, (data && data.message) || response.statusText, (data && data.error) || '');
+  }
+  const stats = {};
+  for (const k of ['accept', 'reject', 'counter', 'untracked']) stats[k] = Number(response.headers.get('X-Pravki-' + k) || 0);
+  return { blob: await response.blob(), stats };
+}

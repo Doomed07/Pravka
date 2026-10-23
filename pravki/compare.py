@@ -164,6 +164,7 @@ def _replaced(d: Change, i: Change, by_model: bool) -> Change:
     ch.flags = flags_for_change(ch.before, ch.after) + [f for f in d.flags + i.flags if f == "из прошлого раунда"]
     ch.detail.update(d.detail)
     ch.detail.update(i.detail)
+    ch.detail["revs"] = sorted(set(d.detail.get("revs", [])) | set(i.detail.get("revs", [])), key=lambda x: (len(x), x))
     ch.detail.pop("move", None)
     ch.detail.pop("labeled", None)
     ch.detail["replaced_para"] = "model" if by_model else "clause"

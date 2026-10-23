@@ -170,3 +170,70 @@ func (c *Client) Review(ctx context.Context, r core_domain.ReviewRequest) (Resul
 	res.UnifiedDOCX = ""
 	return res, xlsx, nil
 }
+
+// AnswerResult — ответ контрагенту в Word и счётчики применённых решений.
+type AnswerResult struct {
+	DOCX  []byte
+	Stats map[string]int
+}
+
+// Answer собирает ответ контрагенту: единая версия + правки разбора (JSON) + решения юриста.
+func (c *Client) Answer(ctx context.Context, unified, changes []byte, choices []core_domain.ReviewChoice, author string) (AnswerResult, error) {
+	sel := make(map[string]map[string]string, len(choices))
+	for _, ch := range choices {
+		sel[ch.ChangeID] = map[string]string{"choice": ch.Choice, "text": ch.Text}
+	}
+	selJSON, err := json.Marshal(sel)
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for k, v := range map[string]string{"changes": string(changes), "choices": string(selJSON), "author": author} {
+		_ = mw.WriteField(k, v)
+	}
+	w, err := mw.CreateFormFile("unified", "unified.docx")
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	if _, err := w.Write(unified); err != nil {
+		return AnswerResult{}, err
+	}
+	if err := mw.Close(); err != nil {
+		return AnswerResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.URL+"/answer", &buf)
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.do(req)
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 200<<20))
+	if err != nil {
+		return AnswerResult{}, fmt.Errorf("движок: чтение ответа: %v: %w", err, core_errors.ErrUnavailable)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var eb errorBody
+		_ = json.Unmarshal(body, &eb)
+		if resp.StatusCode == http.StatusBadRequest {
+			return AnswerResult{}, fmt.Errorf("%s: %w", eb.Message, core_errors.ErrInvalidArgument)
+		}
+		return AnswerResult{}, fmt.Errorf("движок: статус %d: %s: %w", resp.StatusCode, eb.Message, core_errors.ErrUnavailable)
+	}
+	var raw struct {
+		DOCX  string         `json:"answer_docx"`
+		Stats map[string]int `json:"stats"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return AnswerResult{}, fmt.Errorf("движок: разбор ответа: %w", err)
+	}
+	docx, err := base64.StdEncoding.DecodeString(raw.DOCX)
+	if err != nil {
+		return AnswerResult{}, fmt.Errorf("движок: файл ответа повреждён: %w", err)
+	}
+	return AnswerResult{DOCX: docx, Stats: raw.Stats}, nil
+}

@@ -25,6 +25,7 @@ class Segment:
     ins_author: str | None = None
     bold: bool = False
     italic: bool = False
+    rev: str = ""  # w:id правки Word (w:ins / w:del / w:moveFrom / w:moveTo), к которой относится кусок
 
 
 @dataclass
@@ -43,6 +44,7 @@ class Paragraph:
     align: str = ""  # пусто, center, right или both (по ширине)
     mark: str = ""  # '', 'ins', 'del': отслеживаемая правка знака абзаца
     mark_author: str = ""
+    mark_rev: str = ""  # w:id правки знака абзаца
     segments: list[Segment] = field(default_factory=list)
     comment_ids: list[str] = field(default_factory=list)
 
@@ -164,7 +166,8 @@ class Change:
             "explanation": self.explanation,
             "ai_explained": "template_explanation" in self.detail,  # пояснение написала модель
             "accepted_from_base": list(self.detail.get("accepted_from_base", [])),  # авторы принятой правки из нашей версии
-            "replaced_para": self.detail.get("replaced_para", ""),  # пункт заменён целиком: clause (по номеру) или model
+            "replaced_para": self.detail.get("replaced_para", ""),
+            "revs": list(self.detail.get("revs", [])),  # w:id правок Word: по ним собирается ответ (answer.py)  # пункт заменён целиком: clause (по номеру) или model
             "suggested": self.suggested,
             "escalate_to": self.escalate_to,
             "lawyer_decision_needed": self.lawyer_decision_needed,

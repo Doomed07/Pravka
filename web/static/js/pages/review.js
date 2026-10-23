@@ -78,6 +78,44 @@ function noteBy(ch) {
   return html`<p class="note__by"><span class="note__mark" aria-hidden="true">П</span>Правки · ${by}</p>`;
 }
 
+// ---------- Решение юриста по правке (пошаговый просмотр) ----------
+
+// Решения, сохранённые на сервере: id правки → {choice, text}. Загружаются до отрисовки.
+const CHOICES = new Map();
+
+const DECISIONS = [
+  ['accept', 'Принять'],
+  ['reject', 'Отклонить'],
+  ['counter', 'Встречная редакция'],
+];
+
+// Подсказка программы: какое решение соответствует выводу плейбука. Юрист выбирает сам.
+function hinted(ch) {
+  if (ch.lawyer_decision_needed) return '';
+  if (ch.level === 'accept' || ch.level === 'fallback') return 'accept';
+  if (ch.level === 'reject') return ch.suggested ? 'counter' : 'reject';
+  return '';
+}
+
+function decideBlock(ch) {
+  if (ch.kind === 'comment') return '';
+  const cur = CHOICES.get(ch.id) || {};
+  const hint = hinted(ch);
+  const untracked = !(ch.revs || []).length;
+  return html`
+    <div class="decide" data-change="${ch.id}">
+      <div class="decide__buttons" role="group" aria-label="Решение по правке">
+        ${DECISIONS.map(([k, label]) => html`
+          <button class="decide__btn${k === hint ? ' decide__btn--hint' : ''}" type="button" data-choice="${k}"
+            aria-pressed="${cur.choice === k ? 'true' : 'false'}"${k === hint ? html` title="Совпадает с выводом программы"` : ''}>${label}</button>`)}
+      </div>
+      <textarea class="decide__text form__input" rows="3" maxlength="5000"${cur.choice === 'counter' ? '' : ' hidden'}
+        placeholder="${ch.suggested ? `Ваша редакция. Позиция плейбука: ${ch.suggested}` : 'Ваша редакция'}">${cur.text || ''}</textarea>
+      ${untracked ? html`<p class="decide__note">Правка без отметки в рецензировании: решение сохранится, но в ответ Word пока не попадёт.</p>` : ''}
+      <p class="decide__status" role="status"></p>
+    </div>`;
+}
+
 function note(ch, order) {
   const v = verdict(ch);
   const diff = ch.replaced_para
@@ -103,6 +141,7 @@ function note(ch, order) {
       ${ch.suggested ? html`<p class="note__suggest">Наша позиция: ${ch.suggested}</p>` : ''}
       ${ch.escalate_to ? html`<p class="note__foot">Согласовать: ${ch.escalate_to}</p>` : ''}
       ${ch.rule_id && ch.rule_id !== 'PARTY' || isSilent(ch) ? html`<p class="note__foot">${[ch.rule_id && ch.rule_id !== 'PARTY' ? `правило ${ch.rule_id}` : '', isSilent(ch) ? 'найдено сравнением редакций' : ''].filter(Boolean).join(' · ')}</p>` : ''}
+      ${decideBlock(ch)}
     </article>`;
 }
 
@@ -296,6 +335,38 @@ function head(r, hasDocx) {
     </header>`;
 }
 
+// Сколько правок уже решено (комментарии сюда не входят — ответы на них будут отдельно).
+function decidedCount(changes) {
+  const open = changes.filter((c) => c.kind !== 'comment');
+  return [open.filter((c) => CHOICES.has(c.id)).length, open.length];
+}
+
+const AUTHOR_KEY = 'pravki.answer.author';
+
+function defaultAuthor() {
+  try {
+    const saved = localStorage.getItem(AUTHOR_KEY);
+    if (saved) return saved;
+    const memo = JSON.parse(localStorage.getItem('pravki.form') || '{}');
+    return (memo.our_authors || '').split(',')[0].trim();
+  } catch {
+    return '';
+  }
+}
+
+function answerPanel(changes) {
+  const [done, total] = decidedCount(changes);
+  return html`
+    <section class="answer" aria-labelledby="answer-title">
+      <h2 class="answer__title" id="answer-title">Ответ контрагенту</h2>
+      <p class="answer__progress" id="answer-progress">Решено ${done} из ${total}</p>
+      <label class="form__label" for="answer-author">Автор наших правок в Word</label>
+      <input class="form__input" id="answer-author" maxlength="100" value="${defaultAuthor()}" placeholder="как вы подписаны в Word">
+      <button class="button button--cta" type="button" id="answer-build">Собрать ответ в Word</button>
+      <p class="answer__status" id="answer-status" role="status"></p>
+    </section>`;
+}
+
 function unifiedView(r, doc, changes) {
   const order = new Map(changes.map((c, i) => [c.id, i + 1]));
   const warnings = r.warnings || [];
@@ -303,6 +374,7 @@ function unifiedView(r, doc, changes) {
     ${head(r, true)}
     <div class="rv">
       <aside class="rv-side">
+        ${answerPanel(changes)}
         ${summary(changes)}
         ${changes.length ? list(changes, order) : html`<p class="empty-state">Правок не найдено.</p>`}
         <p class="legend">
@@ -351,6 +423,80 @@ function select(id, scroll) {
   if (scroll === 'list' && item) item.scrollIntoView({ block: 'nearest' });
 }
 
+function setStatus(el, text) {
+  if (el) el.textContent = text;
+}
+
+async function saveChoice(id, box, choice, text) {
+  const status = box.querySelector('.decide__status');
+  setStatus(status, 'Сохраняю…');
+  try {
+    await reviews.saveChoice(id, box.dataset.change, choice, choice === 'counter' ? text : '');
+    if (choice) CHOICES.set(box.dataset.change, { choice, text });
+    else CHOICES.delete(box.dataset.change);
+    setStatus(status, choice ? 'Сохранено' : 'Решение снято');
+  } catch (err) {
+    setStatus(status, err instanceof ApiError && err.status === 400 ? 'Не сохранено: проверьте текст' : 'Не сохранено, попробуйте ещё раз');
+  }
+}
+
+function wireDecisions(id, changes) {
+  const progress = $('#answer-progress');
+  const refresh = () => {
+    const [done, total] = decidedCount(changes);
+    setStatus(progress, `Решено ${done} из ${total}`);
+  };
+  document.querySelectorAll('.decide').forEach((box) => {
+    const text = box.querySelector('.decide__text');
+    box.addEventListener('click', (e) => e.stopPropagation()); // клик по решению не прокручивает страницу
+    box.querySelectorAll('.decide__btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const again = btn.getAttribute('aria-pressed') === 'true'; // повторное нажатие снимает решение
+        const choice = again ? '' : btn.dataset.choice;
+        box.querySelectorAll('.decide__btn').forEach((b) => b.setAttribute('aria-pressed', String(b === btn && !again)));
+        text.hidden = choice !== 'counter';
+        if (choice === 'counter') text.focus();
+        await saveChoice(id, box, choice, text.value);
+        refresh();
+      });
+    });
+    let timer;
+    text.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => saveChoice(id, box, 'counter', text.value), 700);
+    });
+  });
+
+  const build = $('#answer-build');
+  const author = $('#answer-author');
+  const status = $('#answer-status');
+  build.addEventListener('click', async () => {
+    try {
+      localStorage.setItem(AUTHOR_KEY, author.value.trim());
+    } catch {
+      /* приватный режим */
+    }
+    build.disabled = true;
+    setStatus(status, 'Собираю…');
+    try {
+      const { blob, stats } = await reviews.answer(id, author.value.trim());
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `Ответ_контрагенту_${id}.docx`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      const skipped = stats.untracked ? ` Не вошли в файл (правки без отметки): ${stats.untracked}.` : '';
+      setStatus(status, `Готово: принято ${stats.accept}, отклонено ${stats.reject}, встречных редакций ${stats.counter}.${skipped} Черновик — проверьте перед отправкой, дисклеймер в конце отклоните.`);
+    } catch (err) {
+      setStatus(status, err instanceof ApiError && err.status === 404
+        ? 'Для этого разбора ответ собрать нельзя: загрузите договор заново.'
+        : 'Не удалось собрать ответ. Попробуйте ещё раз.');
+    } finally {
+      build.disabled = false;
+    }
+  });
+}
+
 function wire(id) {
   document.querySelectorAll('.rv-list__item').forEach((el) => {
     el.addEventListener('click', () => select(el.dataset.change, 'doc'));
@@ -386,13 +532,17 @@ async function load() {
     return;
   }
   const id = pathID();
-  const [r, doc, changes] = await Promise.all([reviews.get(id), reviews.document(id), reviews.changes(id)]);
+  const [r, doc, changes, choices] = await Promise.all([reviews.get(id), reviews.document(id), reviews.changes(id),
+    reviews.choices(id).catch(() => [])]);
+  CHOICES.clear();
+  for (const c of choices || []) CHOICES.set(c.change_id, { choice: c.choice, text: c.text });
   setTitle(r.theirs_name);
   const box = $('#review');
   box.classList.add('container--wide');
   const body = doc && doc.length ? unifiedView(r, doc, changes || []) : legacyView(r);
   mount(box, body);
   wire(id);
+  if (doc && doc.length) wireDecisions(id, changes || []);
 }
 
 load().catch((err) => {

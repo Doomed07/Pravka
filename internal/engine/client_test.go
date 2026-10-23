@@ -97,3 +97,36 @@ func TestEngineDown(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestAnswer_SendsFormAndDecodesFile(t *testing.T) {
+	d := base64.StdEncoding.EncodeToString([]byte("PKanswer"))
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/answer" || r.Header.Get("X-Engine-Token") != "tok" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("bad form: %v", err)
+		}
+		f, _, err := r.FormFile("unified")
+		if err != nil {
+			t.Errorf("no unified: %v", err)
+			return
+		}
+		data, _ := io.ReadAll(f)
+		got = map[string]string{"unified": string(data), "changes": r.FormValue("changes"), "choices": r.FormValue("choices"),
+			"author": r.FormValue("author")}
+		_, _ = w.Write([]byte(`{"answer_docx":"` + d + `","stats":{"reject":1}}`))
+	}))
+	defer srv.Close()
+	res, err := client(srv.URL).Answer(context.Background(), []byte("PKunified"), []byte(`[{"id":"E001"}]`),
+		[]core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}}, "Иванова А.")
+	if err != nil || string(res.DOCX) != "PKanswer" || res.Stats["reject"] != 1 {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if got["unified"] != "PKunified" || got["changes"] != `[{"id":"E001"}]` || got["author"] != "Иванова А." ||
+		got["choices"] != `{"E001":{"choice":"counter","text":"30 дней"}}` {
+		t.Fatalf("engine got %+v", got)
+	}
+}

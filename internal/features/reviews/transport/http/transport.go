@@ -28,6 +28,9 @@ type ReviewsService interface {
 	Get(ctx context.Context, userID, id int) (core_domain.ContractReview, error)
 	File(ctx context.Context, userID, id int, kind string) ([]byte, error)
 	Delete(ctx context.Context, userID, id int) error
+	Choices(ctx context.Context, userID, id int) ([]core_domain.ReviewChoice, error)
+	SaveChoice(ctx context.Context, userID, id int, c core_domain.ReviewChoice) error
+	Answer(ctx context.Context, userID, id int, author string) (engine.AnswerResult, error)
 }
 
 type ReviewsHTTPHandler struct {
@@ -50,6 +53,9 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 		{Method: http.MethodGet, Path: "/reviews/{id}/changes", Handler: h.Changes, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/document", Handler: h.Document, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/docx", Handler: h.DOCX, Middlewares: auth},
+		{Method: http.MethodGet, Path: "/reviews/{id}/choices", Handler: h.Choices, Middlewares: auth},
+		{Method: http.MethodPut, Path: "/reviews/{id}/choices/{change}", Handler: h.SaveChoice, Middlewares: auth},
+		{Method: http.MethodPost, Path: "/reviews/{id}/answer", Handler: h.Answer, Middlewares: auth},
 		{Method: http.MethodDelete, Path: "/reviews/{id}", Handler: h.Delete, Middlewares: auth},
 	}
 }
@@ -340,4 +346,106 @@ func (h *ReviewsHTTPHandler) Delete(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp.StatusCodeResponse(http.StatusNoContent)
+}
+
+// ---------- пошаговый просмотр и ответ контрагенту ----------
+
+type ChoiceDTO struct {
+	ChangeID string `json:"change_id"`
+	Choice   string `json:"choice"`
+	Text     string `json:"text"`
+}
+
+type SaveChoiceRequest struct {
+	Choice string `json:"choice"`
+	Text   string `json:"text"`
+}
+
+func (r SaveChoiceRequest) Validate() error { return nil } // проверяет core_domain.ReviewChoice в сервисе
+
+type AnswerRequest struct {
+	Author string `json:"author"`
+}
+
+func (r AnswerRequest) Validate() error { return nil }
+
+func (h *ReviewsHTTPHandler) Choices(rw http.ResponseWriter, r *http.Request) {
+	resp := core_http_response.NewHTTPResponseHandler(core_logger.FromCtx(r.Context()), rw)
+	who, ok := identity(r, resp)
+	if !ok {
+		return
+	}
+	id, ok := pathID(r, resp)
+	if !ok {
+		return
+	}
+	list, err := h.service.Choices(r.Context(), who.UserID, id)
+	if err != nil {
+		resp.ErrorResponse(err, "failed to list choices")
+		return
+	}
+	out := make([]ChoiceDTO, 0, len(list))
+	for _, c := range list {
+		out = append(out, ChoiceDTO{ChangeID: c.ChangeID, Choice: c.Choice, Text: c.Text})
+	}
+	rw.Header().Set("Cache-Control", "no-store")
+	resp.JSONResponse(http.StatusOK, out)
+}
+
+func (h *ReviewsHTTPHandler) SaveChoice(rw http.ResponseWriter, r *http.Request) {
+	resp := core_http_response.NewHTTPResponseHandler(core_logger.FromCtx(r.Context()), rw)
+	who, ok := identity(r, resp)
+	if !ok {
+		return
+	}
+	id, ok := pathID(r, resp)
+	if !ok {
+		return
+	}
+	var req SaveChoiceRequest
+	if err := core_http_request.DecodeAndValidateRequest(r, &req); err != nil {
+		resp.ErrorResponse(err, "invalid choice")
+		return
+	}
+	c := core_domain.ReviewChoice{ChangeID: r.PathValue("change"), Choice: req.Choice, Text: req.Text}
+	if err := h.service.SaveChoice(r.Context(), who.UserID, id, c); err != nil {
+		resp.ErrorResponse(err, "failed to save choice")
+		return
+	}
+	resp.StatusCodeResponse(http.StatusNoContent)
+}
+
+// Answer отдаёт ответ контрагенту в Word. Файл не сохраняется: собирается по текущим решениям юриста.
+func (h *ReviewsHTTPHandler) Answer(rw http.ResponseWriter, r *http.Request) {
+	resp := core_http_response.NewHTTPResponseHandler(core_logger.FromCtx(r.Context()), rw)
+	who, ok := identity(r, resp)
+	if !ok {
+		return
+	}
+	id, ok := pathID(r, resp)
+	if !ok {
+		return
+	}
+	var req AnswerRequest
+	if err := core_http_request.DecodeAndValidateRequest(r, &req); err != nil {
+		resp.ErrorResponse(err, "invalid answer request")
+		return
+	}
+	res, err := h.service.Answer(r.Context(), who.UserID, id, req.Author)
+	if err != nil {
+		resp.ErrorResponse(err, "failed to build answer")
+		return
+	}
+	name := fmt.Sprintf("Правки_ответ_контрагенту_%d.docx", id)
+	rw.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	rw.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"pravki_answer_%d.docx\"; filename*=UTF-8''%s", id, url.PathEscape(name)))
+	rw.Header().Set("Cache-Control", "no-store")
+	// счётчики применённых решений; «без отметки» — решения по правкам, которых в рецензировании Word нет
+	for k, header := range map[string]string{"accept": "accept", "reject": "reject", "counter": "counter", "без отметки": "untracked"} {
+		if v, ok := res.Stats[k]; ok {
+			rw.Header().Set("X-Pravki-"+header, fmt.Sprint(v))
+		}
+	}
+	rw.WriteHeader(http.StatusOK)
+	_, _ = rw.Write(res.DOCX)
 }

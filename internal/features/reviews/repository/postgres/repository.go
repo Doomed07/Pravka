@@ -166,3 +166,56 @@ func (r *ReviewsRepository) DeleteReview(ctx context.Context, userID, id int) er
 	}
 	return nil
 }
+
+// ListChoices — решения юриста по правкам разбора. Чужой разбор — ErrNotFound.
+func (r *ReviewsRepository) ListChoices(ctx context.Context, userID, reviewID int) ([]core_domain.ReviewChoice, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	if _, err := r.GetReview(ctx, userID, reviewID); err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, `SELECT change_id, choice, text FROM pravkiapp.review_choices
+	WHERE review_id = $1 ORDER BY change_id;`, reviewID)
+	if err != nil {
+		return nil, fmt.Errorf("select choices: %w", err)
+	}
+	defer rows.Close()
+	out := []core_domain.ReviewChoice{}
+	for rows.Next() {
+		var c core_domain.ReviewChoice
+		if err := rows.Scan(&c.ChangeID, &c.Choice, &c.Text); err != nil {
+			return nil, fmt.Errorf("scan choice: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate choices: %w", err)
+	}
+	return out, nil
+}
+
+// SaveChoice — записать решение по правке; пустое решение удаляет запись. Чужой разбор — ErrNotFound.
+func (r *ReviewsRepository) SaveChoice(ctx context.Context, userID, reviewID int, c core_domain.ReviewChoice) error {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	if _, err := r.GetReview(ctx, userID, reviewID); err != nil {
+		return err
+	}
+	if c.Choice == "" {
+		if _, err := r.pool.Exec(ctx, `DELETE FROM pravkiapp.review_choices WHERE review_id = $1 AND change_id = $2;`,
+			reviewID, c.ChangeID); err != nil {
+			return fmt.Errorf("delete choice: %w", err)
+		}
+		return nil
+	}
+	_, err := r.pool.Exec(ctx, `
+	INSERT INTO pravkiapp.review_choices (review_id, change_id, choice, text) VALUES ($1, $2, $3, $4)
+	ON CONFLICT (review_id, change_id) DO UPDATE SET choice = EXCLUDED.choice, text = EXCLUDED.text, updated_at = NOW();`,
+		reviewID, c.ChangeID, c.Choice, c.Text)
+	if err != nil {
+		return fmt.Errorf("save choice: %w", err)
+	}
+	return nil
+}

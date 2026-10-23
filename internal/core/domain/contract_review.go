@@ -3,6 +3,7 @@ package core_domain
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -110,3 +111,38 @@ type Playbook struct {
 	Name string
 	Role string
 }
+
+// Решения юриста по правке в пошаговом просмотре.
+const (
+	ChoiceAccept  = "accept"  // принять правку контрагента
+	ChoiceReject  = "reject"  // отклонить
+	ChoiceCounter = "counter" // встречная редакция: текст пишет юрист
+)
+
+// MaxChoiceText — предел текста встречной редакции.
+const MaxChoiceText = 5000
+
+// ReviewChoice — решение юриста по одной правке разбора. Пустой Choice — решение снято.
+type ReviewChoice struct {
+	ChangeID string
+	Choice   string
+	Text     string
+}
+
+// Validate: номер правки как в разборе (E001, S002), известный выбор, текст не длиннее предела.
+func (c ReviewChoice) Validate() error {
+	if !changeIDRe.MatchString(c.ChangeID) {
+		return fmt.Errorf("номер правки %q: %w", c.ChangeID, core_errors.ErrInvalidArgument)
+	}
+	switch c.Choice {
+	case "", ChoiceAccept, ChoiceReject, ChoiceCounter:
+	default:
+		return fmt.Errorf("неизвестное решение %q: %w", c.Choice, core_errors.ErrInvalidArgument)
+	}
+	if utf8.RuneCountInString(c.Text) > MaxChoiceText {
+		return fmt.Errorf("текст встречной редакции длиннее %d символов: %w", MaxChoiceText, core_errors.ErrInvalidArgument)
+	}
+	return nil
+}
+
+var changeIDRe = regexp.MustCompile(`^[A-Z]\d{3,5}$`)

@@ -9,6 +9,14 @@ from .textdiff import flags_for_change, normalize, strip_label
 CONTEXT_LIMIT = 1200
 
 
+def _revs(segments, mark_rev: str = "") -> list[str]:
+    """Номера правок Word (w:id), из которых состоит правка программы: по ним собирается ответ (answer.py)."""
+    out = {s.rev for s in segments if s.kind != "equal" and s.rev}
+    if mark_rev:
+        out.add(mark_rev)
+    return sorted(out, key=lambda x: (len(x), x))
+
+
 def _short(text: str, limit: int = CONTEXT_LIMIT) -> str:
     text = normalize(text)
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -75,6 +83,7 @@ def _group_change(para: Paragraph, group: list[Segment]) -> Change | None:
         context=_short("".join(s.text for s in para.segments if s.kind in ("equal", "del"))),
         context_after=_short("".join(s.text for s in para.segments if s.kind in ("equal", "ins"))),
     )
+    ch.detail["revs"] = _revs(group)
     if moved:
         ch.detail["move"] = "out" if kind == "delete" else "in"
     ch.flags = flags_for_change(ch.before, ch.after)
@@ -106,6 +115,7 @@ def extract_tracked(doc: DocxDoc, ours: set[str] | frozenset[str] = frozenset())
                 context="", context_after=_short(text),
             )
             ch.flags = flags_for_change("", text)
+            ch.detail["revs"] = _revs(para.segments, para.mark_rev)
             if para.label:
                 ch.detail["labeled"] = True
             if all(s.move for s in para.segments if s.kind == "ins"):
@@ -125,6 +135,7 @@ def extract_tracked(doc: DocxDoc, ours: set[str] | frozenset[str] = frozenset())
                 context=_short(text), context_after="",
             )
             ch.flags = flags_for_change(text, "")
+            ch.detail["revs"] = _revs(para.segments, para.mark_rev)
             if para.label:
                 ch.detail["labeled"] = True
             if all(s.move for s in para.segments if s.kind == "del"):
@@ -144,6 +155,7 @@ def extract_tracked(doc: DocxDoc, ours: set[str] | frozenset[str] = frozenset())
                 author=para.mark_author, context=_short("".join(x.text for x in para.segments)),
             )
             ch.flags = ["склейка абзацев"]
+            ch.detail["revs"] = _revs([], para.mark_rev)
             changes.append(ch)
 
     for cid, c in doc.comments.items():
@@ -181,6 +193,7 @@ def _pair_moves(changes: list[Change]) -> None:
                 drop.add(id(i))
                 o.kind = "move"
                 o.after = o.before
+                o.detail["revs"] = sorted(set(o.detail.get("revs", [])) | set(i.detail.get("revs", [])), key=lambda x: (len(x), x))
                 o.detail["move_to"] = i.clause or i.paragraph_index
                 o.detail["move_from"] = o.clause
                 o.notes.append(

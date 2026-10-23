@@ -10,6 +10,8 @@
   GET  /playbooks  — [{"key", "name", "role"}]
   POST /review     — multipart: theirs (docx), base (docx, необязательно), playbook, our_authors, company,
                      confirm_role. 200 — разбор; 422 — сторона договора не подтверждена; 400 — файл не разобран.
+  POST /answer     — multipart: unified (docx единой версии), changes (JSON), choices (JSON), author.
+                     200 — ответ контрагенту в Word (base64) по решениям юриста.
 
 Если задан ENGINE_TOKEN, каждый запрос должен нести заголовок X-Engine-Token с тем же значением.
 Модель для пояснений: PRAVKI_LLM_URL и PRAVKI_LLM_MODEL; имена хостов внутренней сети (ollama,
@@ -33,6 +35,7 @@ from urllib.parse import urlparse
 import yaml
 
 from .annotate import annotate_docx
+from .answer import build_answer
 from .docx_reader import DocxError
 from .llm import Explainer, LLMError, OpenAICompatClient, is_local
 from .parties import PartiesError, RoleCheckError, SideConfig, profile_from_args
@@ -162,6 +165,31 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
     }
 
 
+def answer(fields: dict, files: dict) -> tuple[int, dict]:
+    """Ответ контрагенту: единая версия (unified) + правки разбора (changes, JSON) + выбор юриста (choices, JSON)
+    + автор наших правок (author). 200 — {"answer_docx": base64, "stats": {...}}."""
+    if "unified" not in files:
+        return 400, {"error": "bad_request", "message": "Не передана единая версия договора (unified)."}
+    try:
+        changes = json.loads(fields.get("changes") or "[]")
+        choices = json.loads(fields.get("choices") or "{}")
+    except json.JSONDecodeError:
+        return 400, {"error": "bad_request", "message": "Правки или выбор юриста переданы не в формате JSON."}
+    if not isinstance(changes, list) or not isinstance(choices, dict):
+        return 400, {"error": "bad_request", "message": "Правки — список, выбор юриста — словарь."}
+    with tempfile.TemporaryDirectory(prefix="pravki-") as d:
+        src, out = os.path.join(d, "unified.docx"), os.path.join(d, "answer.docx")
+        with open(src, "wb") as f:
+            f.write(files["unified"])
+        try:
+            stats = build_answer(src, out, changes, choices, fields.get("author", ""))
+        except DocxError as ex:
+            return 400, {"error": "bad_file", "message": str(ex)}
+        with open(out, "rb") as f:
+            data = base64.b64encode(f.read()).decode("ascii")
+    return 200, {"answer_docx": data, "stats": stats, "disclaimer": DISCLAIMER}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "PravkiEngine"
 
@@ -196,7 +224,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._authorized():
             return
-        if urlparse(self.path).path != "/review":
+        path = urlparse(self.path).path
+        if path not in ("/review", "/answer"):
             return self._json(404, {"error": "not_found", "message": "Нет такого адреса."})
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > MAX_UPLOAD:
@@ -204,7 +233,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         try:
             fields, files = parse_multipart(self.headers.get("Content-Type", ""), body)
-            status, data = review(fields, files)
+            status, data = review(fields, files) if path == "/review" else answer(fields, files)
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             status, data = 500, {"error": "internal", "message": "Внутренняя ошибка движка."}

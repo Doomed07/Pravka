@@ -15,6 +15,7 @@ type fakeRepo struct {
 	saved   []core_domain.ContractReview
 	files   []core_domain.ReviewFiles
 	listArg [3]int
+	choices []core_domain.ReviewChoice
 }
 
 func (f *fakeRepo) CreateReview(_ context.Context, rev core_domain.ContractReview, files core_domain.ReviewFiles) (core_domain.ContractReview, error) {
@@ -30,13 +31,29 @@ func (f *fakeRepo) ListReviews(_ context.Context, userID, limit, offset int) ([]
 func (f *fakeRepo) GetReview(context.Context, int, int) (core_domain.ContractReview, error) {
 	return core_domain.ContractReview{}, nil
 }
-func (f *fakeRepo) GetFile(context.Context, int, int, string) ([]byte, error) { return nil, nil }
+func (f *fakeRepo) GetFile(_ context.Context, _, _ int, kind string) ([]byte, error) {
+	return []byte("file:" + kind), nil
+}
+func (f *fakeRepo) ListChoices(context.Context, int, int) ([]core_domain.ReviewChoice, error) {
+	return f.choices, nil
+}
+func (f *fakeRepo) SaveChoice(_ context.Context, _, _ int, c core_domain.ReviewChoice) error {
+	f.choices = append(f.choices, c)
+	return nil
+}
 func (f *fakeRepo) DeleteReview(context.Context, int, int) error              { return nil }
 
 type fakeEngine struct {
 	err   error
 	calls int
 	got   core_domain.ReviewRequest
+	ans   []string // что пришло в Answer: единая версия, правки, автор
+	ansCh []core_domain.ReviewChoice
+}
+
+func (f *fakeEngine) Answer(_ context.Context, unified, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error) {
+	f.ans, f.ansCh = []string{string(unified), string(changes), author}, choices
+	return engine.AnswerResult{DOCX: []byte("PKanswer")}, nil
 }
 
 func (f *fakeEngine) Playbooks(context.Context) ([]core_domain.Playbook, error) { return nil, nil }
@@ -124,5 +141,43 @@ func TestList_Limits(t *testing.T) {
 	}
 	if _, err := s.List(context.Background(), 3, 10, -1); !errors.Is(err, core_errors.ErrInvalidArgument) {
 		t.Errorf("negative offset: err=%v", err)
+	}
+}
+
+func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
+	repo := &fakeRepo{}
+	s := NewReviewsService(repo, &fakeEngine{})
+	bad := []core_domain.ReviewChoice{
+		{ChangeID: "E001; DROP", Choice: "accept"},
+		{ChangeID: "E001", Choice: "maybe"},
+		{ChangeID: "E001", Choice: "counter", Text: string(make([]rune, core_domain.MaxChoiceText+1))},
+	}
+	for _, c := range bad {
+		if err := s.SaveChoice(context.Background(), 1, 1, c); !errors.Is(err, core_errors.ErrInvalidArgument) {
+			t.Errorf("%+v: err = %v, want invalid argument", c.ChangeID, err)
+		}
+	}
+	if len(repo.choices) != 0 {
+		t.Fatalf("invalid choices reached repo: %+v", repo.choices)
+	}
+	for _, c := range []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}, {ChangeID: "S002", Choice: ""}} {
+		if err := s.SaveChoice(context.Background(), 1, 1, c); err != nil {
+			t.Fatalf("%+v: %v", c, err)
+		}
+	}
+}
+
+func TestAnswer_SendsUnifiedChangesChoicesAndAuthor(t *testing.T) {
+	repo := &fakeRepo{choices: []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "reject"}}}
+	eng := &fakeEngine{}
+	res, err := NewReviewsService(repo, eng).Answer(context.Background(), 1, 3, "  Иванова А.  ")
+	if err != nil || string(res.DOCX) != "PKanswer" {
+		t.Fatalf("res = %q, err = %v", res.DOCX, err)
+	}
+	if eng.ans[0] != "file:docx" || eng.ans[1] != "file:changes" || eng.ans[2] != "Иванова А." || len(eng.ansCh) != 1 {
+		t.Fatalf("engine got %q, choices %+v", eng.ans, eng.ansCh)
+	}
+	if _, err := NewReviewsService(repo, eng).Answer(context.Background(), 1, 3, string(make([]rune, MaxAuthor+1))); !errors.Is(err, core_errors.ErrInvalidArgument) {
+		t.Fatalf("long author: err = %v", err)
 	}
 }

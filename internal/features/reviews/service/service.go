@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
 	core_errors "github.com/Doomed07/Pravka/internal/core/errors"
@@ -23,11 +25,14 @@ type ReviewsRepository interface {
 	GetReview(ctx context.Context, userID, id int) (core_domain.ContractReview, error)
 	GetFile(ctx context.Context, userID, id int, kind string) ([]byte, error)
 	DeleteReview(ctx context.Context, userID, id int) error
+	ListChoices(ctx context.Context, userID, reviewID int) ([]core_domain.ReviewChoice, error)
+	SaveChoice(ctx context.Context, userID, reviewID int, c core_domain.ReviewChoice) error
 }
 
 type Engine interface {
 	Playbooks(ctx context.Context) ([]core_domain.Playbook, error)
 	Review(ctx context.Context, r core_domain.ReviewRequest) (engine.Result, []byte, error)
+	Answer(ctx context.Context, unified, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error)
 }
 
 type ReviewsService struct {
@@ -109,4 +114,40 @@ func (s *ReviewsService) File(ctx context.Context, userID, id int, kind string) 
 
 func (s *ReviewsService) Delete(ctx context.Context, userID, id int) error {
 	return s.repo.DeleteReview(ctx, userID, id)
+}
+
+func (s *ReviewsService) Choices(ctx context.Context, userID, id int) ([]core_domain.ReviewChoice, error) {
+	return s.repo.ListChoices(ctx, userID, id)
+}
+
+func (s *ReviewsService) SaveChoice(ctx context.Context, userID, id int, c core_domain.ReviewChoice) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	return s.repo.SaveChoice(ctx, userID, id, c)
+}
+
+// MaxAuthor — предел имени автора наших правок в ответе.
+const MaxAuthor = 100
+
+// Answer собирает ответ контрагенту по решениям юриста. Ответ не сохраняется: юрист скачивает его сразу.
+// Разбор, сделанный до появления единой версии, ответа не даёт (ErrNotFound): нет файла, к которому применять решения.
+func (s *ReviewsService) Answer(ctx context.Context, userID, id int, author string) (engine.AnswerResult, error) {
+	author = strings.TrimSpace(author)
+	if utf8.RuneCountInString(author) > MaxAuthor {
+		return engine.AnswerResult{}, fmt.Errorf("имя автора длиннее %d символов: %w", MaxAuthor, core_errors.ErrInvalidArgument)
+	}
+	unified, err := s.repo.GetFile(ctx, userID, id, "docx")
+	if err != nil {
+		return engine.AnswerResult{}, err
+	}
+	changes, err := s.repo.GetFile(ctx, userID, id, "changes")
+	if err != nil {
+		return engine.AnswerResult{}, err
+	}
+	choices, err := s.repo.ListChoices(ctx, userID, id)
+	if err != nil {
+		return engine.AnswerResult{}, err
+	}
+	return s.engine.Answer(ctx, unified, changes, choices, author)
 }

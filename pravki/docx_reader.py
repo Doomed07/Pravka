@@ -305,15 +305,15 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
     segs: list[Segment] = []
     anchors: dict[str, str] = {}
 
-    def add(kind, text, author, date, move, ins_by, font=(False, False)):
+    def add(kind, text, author, date, move, ins_by, font=(False, False), rev=""):
         if not text:
             return
         if segs and segs[-1].kind == kind and segs[-1].author == author and segs[-1].date == date \
                 and segs[-1].move == move and segs[-1].ins_author == ins_by \
-                and (segs[-1].bold, segs[-1].italic) == font:
+                and (segs[-1].bold, segs[-1].italic) == font and segs[-1].rev == rev:
             segs[-1].text += text
         else:
-            segs.append(Segment(kind, text, author, date, move, ins_by, font[0], font[1]))
+            segs.append(Segment(kind, text, author, date, move, ins_by, font[0], font[1], rev))
 
     def note_comment(cid):
         if cid is not None and cid not in para.comment_ids:
@@ -321,12 +321,12 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
         if cid is not None:
             comment_para.setdefault(cid, idx)
 
-    def walk(el, kind, author, date, move, ins_by=None):
+    def walk(el, kind, author, date, move, ins_by=None, rev=""):
         for ch in el:
             tag = ch.tag
             if tag == q("r"):
                 text = _run_text(ch)
-                add(kind, text, author, date, move, ins_by, _run_font(ch, para_font, numbering))
+                add(kind, text, author, date, move, ins_by, _run_font(ch, para_font, numbering), rev)
                 if text:
                     for buf in open_comments.values():
                         buf.append(text)
@@ -334,12 +334,12 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
                     note_comment(ref.get(q("id")))
             elif tag in (q("ins"), q("moveTo")):
                 a, d = _attrs(ch)
-                walk(ch, "ins", a, d, tag == q("moveTo"))
+                walk(ch, "ins", a, d, tag == q("moveTo"), rev=ch.get(q("id"), "") or "")
             elif tag in (q("del"), q("moveFrom")):
                 a, d = _attrs(ch)
                 # удаление внутри вставки: запоминаем, кто вставил текст
                 inner_ins = author if kind == "ins" else ins_by
-                walk(ch, "del", a, d, tag == q("moveFrom"), inner_ins)
+                walk(ch, "del", a, d, tag == q("moveFrom"), inner_ins, ch.get(q("id"), "") or "")
             elif tag == q("commentRangeStart"):
                 cid = ch.get(q("id"))
                 if cid is not None:
@@ -357,17 +357,16 @@ def _parse_paragraph(p, idx: int, open_comments: dict[str, list[str]], comment_p
     return para, anchors
 
 
-def _paragraph_mark(p) -> tuple[str, str]:
+def _paragraph_mark(p) -> tuple[str, str, str]:
+    """Правка знака абзаца: (ins | del | '', автор, w:id)."""
     mark = p.find(f"{q('pPr')}/{q('rPr')}")
     if mark is None:
-        return "", ""
-    ins = mark.find(q("ins"))
-    if ins is not None:
-        return "ins", ins.get(q("author"), "") or ""
-    dele = mark.find(q("del"))
-    if dele is not None:
-        return "del", dele.get(q("author"), "") or ""
-    return "", ""
+        return "", "", ""
+    for kind in ("ins", "del"):
+        el = mark.find(q(kind))
+        if el is not None:
+            return kind, el.get(q("author"), "") or "", el.get(q("id"), "") or ""
+    return "", "", ""
 
 
 def _in_fallback(p) -> bool:
@@ -468,7 +467,7 @@ def read_docx(path: str) -> DocxDoc:
         para.style = numbering.style_name(style_id)
         para.in_table = _in_table(p)
         para.table = _table_pos(p, table_ids) if para.in_table else ()
-        para.mark, para.mark_author = _paragraph_mark(p)
+        para.mark, para.mark_author, para.mark_rev = _paragraph_mark(p)
         # текст «как показан»: для нумерации берём исходный текст абзаца без удалённого
         visible = "".join(s.text for s in para.segments if s.kind in ("equal", "ins"))
         full = "".join(s.text for s in para.segments)

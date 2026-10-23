@@ -88,3 +88,18 @@ def test_focus_playbooks_come_first(tmp_path):
     (tmp_path / "z_supply.yaml").write_text("name: z\ncontract_type: supply\nour_role: Y\n", encoding="utf-8")
     keys = [p["key"] for p in list_playbooks(str(tmp_path))]
     assert keys == ["private/c_supply.yaml", "private/b_services.yaml", "private/a_rent.yaml", "z_supply.yaml"]
+
+
+def test_answer_roundtrip(engine, tmp_path):
+    case = generate_case(str(tmp_path / "c"), "services", 5)
+    files = {"theirs": open(case["paths"]["tracked"], "rb").read(), "base": open(case["paths"]["base"], "rb").read()}
+    status, data = _req(engine, "POST", "/review", {"playbook": "services_example.yaml", "company": "7701234567"}, files)
+    assert status == 200
+    tracked = [c for c in data["changes"] if c["revs"]]
+    choices = {c["id"]: {"choice": "reject"} for c in tracked}
+    status, ans = _req(engine, "POST", "/answer", {"changes": json.dumps(data["changes"]), "choices": json.dumps(choices),
+                                                    "author": "Юрист"}, {"unified": base64.b64decode(data["unified_docx"])})
+    assert status == 200, ans
+    assert base64.b64decode(ans["answer_docx"])[:2] == b"PK" and ans["stats"]["reject"] == len(tracked)
+    status, bad = _req(engine, "POST", "/answer", {"changes": "не json"}, {"unified": b"PK"})
+    assert status == 400
