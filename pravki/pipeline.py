@@ -130,7 +130,10 @@ def review_files(
             c.action = "Нужно решение юриста: пункт заменён новой редакцией"
     if explainer is not None:
         for c in regular:
-            explainer.apply(c)
+            # другие правки того же абзаца: их факты не должны попасть в пояснение к этой
+            neighbours = [o for o in changes if o is not c and c.paragraph_index >= 0
+                          and o.paragraph_index == c.paragraph_index]
+            explainer.apply(c, neighbours)
 
     if ordering == "priority":
         changes.sort(key=lambda c: sort_key(c, pb))

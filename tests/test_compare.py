@@ -169,7 +169,7 @@ def test_model_merged_replacement_goes_to_lawyer(tmp_path):
         def confirms_technical(self, ch):
             return True
 
-        def apply(self, ch):
+        def apply(self, ch, neighbours=()):
             pass
 
     clause = p(r("1. Предмет договора"))
