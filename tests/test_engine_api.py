@@ -1,0 +1,77 @@
+"""Внутренний HTTP-сервис движка: разбор по запросу Go-сервиса, отказ без подтверждённой стороны, токен."""
+import base64
+import http.client
+import json
+import threading
+import uuid
+
+import pytest
+
+from pravki import engine_api
+from pravki.synth import generate_case
+
+
+@pytest.fixture()
+def engine(monkeypatch):
+    monkeypatch.setenv("ENGINE_TOKEN", "secret")
+    monkeypatch.delenv("PRAVKI_LLM_URL", raising=False)
+    srv = engine_api.ThreadingHTTPServer(("127.0.0.1", 0), engine_api.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield srv.server_address[1]
+    srv.shutdown()
+
+
+def _req(port, method, path, fields=None, files=None, token="secret"):
+    headers = {"X-Engine-Token": token} if token else {}
+    body = None
+    if fields is not None or files is not None:
+        b = uuid.uuid4().hex
+        parts = [f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in (fields or {}).items()]
+        parts += [f'--{b}\r\nContent-Disposition: form-data; name="{k}"; filename="{k}.docx"\r\n\r\n'.encode() + data + b"\r\n"
+                  for k, data in (files or {}).items()]
+        body = b"".join(parts) + f"--{b}--\r\n".encode()
+        headers["Content-Type"] = f"multipart/form-data; boundary={b}"
+    c = http.client.HTTPConnection("127.0.0.1", port)
+    c.request(method, path, body, headers)
+    r = c.getresponse()
+    return r.status, json.loads(r.read() or b"null")
+
+
+def test_health_playbooks_and_token(engine):
+    assert _req(engine, "GET", "/health")[1]["ok"] is True
+    status, pbs = _req(engine, "GET", "/playbooks")
+    assert status == 200 and any(p["key"] == "services_example.yaml" and p["role"] for p in pbs)
+    assert all("path" not in p for p in pbs)  # путь на диске наружу не отдаём
+    assert _req(engine, "GET", "/health", token="wrong")[0] == 401
+
+
+def test_review_roundtrip(engine, tmp_path):
+    case = generate_case(str(tmp_path / "c"), "services", 5)
+    files = {"theirs": open(case["paths"]["tracked"], "rb").read(), "base": open(case["paths"]["base"], "rb").read()}
+    status, data = _req(engine, "POST", "/review", {"playbook": "services_example.yaml", "company": "7701234567"}, files)
+    assert status == 200, data
+    assert data["counts"]["всего"] == len(data["changes"]) > 0
+    assert "Черновик" in data["report_html"] and base64.b64decode(data["report_xlsx"])[:2] == b"PK"
+    assert data["our_role"] == "Исполнитель"
+
+
+def test_role_not_confirmed_and_bad_file(engine, tmp_path):
+    case = generate_case(str(tmp_path / "c"), "services", 5)
+    files = {"theirs": open(case["paths"]["tracked"], "rb").read()}
+    status, data = _req(engine, "POST", "/review", {"playbook": "services_customer_example.yaml", "company": "7701234567"}, files)
+    assert status == 422 and data["error"] == "role_not_confirmed" and data["role"] == "Заказчик"
+    status, data = _req(engine, "POST", "/review", {"playbook": "services_customer_example.yaml", "company": "7701234567",
+                                                    "confirm_role": "Заказчик"}, files)
+    assert status == 200
+    status, data = _req(engine, "POST", "/review", {}, {"theirs": b"not a docx"})
+    assert status == 400 and data["error"] == "bad_file"
+    status, data = _req(engine, "POST", "/review", {"playbook": "../etc/passwd"}, files)
+    assert status == 400
+
+
+def test_llm_trusted_docker_host(monkeypatch):
+    monkeypatch.setenv("PRAVKI_LLM_URL", "http://ollama:11434/v1")
+    assert engine_api.make_explainer() is not None
+    monkeypatch.setenv("PRAVKI_LLM_URL", "https://api.example.com/v1")
+    with pytest.raises(engine_api.LLMError):
+        engine_api.make_explainer()

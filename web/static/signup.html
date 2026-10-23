@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Регистрация · Правки</title>
+  <meta name="theme-color" content="#14181c">
+  <link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <script type="module" src="/static/js/pages/signup.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Перейти к содержимому</a>
+  <div id="site-header"></div>
+  <main class="site-main" id="main">
+    <div id="app">
+      <div class="container page page--narrow">
+        <header class="page-header">
+          <h1 class="page-title">Регистрация</h1>
+          <p class="page-subtitle">Аккаунт нужен, чтобы ваши разборы видели только вы.</p>
+        </header>
+        <p class="alert" role="alert" id="signup-alert" hidden></p>
+        <form class="form" id="signup-form" action="/signup" method="post" novalidate>
+          <div class="form__field">
+            <label class="form__label" for="signup-username">Имя пользователя</label>
+            <input class="form__input" id="signup-username" name="username" type="text" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" autocomplete="username" autocapitalize="none" spellcheck="false" aria-describedby="signup-username-hint">
+            <p class="form__hint" id="signup-username-hint">От 3 до 30 символов: латинские буквы, цифры и _.</p>
+          </div>
+          <div class="form__field">
+            <label class="form__label" for="signup-email">Email</label>
+            <input class="form__input" id="signup-email" name="email" type="email" required maxlength="254" autocomplete="email" aria-describedby="signup-email-hint">
+            <p class="form__hint" id="signup-email-hint" hidden></p>
+          </div>
+          <div class="form__field">
+            <label class="form__label" for="signup-password">Пароль</label>
+            <input class="form__input" id="signup-password" name="password" type="password" required minlength="8" maxlength="72" pattern="[\x21-\x7E]{8,72}" autocomplete="new-password" aria-describedby="signup-password-hint">
+            <p class="form__hint" id="signup-password-hint">От 8 до 72 символов: латинские буквы, цифры и символы, без пробелов.</p>
+          </div>
+          <div class="form__field">
+            <label class="form__label" for="signup-invite">Код приглашения</label>
+            <input class="form__input" id="signup-invite" name="invite_code" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-describedby="signup-invite-hint">
+            <p class="form__hint" id="signup-invite-hint">Если сервис запущен на сервере, код выдаёт администратор. На своём компьютере поле можно оставить пустым.</p>
+          </div>
+          <button class="button button--cta" type="submit">Создать аккаунт</button>
+        </form>
+        <p class="form__hint form__footnote">Уже есть аккаунт? <a href="/login">Войти</a>.</p>
+      </div>
+    </div>
+  </main>
+  <div id="site-footer"></div>
+</body>
+</html>

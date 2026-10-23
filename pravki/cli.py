@@ -200,6 +200,12 @@ def cmd_web(a) -> int:
     return 0
 
 
+def cmd_engine(a) -> int:
+    from .engine_api import serve as serve_engine
+    serve_engine(a.host, a.port)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="pravki", description="Разбор правок контрагента в договоре (docx)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -269,6 +275,11 @@ def build_parser() -> argparse.ArgumentParser:
     wb.add_argument("--port", type=int, default=8765)
     wb.add_argument("--no-browser", action="store_true", help="не открывать браузер")
     wb.set_defaults(fn=cmd_web)
+
+    en = sub.add_parser("engine", help="внутренний HTTP-сервис движка для веб-сервиса (Docker)")
+    en.add_argument("--host", default="0.0.0.0")
+    en.add_argument("--port", type=int, default=8000)
+    en.set_defaults(fn=cmd_engine)
 
     s = sub.add_parser("synth", help="создать пример: наша версия + версия контрагента с правками")
     s.add_argument("out")
