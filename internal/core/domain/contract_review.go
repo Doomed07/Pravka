@@ -117,6 +117,7 @@ const (
 	ChoiceAccept  = "accept"  // принять правку контрагента
 	ChoiceReject  = "reject"  // отклонить
 	ChoiceCounter = "counter" // встречная редакция: текст пишет юрист
+	ChoiceReply   = "reply"   // ответ на комментарий контрагента: текст пишет юрист
 )
 
 // MaxChoiceText — предел текста встречной редакции.
@@ -135,12 +136,12 @@ func (c ReviewChoice) Validate() error {
 		return fmt.Errorf("номер правки %q: %w", c.ChangeID, core_errors.ErrInvalidArgument)
 	}
 	switch c.Choice {
-	case "", ChoiceAccept, ChoiceReject, ChoiceCounter:
+	case "", ChoiceAccept, ChoiceReject, ChoiceCounter, ChoiceReply:
 	default:
 		return fmt.Errorf("неизвестное решение %q: %w", c.Choice, core_errors.ErrInvalidArgument)
 	}
 	if utf8.RuneCountInString(c.Text) > MaxChoiceText {
-		return fmt.Errorf("текст встречной редакции длиннее %d символов: %w", MaxChoiceText, core_errors.ErrInvalidArgument)
+		return fmt.Errorf("текст длиннее %d символов: %w", MaxChoiceText, core_errors.ErrInvalidArgument)
 	}
 	return nil
 }

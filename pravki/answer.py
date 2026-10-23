@@ -10,7 +10,8 @@
   counter — встречная редакция: правку контрагента убрать, прежний текст удалить нашей правкой и вставить
             текст юриста нашей правкой в рецензировании. Текст пишет юрист, программа его не сочиняет.
 Правки без выбора остаются в файле как есть. Правки без отметки в рецензировании (найдены сравнением) оформляются
-нашей правкой в рецензировании (`answer_silent`). Ответы на комментарии пока не входят.
+нашей правкой в рецензировании (`answer_silent`). reply — ответ юриста на комментарий контрагента в той же ветке
+примечаний (`answer_replies`).
 """
 from __future__ import annotations
 
@@ -20,12 +21,14 @@ from datetime import datetime, timezone
 from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
+from .answer_replies import EXT_PART, REL_NS, Replies, with_w14
 from .answer_silent import Writer, apply_silent, paragraphs
 from .model import ANNOTATOR
 
 TRACKED = {q("ins"), q("del"), q("moveFrom"), q("moveTo")}
 INSERTS = {q("ins"), q("moveTo")}
 CHOICES = ("accept", "reject", "counter")
+REPLY = "reply"  # ответ на комментарий контрагента (answer_replies)
 
 
 def _unwrap(el) -> None:
@@ -128,9 +131,12 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         names = zin.namelist()
         doc_root = _read_part(zin, "word/document.xml", required=True)
         comments_root = _read_part(zin, "word/comments.xml")
+        ext_root = _read_part(zin, EXT_PART)
+        ct_root = _read_part(zin, "[Content_Types].xml", required=True)
+        rels_root = _read_part(zin, "word/_rels/document.xml.rels")
         raw = {n: zin.read(n) for n in names}
 
-    stats = {"accept": 0, "reject": 0, "counter": 0, "без отметки": 0, "наших примечаний убрано": 0}
+    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "без отметки": 0, "наших примечаний убрано": 0}
     stats["наших примечаний убрано"] = _strip_annotations(doc_root, comments_root)
     by_id: dict[str, list] = {}
     max_id = 0
@@ -141,11 +147,18 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
                 max_id = max(max_id, int(el.get(q("id"))))
     date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     paras = paragraphs(doc_root)  # один раз, до изменений: номера абзацев правок указывают сюда
+    if comments_root is not None:
+        comments_root = with_w14(comments_root)  # ответы в ветке: w14:paraId с объявленным пространством имён
+    replies = Replies(doc_root, comments_root, ext_root, date) if comments_root is not None else None
 
     for ch in changes:
         sel = choices.get(ch.get("id", "")) or {}
         choice = sel.get("choice", "")
-        if choice not in CHOICES or ch.get("kind") == "comment":
+        if ch.get("kind") == "comment":
+            if choice == REPLY and replies is not None and replies.reply(ch.get("comment_id", ""), sel.get("text") or "", author):
+                stats["reply"] += 1
+            continue
+        if choice not in CHOICES:
             continue
         text = sel.get("text") or ""  # как написал юрист: ведущий пробел отделяет вставку от текста перед ней
         els = [e for r in ch.get("revs") or [] for e in by_id.get(r, []) if e.getparent() is not None]
@@ -179,10 +192,16 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
     def ser(root) -> bytes:
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
+    if replies is not None and replies.added:
+        if rels_root is None:
+            rels_root = etree.Element(f"{{{REL_NS}}}Relationships", nsmap={None: REL_NS})
+        replies.package(raw, ct_root, rels_root)
+        raw["[Content_Types].xml"] = ser(ct_root)
+        raw["word/_rels/document.xml.rels"] = ser(rels_root)
     raw["word/document.xml"] = ser(doc_root)
     if comments_root is not None:
         raw["word/comments.xml"] = ser(comments_root)
     with zipfile.ZipFile(out_docx, "w", zipfile.ZIP_DEFLATED) as zout:
-        for name in names:
+        for name in names + [n for n in raw if n not in names]:
             zout.writestr(name, raw[name])
     return stats

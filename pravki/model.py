@@ -167,7 +167,8 @@ class Change:
             "ai_explained": "template_explanation" in self.detail,  # пояснение написала модель
             "accepted_from_base": list(self.detail.get("accepted_from_base", [])),  # авторы принятой правки из нашей версии
             "replaced_para": self.detail.get("replaced_para", ""),
-            "revs": list(self.detail.get("revs", [])),  # w:id правок Word: по ним собирается ответ (answer.py)  # пункт заменён целиком: clause (по номеру) или model
+            "revs": list(self.detail.get("revs", [])),
+            "comment_id": self.detail.get("comment_id", ""),  # w:id комментария Word (для ответа в ветке)  # w:id правок Word: по ним собирается ответ (answer.py)  # пункт заменён целиком: clause (по номеру) или model
             "suggested": self.suggested,
             "escalate_to": self.escalate_to,
             "lawyer_decision_needed": self.lawyer_decision_needed,

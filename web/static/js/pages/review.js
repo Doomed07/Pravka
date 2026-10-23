@@ -97,8 +97,20 @@ function hinted(ch) {
   return '';
 }
 
+// Ответ на комментарий контрагента: попадёт в Word в ту же ветку примечаний. Пустой ответ — решения нет.
+function replyBlock(ch) {
+  const cur = CHOICES.get(ch.id) || {};
+  return html`
+    <div class="decide decide--reply" data-change="${ch.id}">
+      <label class="decide__label" for="reply-${ch.id}">Ваш ответ на комментарий</label>
+      <textarea class="decide__text form__input" id="reply-${ch.id}" rows="3" maxlength="5000"
+        placeholder="Попадёт в Word ответом в той же ветке комментариев">${cur.choice === 'reply' ? cur.text : ''}</textarea>
+      <p class="decide__status" role="status"></p>
+    </div>`;
+}
+
 function decideBlock(ch) {
-  if (ch.kind === 'comment') return '';
+  if (ch.kind === 'comment') return replyBlock(ch);
   const cur = CHOICES.get(ch.id) || {};
   const hint = hinted(ch);
   const party = ch.rule_id === 'PARTY' && !(ch.revs || []).length; // сверка сторон: правится в тексте вручную
@@ -335,10 +347,9 @@ function head(r, hasDocx) {
     </header>`;
 }
 
-// Сколько правок уже решено (комментарии сюда не входят — ответы на них будут отдельно).
+// Сколько правок и комментариев уже решено (у комментария решение — ответ).
 function decidedCount(changes) {
-  const open = changes.filter((c) => c.kind !== 'comment');
-  return [open.filter((c) => CHOICES.has(c.id)).length, open.length];
+  return [changes.filter((c) => CHOICES.has(c.id)).length, changes.length];
 }
 
 const AUTHOR_KEY = 'pravki.answer.author';
@@ -431,7 +442,7 @@ async function saveChoice(id, box, choice, text) {
   const status = box.querySelector('.decide__status');
   setStatus(status, 'Сохраняю…');
   try {
-    await reviews.saveChoice(id, box.dataset.change, choice, choice === 'counter' ? text : '');
+    await reviews.saveChoice(id, box.dataset.change, choice, choice === 'counter' || choice === 'reply' ? text : '');
     if (choice) CHOICES.set(box.dataset.change, { choice, text });
     else CHOICES.delete(box.dataset.change);
     setStatus(status, choice ? 'Сохранено' : 'Решение снято');
@@ -461,9 +472,15 @@ function wireDecisions(id, changes) {
       });
     });
     let timer;
+    const reply = box.classList.contains('decide--reply');
     text.addEventListener('input', () => {
       clearTimeout(timer);
-      timer = setTimeout(() => saveChoice(id, box, 'counter', text.value), 700);
+      // у комментария решение — сам ответ: пустое поле снимает решение
+      const choice = reply ? (text.value.trim() ? 'reply' : '') : 'counter';
+      timer = setTimeout(async () => {
+        await saveChoice(id, box, choice, text.value);
+        refresh();
+      }, 700);
     });
   });
 
@@ -486,7 +503,7 @@ function wireDecisions(id, changes) {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       const skipped = stats.untracked ? ` Не вошли в файл (правки без отметки): ${stats.untracked}.` : '';
-      setStatus(status, `Готово: принято ${stats.accept}, отклонено ${stats.reject}, встречных редакций ${stats.counter}.${skipped} Черновик — проверьте перед отправкой, дисклеймер в конце отклоните.`);
+      setStatus(status, `Готово: принято ${stats.accept}, отклонено ${stats.reject}, встречных редакций ${stats.counter}, ответов на комментарии ${stats.reply}.${skipped} Черновик — проверьте перед отправкой, дисклеймер в конце отклоните.`);
     } catch (err) {
       setStatus(status, err instanceof ApiError && err.status === 404
         ? 'Для этого разбора ответ собрать нельзя: загрузите договор заново.'

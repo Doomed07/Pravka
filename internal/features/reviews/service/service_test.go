@@ -160,7 +160,8 @@ func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
 	if len(repo.choices) != 0 {
 		t.Fatalf("invalid choices reached repo: %+v", repo.choices)
 	}
-	for _, c := range []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}, {ChangeID: "S002", Choice: ""}} {
+	for _, c := range []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}, {ChangeID: "S002", Choice: ""},
+		{ChangeID: "E003", Choice: "reply", Text: "Согласны."}} {
 		if err := s.SaveChoice(context.Background(), 1, 1, c); err != nil {
 			t.Fatalf("%+v: %v", c, err)
 		}

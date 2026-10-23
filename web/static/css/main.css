@@ -1301,3 +1301,8 @@ del + ins {
   color: var(--muted);
   font-size: 12px;
 }
+
+.decide__label {
+  font-size: 12px;
+  font-weight: 700;
+}

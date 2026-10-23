@@ -133,6 +133,6 @@ async function answerFile(id, author) {
     throw new ApiError(response.status, (data && data.message) || response.statusText, (data && data.error) || '');
   }
   const stats = {};
-  for (const k of ['accept', 'reject', 'counter', 'untracked']) stats[k] = Number(response.headers.get('X-Pravki-' + k) || 0);
+  for (const k of ['accept', 'reject', 'counter', 'reply', 'untracked']) stats[k] = Number(response.headers.get('X-Pravki-' + k) || 0);
   return { blob: await response.blob(), stats };
 }
