@@ -6,10 +6,12 @@ import json
 import os
 import sys
 
+import yaml
+
 from . import journal
 from .anonymize import Anonymizer, anonymize_docx, learn_docx, residual_candidates, scan_leaks
 from .docx_reader import DocxError
-from .evaluate import print_report, run_synthetic
+from .evaluate import print_golden, print_report, run_golden, run_synthetic
 from .annotate import annotate_docx
 from .llm import Explainer, LLMError, OpenAICompatClient
 from .parties import PartiesError, RoleCheckError, SideConfig, canon_role, profile_from_args
@@ -84,6 +86,11 @@ def cmd_history(a) -> int:
 
 
 def cmd_eval(a) -> int:
+    if a.golden:
+        with open(a.config, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+        print(print_golden(run_golden(a.golden, a.anon, config)))
+        return 0
     pbs = {
         "services": load_playbook(os.path.join(PLAYBOOK_DIR, "services_example.yaml")),
         "rent": load_playbook(os.path.join(PLAYBOOK_DIR, "rent_example.yaml")),
@@ -248,6 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--pairs", type=int, default=40)
     e.add_argument("--seed", type=int, default=1000)
     e.add_argument("--errors", type=int, default=20)
+    e.add_argument("--golden", help="разметка юриста (labels_*.json): сравнить с ней, а не с синтетикой")
+    e.add_argument("--anon", default="data/golden/anon", help="папка с обезличенными договорами разметки")
+    e.add_argument("--config", default="data/golden/golden.yaml",
+                   help="плейбук, роль и наши авторы для каждого файла контрагента")
     e.set_defaults(fn=cmd_eval)
 
     z = sub.add_parser("anonymize", help="обезличить договоры (названия, ФИО, реквизиты, авторы правок, свойства файла)")

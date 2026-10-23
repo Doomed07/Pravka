@@ -223,6 +223,10 @@ _LABEL_RE = re.compile(
     r")")
 
 
+# Начало приложения: «Приложение № 1», «ПРИЛОЖЕНИЕ 2 к Договору…» в начале короткого абзаца.
+_APPENDIX_START = re.compile(r"^\s*приложение\s*(?:№\s*)?(\d+)\b(?=.{0,250}$)", re.IGNORECASE | re.DOTALL)
+
+
 def _clean_label(label: str) -> str:
     return label.strip().rstrip(".)").strip()
 
@@ -478,13 +482,17 @@ def read_docx(path: str) -> DocxDoc:
                 label = next(g for g in m.groups() if g)
                 para.label_in_text = True
         para.label = label
+        appendix = _APPENDIX_START.match(visible or full) if not label else None
+        if appendix:
+            # «Приложение № 1 к Договору…» — новый раздел: правки дальше относятся к приложению, а не к п. 10 договора
+            last_label = f"Приложение {appendix.group(1)}"
         para.near = last_label
         if label:
             last_label = label
         text_for_head = (visible or full).strip()
         text_for_head = _LABEL_RE.sub("", text_for_head, count=1).strip() if not auto else text_for_head
-        if _is_heading(para, text_for_head, para.style):
-            last_heading = text_for_head
+        if appendix or _is_heading(para, text_for_head, para.style):
+            last_heading = text_for_head[:200]
         para.heading = last_heading
         anchors_all.update(p_anchors)
         paragraphs.append(para)
