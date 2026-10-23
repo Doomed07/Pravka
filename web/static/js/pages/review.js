@@ -101,7 +101,7 @@ function decideBlock(ch) {
   if (ch.kind === 'comment') return '';
   const cur = CHOICES.get(ch.id) || {};
   const hint = hinted(ch);
-  const untracked = !(ch.revs || []).length;
+  const party = ch.rule_id === 'PARTY' && !(ch.revs || []).length; // сверка сторон: правится в тексте вручную
   return html`
     <div class="decide" data-change="${ch.id}">
       <div class="decide__buttons" role="group" aria-label="Решение по правке">
@@ -111,7 +111,7 @@ function decideBlock(ch) {
       </div>
       <textarea class="decide__text form__input" rows="3" maxlength="5000"${cur.choice === 'counter' ? '' : ' hidden'}
         placeholder="${ch.suggested ? `Ваша редакция. Позиция плейбука: ${ch.suggested}` : 'Ваша редакция'}">${cur.text || ''}</textarea>
-      ${untracked ? html`<p class="decide__note">Правка без отметки в рецензировании: решение сохранится, но в ответ Word пока не попадёт.</p>` : ''}
+      ${party ? html`<p class="decide__note">Это итог сверки сторон: решение сохранится, а реквизиты в ответе правьте вручную.</p>` : ''}
       <p class="decide__status" role="status"></p>
     </div>`;
 }

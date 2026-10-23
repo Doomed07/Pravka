@@ -32,7 +32,7 @@ type ReviewsRepository interface {
 type Engine interface {
 	Playbooks(ctx context.Context) ([]core_domain.Playbook, error)
 	Review(ctx context.Context, r core_domain.ReviewRequest) (engine.Result, []byte, error)
-	Answer(ctx context.Context, unified, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error)
+	Answer(ctx context.Context, unified, document, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error)
 }
 
 type ReviewsService struct {
@@ -141,6 +141,10 @@ func (s *ReviewsService) Answer(ctx context.Context, userID, id int, author stri
 	if err != nil {
 		return engine.AnswerResult{}, err
 	}
+	document, err := s.repo.GetFile(ctx, userID, id, "document")
+	if err != nil {
+		return engine.AnswerResult{}, err
+	}
 	changes, err := s.repo.GetFile(ctx, userID, id, "changes")
 	if err != nil {
 		return engine.AnswerResult{}, err
@@ -149,5 +153,5 @@ func (s *ReviewsService) Answer(ctx context.Context, userID, id int, author stri
 	if err != nil {
 		return engine.AnswerResult{}, err
 	}
-	return s.engine.Answer(ctx, unified, changes, choices, author)
+	return s.engine.Answer(ctx, unified, document, changes, choices, author)
 }

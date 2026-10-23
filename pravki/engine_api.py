@@ -10,7 +10,8 @@
   GET  /playbooks  — [{"key", "name", "role"}]
   POST /review     — multipart: theirs (docx), base (docx, необязательно), playbook, our_authors, company,
                      confirm_role. 200 — разбор; 422 — сторона договора не подтверждена; 400 — файл не разобран.
-  POST /answer     — multipart: unified (docx единой версии), changes (JSON), choices (JSON), author.
+  POST /answer     — multipart: unified (docx единой версии), changes (JSON), choices (JSON), author,
+                     document (JSON единой версии, необязательно: нужен, чтобы вернуть удалённый без отметки абзац).
                      200 — ответ контрагенту в Word (base64) по решениям юриста.
 
 Если задан ENGINE_TOKEN, каждый запрос должен нести заголовок X-Engine-Token с тем же значением.
@@ -173,6 +174,7 @@ def answer(fields: dict, files: dict) -> tuple[int, dict]:
     try:
         changes = json.loads(fields.get("changes") or "[]")
         choices = json.loads(fields.get("choices") or "{}")
+        document = json.loads(fields.get("document") or "[]")
     except json.JSONDecodeError:
         return 400, {"error": "bad_request", "message": "Правки или выбор юриста переданы не в формате JSON."}
     if not isinstance(changes, list) or not isinstance(choices, dict):
@@ -182,7 +184,7 @@ def answer(fields: dict, files: dict) -> tuple[int, dict]:
         with open(src, "wb") as f:
             f.write(files["unified"])
         try:
-            stats = build_answer(src, out, changes, choices, fields.get("author", ""))
+            stats = build_answer(src, out, changes, choices, fields.get("author", ""), document if isinstance(document, list) else None)
         except DocxError as ex:
             return 400, {"error": "bad_file", "message": str(ex)}
         with open(out, "rb") as f:

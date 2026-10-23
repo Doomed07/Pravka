@@ -116,16 +116,17 @@ func TestAnswer_SendsFormAndDecodesFile(t *testing.T) {
 		}
 		data, _ := io.ReadAll(f)
 		got = map[string]string{"unified": string(data), "changes": r.FormValue("changes"), "choices": r.FormValue("choices"),
-			"author": r.FormValue("author")}
+			"author": r.FormValue("author"), "document": r.FormValue("document")}
 		_, _ = w.Write([]byte(`{"answer_docx":"` + d + `","stats":{"reject":1}}`))
 	}))
 	defer srv.Close()
-	res, err := client(srv.URL).Answer(context.Background(), []byte("PKunified"), []byte(`[{"id":"E001"}]`),
+	res, err := client(srv.URL).Answer(context.Background(), []byte("PKunified"), []byte(`[{"index":0}]`), []byte(`[{"id":"E001"}]`),
 		[]core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}}, "Иванова А.")
 	if err != nil || string(res.DOCX) != "PKanswer" || res.Stats["reject"] != 1 {
 		t.Fatalf("res = %+v, err = %v", res, err)
 	}
 	if got["unified"] != "PKunified" || got["changes"] != `[{"id":"E001"}]` || got["author"] != "Иванова А." ||
+		got["document"] != `[{"index":0}]` ||
 		got["choices"] != `{"E001":{"choice":"counter","text":"30 дней"}}` {
 		t.Fatalf("engine got %+v", got)
 	}

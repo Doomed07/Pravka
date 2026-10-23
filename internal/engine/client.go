@@ -177,8 +177,8 @@ type AnswerResult struct {
 	Stats map[string]int
 }
 
-// Answer собирает ответ контрагенту: единая версия + правки разбора (JSON) + решения юриста.
-func (c *Client) Answer(ctx context.Context, unified, changes []byte, choices []core_domain.ReviewChoice, author string) (AnswerResult, error) {
+// Answer собирает ответ контрагенту: единая версия (docx и абзацы JSON) + правки разбора (JSON) + решения юриста.
+func (c *Client) Answer(ctx context.Context, unified, document, changes []byte, choices []core_domain.ReviewChoice, author string) (AnswerResult, error) {
 	sel := make(map[string]map[string]string, len(choices))
 	for _, ch := range choices {
 		sel[ch.ChangeID] = map[string]string{"choice": ch.Choice, "text": ch.Text}
@@ -189,7 +189,8 @@ func (c *Client) Answer(ctx context.Context, unified, changes []byte, choices []
 	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	for k, v := range map[string]string{"changes": string(changes), "choices": string(selJSON), "author": author} {
+	for k, v := range map[string]string{"changes": string(changes), "choices": string(selJSON), "author": author,
+		"document": string(document)} {
 		_ = mw.WriteField(k, v)
 	}
 	w, err := mw.CreateFormFile("unified", "unified.docx")

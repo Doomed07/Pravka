@@ -51,8 +51,8 @@ type fakeEngine struct {
 	ansCh []core_domain.ReviewChoice
 }
 
-func (f *fakeEngine) Answer(_ context.Context, unified, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error) {
-	f.ans, f.ansCh = []string{string(unified), string(changes), author}, choices
+func (f *fakeEngine) Answer(_ context.Context, unified, document, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error) {
+	f.ans, f.ansCh = []string{string(unified), string(changes), author, string(document)}, choices
 	return engine.AnswerResult{DOCX: []byte("PKanswer")}, nil
 }
 
@@ -174,7 +174,8 @@ func TestAnswer_SendsUnifiedChangesChoicesAndAuthor(t *testing.T) {
 	if err != nil || string(res.DOCX) != "PKanswer" {
 		t.Fatalf("res = %q, err = %v", res.DOCX, err)
 	}
-	if eng.ans[0] != "file:docx" || eng.ans[1] != "file:changes" || eng.ans[2] != "Иванова А." || len(eng.ansCh) != 1 {
+	if eng.ans[0] != "file:docx" || eng.ans[1] != "file:changes" || eng.ans[2] != "Иванова А." || eng.ans[3] != "file:document" ||
+		len(eng.ansCh) != 1 {
 		t.Fatalf("engine got %q, choices %+v", eng.ans, eng.ansCh)
 	}
 	if _, err := NewReviewsService(repo, eng).Answer(context.Background(), 1, 3, string(make([]rune, MaxAuthor+1))); !errors.Is(err, core_errors.ErrInvalidArgument) {

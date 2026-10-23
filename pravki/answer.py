@@ -9,8 +9,8 @@
   reject  — отклонить её (вернуть прежний текст);
   counter — встречная редакция: правку контрагента убрать, прежний текст удалить нашей правкой и вставить
             текст юриста нашей правкой в рецензировании. Текст пишет юрист, программа его не сочиняет.
-Правки без выбора остаются в файле как есть. Правки без отметки в рецензировании (найдены сравнением) и ответы
-на комментарии в эту версию не входят — для них в Word нечего принимать или отклонять.
+Правки без выбора остаются в файле как есть. Правки без отметки в рецензировании (найдены сравнением) оформляются
+нашей правкой в рецензировании (`answer_silent`). Ответы на комментарии пока не входят.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
+from .answer_silent import Writer, apply_silent, paragraphs
 from .model import ANNOTATOR
 
 TRACKED = {q("ins"), q("del"), q("moveFrom"), q("moveTo")}
@@ -112,9 +113,12 @@ def _our_insert(text: str, author: str, date: str, rev_id: int):
     return ins
 
 
-def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dict[str, dict], author: str) -> dict:
-    """Собрать ответ. changes — правки разбора (to_dict, с полем revs), choices — {id: {"choice", "text"}}.
-    Возвращает счётчики: принято, отклонено, встречных редакций, пропущено (нет отметки в рецензировании)."""
+def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dict[str, dict], author: str,
+                 document: list[dict] | None = None) -> dict:
+    """Собрать ответ. changes — правки разбора (to_dict, с полем revs), choices — {id: {"choice", "text"}},
+    document — единая версия (абзацы): по ней возвращается абзац, удалённый контрагентом без отметки.
+    Возвращает счётчики: принято, отклонено, встречных редакций, «без отметки» — решения, которые не удалось
+    применить (место правки не найдено)."""
     author = (author or "").strip() or "Юрист"
     try:
         zin = zipfile.ZipFile(src_docx)
@@ -136,17 +140,27 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
             if el.get(q("id")).isdigit():
                 max_id = max(max_id, int(el.get(q("id"))))
     date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    paras = paragraphs(doc_root)  # один раз, до изменений: номера абзацев правок указывают сюда
 
     for ch in changes:
         sel = choices.get(ch.get("id", "")) or {}
         choice = sel.get("choice", "")
         if choice not in CHOICES or ch.get("kind") == "comment":
             continue
+        text = sel.get("text") or ""  # как написал юрист: ведущий пробел отделяет вставку от текста перед ней
         els = [e for r in ch.get("revs") or [] for e in by_id.get(r, []) if e.getparent() is not None]
         if not els:
+            # правка без отметки в рецензировании: текст контрагента становится нашей правкой (answer_silent)
+            silent = ch.get("source") in ("silent", "diff") and ch.get("rule_id") != "PARTY"
+            if silent and (choice != "counter" or text.strip()):
+                writer = Writer(author, date, max_id)
+                done = apply_silent(paras, ch, choice, text, writer, document)
+                max_id = writer.max_id
+                if done:
+                    stats[choice] += 1
+                    continue
             stats["без отметки"] += 1
             continue
-        text = sel.get("text") or ""  # как написал юрист: ведущий пробел отделяет вставку от текста перед ней
         if choice == "counter" and text.strip():
             # наш текст ставим до применения решений: вставка контрагента сейчас будет убрана, привязаться будет не к чему
             body = [e for e in els if not _is_mark(e)]
