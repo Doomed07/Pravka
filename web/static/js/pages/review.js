@@ -145,17 +145,37 @@ function partyComments(list) {
 const SEGMENT = { ins: 'r-ins', del: 'r-del', silent_ins: 'r-silent-ins', silent_del: 'r-silent-del' };
 const SEGMENT_LABEL = { ins: 'вставлено', del: 'удалено', silent_ins: 'вставлено без отметки', silent_del: 'удалено без отметки' };
 
-function segment(s) {
-  if (s.k === 'equal') return s.t;
-  // ins/del — настоящие теги: экранные дикторы и копирование текста понимают правку
-  const tag = s.k.endsWith('ins') ? 'ins' : 'del';
-  return html`${tag === 'ins' ? html`<ins class="${SEGMENT[s.k]}" title="${SEGMENT_LABEL[s.k]}">${s.t}</ins>` : html`<del class="${SEGMENT[s.k]}" title="${SEGMENT_LABEL[s.k]}">${s.t}</del>`}`;
+// Жирный и курсив — как в Word (b, i у куска текста).
+function styled(s, inner) {
+  let out = inner;
+  if (s.i) out = html`<i>${out}</i>`;
+  if (s.b) out = html`<b>${out}</b>`;
+  return out;
 }
 
-function isHeading(para, text) {
+function segment(s) {
+  if (s.k === 'equal') return styled(s, s.t);
+  // ins/del — настоящие теги: экранные дикторы и копирование текста понимают правку
+  const tag = s.k.endsWith('ins') ? 'ins' : 'del';
+  return html`${tag === 'ins' ? html`<ins class="${SEGMENT[s.k]}" title="${SEGMENT_LABEL[s.k]}">${styled(s, s.t)}</ins>` : html`<del class="${SEGMENT[s.k]}" title="${SEGMENT_LABEL[s.k]}">${styled(s, s.t)}</del>`}`;
+}
+
+// Заголовок — только по стилю Word. Жирность берётся из самого документа (b у кусков), а не угадывается.
+function isHeading(para) {
   const style = (para.style || '').toLowerCase();
-  if (style.startsWith('heading') || style.startsWith('заголовок') || style === 'title') return true;
-  return text.length < 90 && !/[.;:,]$/.test(text.trim()) && !/\./.test(para.clause || '') && !!para.clause;
+  return style.startsWith('heading') || style.startsWith('заголовок') || style === 'title';
+}
+
+const BULLETS = ['•', '◦', '▪'];
+
+// Вид абзаца из Word: отступ слева (твипы → px), уровень списка, выравнивание, маркер.
+function layout(para) {
+  const level = para.list ? para.level || 0 : 0;
+  const px = Math.min(160, Math.round((para.indent || 0) / 15) || (para.list ? 24 * (level + 1) : 0));
+  const style = [px ? `padding-left: calc(24px + ${px}px)` : '', para.align ? `text-align: ${para.align === 'both' ? 'justify' : para.align}` : '']
+    .filter(Boolean).join('; ');
+  const marker = para.list === 'bullet' ? html`<span class="doc__bullet" aria-hidden="true">${BULLETS[level % BULLETS.length]}</span>` : '';
+  return { style, marker };
 }
 
 // shown — правки, карточки которых уже нарисованы: замена пункта относится к двум абзацам, карточка одна.
@@ -167,12 +187,13 @@ function freshNotes(changes, order, shown) {
 }
 
 function row(para, i, total, byID, order, shown) {
-  const text = para.segments.map((s) => s.t).join('');
   const changes = para.changes.map((id) => byID.get(id)).filter(Boolean);
   const silent = para.segments.some((s) => s.k.startsWith('silent'));
   const changed = changes.length > 0 || para.segments.some((s) => s.k !== 'equal');
   const cls = ['doc__text'];
-  if (isHeading(para, text) && !changed) cls.push('doc__text--head');
+  if (isHeading(para) && !changed) cls.push('doc__text--head');
+  if (para.list) cls.push('doc__text--list');
+  const look = layout(para);
   if (silent) cls.push('doc__text--silent');
   else if (changed) cls.push('doc__text--changed');
   if (i === 0) cls.push('doc__text--first');
@@ -181,8 +202,8 @@ function row(para, i, total, byID, order, shown) {
   return html`
     <div class="doc__row">
       <div class="doc__num${first && verdict(first).mod === 'reject' ? ' doc__num--hot' : ''}">${first ? num(order.get(first.id)) : ''}</div>
-      <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}>
-        ${para.label ? `${para.label} ` : ''}${para.segments.map(segment)}
+      <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${look.style ? html` style="${look.style}"` : ''}>
+        ${look.marker}${para.label ? `${para.label} ` : ''}${para.segments.map(segment)}
         ${para.index < 0 ? html` <span class="tag tag--silent">абзац удалён без отметки</span>` : ''}
         ${partyComments(para.comments)}
       </div>
@@ -215,7 +236,7 @@ function tableRow(paras, i, total, byID, order, shown) {
     return html`<tr>${[...cells.keys()].sort((a, b) => a - b).map((c) => {
       const cell = cells.get(c);
       return html`<td${cell.span > 1 ? html` colspan="${cell.span}"` : ''}>${cell.paras.map((p) => html`
-        <p class="doc-table__p" id="p-${p.index}" ${p.changes[0] ? html`data-change="${p.changes[0]}"` : ''}>${p.label ? `${p.label} ` : ''}${p.segments.map(segment)}${partyComments(p.comments)}</p>`)}</td>`;
+        <p class="doc-table__p" id="p-${p.index}" ${p.changes[0] ? html`data-change="${p.changes[0]}"` : ''}>${p.list === 'bullet' ? '• ' : ''}${p.label ? `${p.label} ` : ''}${p.segments.map(segment)}${partyComments(p.comments)}</p>`)}</td>`;
     })}</tr>`;
   });
   return html`

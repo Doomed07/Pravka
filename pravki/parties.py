@@ -210,17 +210,26 @@ def head_text(doc: DocxDoc, mode: str, ours: set[str] | frozenset[str] = frozens
     return " ".join(parts)[:MAX_HEAD_CHARS]
 
 
+_PREAMBLE = re.compile(r"именуем\w*\s+(?:в\s+дальнейшем|далее)|в\s+дальнейшем\s+именуем|далее\s*[-–—]?\s*[«\"„]", re.IGNORECASE)
+
+
 def head_indices(doc: DocxDoc) -> set[int]:
-    """Номера абзацев начала договора (название, город и дата, преамбула со сторонами) — до первого пункта."""
-    out: set[int] = set()
+    """Номера абзацев начала договора (название, город и дата, преамбула со сторонами).
+
+    Начало — до абзаца, где определены стороны («именуемое в дальнейшем…»), включительно, и не дальше первого пункта.
+    Нет такого абзаца (приложение, письмо, договор без преамбулы) — начала нет: иначе любые правки попадали
+    в «стороны и реквизиты».
+    """
+    last = -1
     for i, para in enumerate(doc.paragraphs):
         if i >= MAX_HEAD_PARAS:
             break
         text = "".join(s.text for s in para.segments)
         if para.label or _FIRST_CLAUSE.match(text):
             break
-        out.add(para.index)
-    return out
+        if _PREAMBLE.search(text):
+            last = i
+    return {p.index for p in doc.paragraphs[:last + 1]}
 
 
 def mark_head_changes(changes: list[Change], head: set[int]) -> None:

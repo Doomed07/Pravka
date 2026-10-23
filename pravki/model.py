@@ -23,6 +23,8 @@ class Segment:
     # Текст вставил один автор, а удалил другой: при «отклонить все» он вернётся, только если
     # вставка наша, а удаление чужое.
     ins_author: str | None = None
+    bold: bool = False
+    italic: bool = False
 
 
 @dataclass
@@ -35,6 +37,10 @@ class Paragraph:
     style: str = ""
     in_table: bool = False
     table: tuple = ()  # (номер таблицы, строка, столбец, ширина в столбцах) — для абзацев внутри таблицы
+    list_kind: str = ""  # пусто, bullet (маркированный список) или number (нумерованный)
+    level: int = 0  # уровень вложенности списка (ilvl)
+    indent: int = 0  # отступ слева в твипах (1/20 пункта), из w:ind
+    align: str = ""  # пусто, center, right или both (по ширине)
     mark: str = ""  # '', 'ins', 'del': отслеживаемая правка знака абзаца
     mark_author: str = ""
     segments: list[Segment] = field(default_factory=list)

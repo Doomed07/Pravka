@@ -19,13 +19,24 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _push(segs: list[dict], kind: str, text: str, author: str = "") -> None:
+def _push(segs: list[dict], kind: str, text: str, author: str = "", font: tuple = (False, False)) -> None:
+    """Добавить кусок текста; b / i (жирный, курсив) ставятся, только если включены."""
     if not text:
         return
-    if segs and segs[-1]["k"] == kind and segs[-1]["a"] == author:
+    b, i = font
+    if segs and segs[-1]["k"] == kind and segs[-1]["a"] == author and _font(segs[-1]) == (b, i):
         segs[-1]["t"] += text
-    else:
-        segs.append({"k": kind, "t": text, "a": author})
+        return
+    seg = {"k": kind, "t": text, "a": author}
+    if b:
+        seg["b"] = True
+    if i:
+        seg["i"] = True
+    segs.append(seg)
+
+
+def _font(seg: dict) -> tuple[bool, bool]:
+    return bool(seg.get("b")), bool(seg.get("i"))
 
 
 def _tracked_segments(para: Paragraph, ours) -> list[dict]:
@@ -34,14 +45,15 @@ def _tracked_segments(para: Paragraph, ours) -> list[dict]:
     for s in para.segments:
         if _net_zero(s, ours) or s.author == ANNOTATOR and s.kind == "ins":
             continue  # чужая вставка, удалённая внутри файла: текста не было и нет
+        font = (s.bold, s.italic)
         if s.kind == "equal":
-            _push(segs, "equal", s.text)
+            _push(segs, "equal", s.text, font=font)
         elif s.author in ours:
             if s.kind == "ins":
-                _push(segs, "equal", s.text)
+                _push(segs, "equal", s.text, font=font)
             # наше удаление уже принято: текста нет
         else:
-            _push(segs, s.kind, s.text, s.author)
+            _push(segs, s.kind, s.text, s.author, font)
     return segs
 
 
@@ -64,20 +76,26 @@ def _overlay(before: str, segs: list[dict]) -> list[dict]:
     out: list[dict] = []
     pos = 0
     for s in segs:
+        font = _font(s)
         if s["k"] == "ins":
-            _push(out, "ins", s["t"], s["a"])
+            _push(out, "ins", s["t"], s["a"], font)
             continue
         for ch in s["t"]:
             if pos in gaps:
                 _push(out, "silent_del", gaps.pop(pos))
             if s["k"] == "del":
-                _push(out, "del", ch, s["a"])
+                _push(out, "del", ch, s["a"], font)
             else:
-                _push(out, marks[pos], ch)
+                _push(out, marks[pos], ch, font=font)
             pos += 1
     for rest in gaps.values():
         _push(out, "silent_del", rest)
     return out
+
+
+def _layout(para: Paragraph) -> dict:
+    """Вид абзаца из Word: список (bullet / number), уровень, отступ слева в твипах, выравнивание."""
+    return {"list": para.list_kind, "level": para.level, "indent": para.indent, "align": para.align}
 
 
 def _auto_label(para: Paragraph) -> str:
@@ -117,6 +135,7 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
         if not "".join(s["t"] for s in segs).strip() and not para.table:
             continue  # пустой абзац; пустую ячейку таблицы оставляем, иначе таблица «съезжает»
         paras[para.index] = {"index": para.index, "clause": para.clause, "label": _auto_label(para), "style": para.style,
+                             **_layout(para),
                              "segments": segs, "changes": [], "table": list(para.table) if para.table else None}
 
     removed: list[tuple[int, dict]] = []  # абзацы, удалённые без отметки: (после какого абзаца, абзац)
@@ -137,6 +156,7 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
             else:
                 bp, btext = base_view[i]
                 removed.append((last, {"index": -1, "clause": bp.clause, "label": _auto_label(bp), "style": bp.style,
+                                       **_layout(bp),
                                        "segments": [{"k": "silent_del", "t": _squash(btext), "a": ""}],
                                        "changes": [], "table": _removed_cell(bp, paras.get(last))}))
 

@@ -27,3 +27,13 @@ def test_accepted_change_from_our_version_skips_playbook(tmp_path):
     rv = _review(tmp_path, base, theirs, ["kandu"])
     ch = next(c for c in rv.changes if c.detail.get("accepted_from_base"))
     assert ch.lawyer_decision_needed and ch.rule_id == "" and "Коллега" in ch.explanation
+
+
+def test_document_without_preamble_has_no_head(tmp_path):
+    from pravki.docx_reader import read_docx
+    from pravki.parties import head_indices
+
+    appendix = p(r("Приложение № 1")) + p(r("Индивидуальные опции:")) + p(r("Выступление с докладом;"))
+    assert head_indices(read_docx(str(make_docx(tmp_path / "a.docx", appendix)))) == set()
+    contract = p(r("ДОГОВОР № 7")) + p(r(PRE + "123.")) + p(r("Стороны заключили договор:")) + p(r("1. Предмет договора"))
+    assert head_indices(read_docx(str(make_docx(tmp_path / "c.docx", contract)))) == {0, 1}

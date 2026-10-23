@@ -866,6 +866,20 @@ a:hover {
   border-left: 3px dashed var(--accent);
 }
 
+/* маркер списка висит в отступе слева, текст выровнен по своему краю, как в Word */
+.doc__text--list {
+  position: relative;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.doc__bullet {
+  display: inline-block;
+  width: 18px;
+  margin-left: -18px;
+  color: var(--ink);
+}
+
 .doc__text--head {
   font: 700 17px/1.4 var(--font-display);
   padding-top: 24px;
