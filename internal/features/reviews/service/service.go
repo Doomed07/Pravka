@@ -28,12 +28,16 @@ type ReviewsRepository interface {
 	ListChoices(ctx context.Context, userID, reviewID int) ([]core_domain.ReviewChoice, error)
 	SaveChoice(ctx context.Context, userID, reviewID int, c core_domain.ReviewChoice) error
 	ListPrecedents(ctx context.Context, userID, reviewID int) ([]core_domain.Precedent, error)
+	ChangesWithoutVectors(ctx context.Context, userID, reviewID int) ([]core_domain.VectorChange, error)
+	SaveVectors(ctx context.Context, reviewID int, model string, vectors map[string][]float32) error
+	ListLawHints(ctx context.Context, userID, reviewID int) ([]core_domain.LawHint, error)
 }
 
 type Engine interface {
 	Playbooks(ctx context.Context) ([]core_domain.Playbook, error)
 	Review(ctx context.Context, r core_domain.ReviewRequest) (engine.Result, []byte, error)
 	Answer(ctx context.Context, unified, document, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error)
+	Embed(ctx context.Context, texts []string) (string, [][]float32, error)
 }
 
 type ReviewsService struct {
@@ -131,6 +135,40 @@ func (s *ReviewsService) SaveChoice(ctx context.Context, userID, id int, c core_
 // Precedents — «как решали раньше»: прошлые решения юриста по похожим правкам. Только подсказка.
 func (s *ReviewsService) Precedents(ctx context.Context, userID, id int) ([]core_domain.Precedent, error) {
 	return s.repo.ListPrecedents(ctx, userID, id)
+}
+
+// embedBatch — текстов за один запрос векторов (предел движка).
+const embedBatch = 64
+
+// LawHints — «что говорит ГК» к правкам разбора. Векторы правок считаются при первом обращении (и для разборов,
+// сделанных раньше). Модель для векторов не настроена — подсказок нет, это не ошибка: решения от них не зависят.
+func (s *ReviewsService) LawHints(ctx context.Context, userID, id int) ([]core_domain.LawHint, error) {
+	missing, err := s.repo.ChangesWithoutVectors(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < len(missing); i += embedBatch {
+		batch := missing[i:min(i+embedBatch, len(missing))]
+		texts := make([]string, len(batch))
+		for j, c := range batch {
+			texts[j] = c.EmbedText()
+		}
+		model, vectors, err := s.engine.Embed(ctx, texts)
+		if errors.Is(err, engine.ErrNoEmbedModel) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		byID := make(map[string][]float32, len(batch))
+		for j, c := range batch {
+			byID[c.ID] = vectors[j]
+		}
+		if err := s.repo.SaveVectors(ctx, id, model, byID); err != nil {
+			return nil, err
+		}
+	}
+	return s.repo.ListLawHints(ctx, userID, id)
 }
 
 // MaxAuthor — предел имени автора наших правок в ответе.

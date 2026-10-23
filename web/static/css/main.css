@@ -1305,6 +1305,46 @@ del + ins {
   border-color: var(--ink);
 }
 
+/* «что говорит ГК»: пункты статей, свёрнуты */
+.law {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--muted);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.law__title {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.law__list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.law__item p {
+  margin: 0;
+}
+
+.law__text {
+  white-space: pre-line;
+}
+
+.law__ed,
+.law__foot {
+  color: var(--muted);
+}
+
+.law__foot {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
 .decide {
   display: grid;
   gap: 6px;

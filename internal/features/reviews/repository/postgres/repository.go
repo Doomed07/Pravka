@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
@@ -290,6 +292,113 @@ func (r *ReviewsRepository) ListPrecedents(ctx context.Context, userID, reviewID
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate precedents: %w", err)
+	}
+	return out, nil
+}
+
+// ChangesWithoutVectors — правки разбора, к которым подсказывается ГК, но вектор ещё не посчитан. Только поставка и
+// услуги; комментарии, технические правки (опечатки, пунктуация) и темы из core_domain.NoLawTopics пропускаются.
+// Чужой разбор — ErrNotFound.
+func (r *ReviewsRepository) ChangesWithoutVectors(ctx context.Context, userID, reviewID int) ([]core_domain.VectorChange, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	if _, err := r.GetReview(ctx, userID, reviewID); err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, `
+	SELECT c->>'id', coalesce(c->>'kind', ''), coalesce(c->>'topic', ''), coalesce(c->>'context', ''),
+	       coalesce(c->>'context_after', '')
+	FROM pravkiapp.reviews r CROSS JOIN LATERAL jsonb_array_elements(r.changes) c
+	WHERE r.id = $1 AND r.contract_type IN ('supply', 'services') AND coalesce(c->>'kind', '') <> 'comment'
+	  AND NOT (coalesce(c->>'topic', '') = ANY($2)) AND coalesce(c->>'materiality', '') <> 'техническая'
+	  AND NOT EXISTS (SELECT 1 FROM pravkiapp.review_vectors v WHERE v.review_id = r.id AND v.change_id = c->>'id');`,
+		reviewID, core_domain.NoLawTopics)
+	if err != nil {
+		return nil, fmt.Errorf("select changes without vectors: %w", err)
+	}
+	defer rows.Close()
+	out := []core_domain.VectorChange{}
+	for rows.Next() {
+		var c core_domain.VectorChange
+		if err := rows.Scan(&c.ID, &c.Kind, &c.Topic, &c.Context, &c.ContextAfter); err != nil {
+			return nil, fmt.Errorf("scan change: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate changes: %w", err)
+	}
+	return out, nil
+}
+
+func vectorLiteral(v []float32) string {
+	parts := make([]string, len(v))
+	for i, x := range v {
+		parts[i] = strconv.FormatFloat(float64(x), 'g', -1, 32)
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// SaveVectors — векторы правок разбора (по номеру правки), посчитанные моделью model.
+func (r *ReviewsRepository) SaveVectors(ctx context.Context, reviewID int, model string, vectors map[string][]float32) error {
+	if len(vectors) == 0 {
+		return nil
+	}
+	ids, lits := make([]string, 0, len(vectors)), make([]string, 0, len(vectors))
+	for id, v := range vectors {
+		ids, lits = append(ids, id), append(lits, vectorLiteral(v))
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	_, err := r.pool.Exec(ctx, `
+	INSERT INTO pravkiapp.review_vectors (review_id, change_id, model, embedding)
+	SELECT $1, id, $2, lit::vector FROM unnest($3::text[], $4::text[]) AS x(id, lit)
+	ON CONFLICT (review_id, change_id) DO UPDATE SET model = EXCLUDED.model, embedding = EXCLUDED.embedding;`,
+		reviewID, model, ids, lits)
+	if err != nil {
+		return fmt.Errorf("save vectors: %w", err)
+	}
+	return nil
+}
+
+// ListLawHints — «что говорит ГК» к правкам разбора: до $3 ближайших по смыслу пунктов ГК в частях кодекса для этого
+// типа договора (pravkiapp.in_law_scope), не дальше $4. Чужой разбор — ErrNotFound.
+func (r *ReviewsRepository) ListLawHints(ctx context.Context, userID, reviewID int) ([]core_domain.LawHint, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	if _, err := r.GetReview(ctx, userID, reviewID); err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, `
+	SELECT v.change_id, h.article, h.point, h.title, h.chapter, h.edited, h.text, h.distance
+	FROM pravkiapp.reviews r
+	JOIN pravkiapp.review_vectors v ON v.review_id = r.id
+	CROSS JOIN LATERAL (
+	    SELECT p.article, p.point, p.title, p.chapter, p.edited, p.text, p.embedding <=> v.embedding AS distance
+	    FROM pravkiapp.law_points p
+	    WHERE p.code = 'ГК РФ' AND p.embedding IS NOT NULL AND pravkiapp.in_law_scope(r.contract_type, p.article)
+	    ORDER BY p.embedding <=> v.embedding
+	    LIMIT $2
+	) h
+	WHERE r.id = $1 AND r.contract_type IN ('supply', 'services') AND h.distance <= $3
+	ORDER BY v.change_id, h.distance;`, reviewID, core_domain.MaxLawHints, core_domain.LawHintMaxDistance)
+	if err != nil {
+		return nil, fmt.Errorf("select law hints: %w", err)
+	}
+	defer rows.Close()
+	out := []core_domain.LawHint{}
+	for rows.Next() {
+		var h core_domain.LawHint
+		if err := rows.Scan(&h.ChangeID, &h.Article, &h.Point, &h.Title, &h.Chapter, &h.Edited, &h.Text, &h.Distance); err != nil {
+			return nil, fmt.Errorf("scan law hint: %w", err)
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate law hints: %w", err)
 	}
 	return out, nil
 }

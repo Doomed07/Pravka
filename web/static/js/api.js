@@ -105,6 +105,8 @@ export const reviews = {
   choices: (id) => api('/reviews/' + id + '/choices'),
   // «как решали раньше»: прошлые решения юриста по похожим правкам
   precedents: (id) => api('/reviews/' + id + '/precedents'),
+  // «что говорит ГК»: ближайшие по смыслу пункты ГК РФ к правкам (при первом открытии считается несколько секунд)
+  law: (id) => api('/reviews/' + id + '/law'),
   // пустой choice снимает решение
   saveChoice: (id, change, choice, text = '') =>
     api('/reviews/' + id + '/choices/' + encodeURIComponent(change), { method: 'PUT', body: { choice, text } }),

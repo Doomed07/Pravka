@@ -31,6 +31,7 @@ type ReviewsService interface {
 	Choices(ctx context.Context, userID, id int) ([]core_domain.ReviewChoice, error)
 	SaveChoice(ctx context.Context, userID, id int, c core_domain.ReviewChoice) error
 	Precedents(ctx context.Context, userID, id int) ([]core_domain.Precedent, error)
+	LawHints(ctx context.Context, userID, id int) ([]core_domain.LawHint, error)
 	Answer(ctx context.Context, userID, id int, author string) (engine.AnswerResult, error)
 }
 
@@ -57,6 +58,7 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 		{Method: http.MethodGet, Path: "/reviews/{id}/choices", Handler: h.Choices, Middlewares: auth},
 		{Method: http.MethodPut, Path: "/reviews/{id}/choices/{change}", Handler: h.SaveChoice, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/precedents", Handler: h.Precedents, Middlewares: auth},
+		{Method: http.MethodGet, Path: "/reviews/{id}/law", Handler: h.LawHints, Middlewares: auth},
 		{Method: http.MethodPost, Path: "/reviews/{id}/answer", Handler: h.Answer, Middlewares: auth},
 		{Method: http.MethodDelete, Path: "/reviews/{id}", Handler: h.Delete, Middlewares: auth},
 	}
@@ -491,6 +493,43 @@ func (h *ReviewsHTTPHandler) Precedents(rw http.ResponseWriter, r *http.Request)
 		out = append(out, PrecedentDTO{ChangeID: p.ChangeID, ReviewID: p.ReviewID, PastChange: p.PastChangeID, TheirsName: p.TheirsName, CreatedAt: p.CreatedAt,
 			Clause: p.Clause, Topic: p.Topic, Before: p.Before, After: p.After, Choice: p.Choice, Text: p.Text, Same: p.Same,
 			Score: p.Score})
+	}
+	rw.Header().Set("Cache-Control", "no-store")
+	resp.JSONResponse(http.StatusOK, out)
+}
+
+// ---------- что говорит ГК ----------
+
+type LawHintDTO struct {
+	ChangeID string  `json:"change_id"`
+	Article  string  `json:"article"`
+	Point    string  `json:"point"`
+	Title    string  `json:"title"`
+	Chapter  string  `json:"chapter"`
+	Edited   string  `json:"edited"`
+	Text     string  `json:"text"`
+	Distance float64 `json:"distance"`
+}
+
+func (h *ReviewsHTTPHandler) LawHints(rw http.ResponseWriter, r *http.Request) {
+	resp := core_http_response.NewHTTPResponseHandler(core_logger.FromCtx(r.Context()), rw)
+	who, ok := identity(r, resp)
+	if !ok {
+		return
+	}
+	id, ok := pathID(r, resp)
+	if !ok {
+		return
+	}
+	list, err := h.service.LawHints(r.Context(), who.UserID, id)
+	if err != nil {
+		resp.ErrorResponse(err, "failed to list law hints")
+		return
+	}
+	out := make([]LawHintDTO, 0, len(list))
+	for _, l := range list {
+		out = append(out, LawHintDTO{ChangeID: l.ChangeID, Article: l.Article, Point: l.Point, Title: l.Title, Chapter: l.Chapter,
+			Edited: l.Edited, Text: l.Text, Distance: l.Distance})
 	}
 	rw.Header().Set("Cache-Control", "no-store")
 	resp.JSONResponse(http.StatusOK, out)

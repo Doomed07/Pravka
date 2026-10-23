@@ -208,3 +208,88 @@ func TestReviewsRepository_Precedents(t *testing.T) {
 		t.Fatalf("lease: %+v, err = %v", got, err)
 	}
 }
+
+// «Что говорит ГК»: векторы — только для правок с темами, к которым подсказывается ГК; подсказки — только из частей
+// кодекса для типа договора и не дальше порога.
+func TestReviewsRepository_LawHints(t *testing.T) {
+	if os.Getenv("PRAVKI_TEST_DB") == "" {
+		t.Skip("PRAVKI_TEST_DB не задан: нужна настоящая PostgreSQL")
+	}
+	ctx := context.Background()
+	pool, err := core_postgres_pgx.NewConnPool(core_postgres_pgx.NewConfigMust(), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE username = 'law_test'`)
+	var user int
+	if err := pool.QueryRow(ctx, `INSERT INTO pravkiapp.users (username, email, password_hash) VALUES ('law_test', 'law_test@example.com', $1)
+	RETURNING id`, "$2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234").Scan(&user); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE id = $1`, user) }()
+
+	axis := func(i int) []float32 { // единичный вектор: расстояние 0 до себя, 1 до другого
+		v := make([]float32, 1024)
+		v[i] = 1
+		return v
+	}
+	_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.law_points WHERE code = 'ГК РФ' AND title LIKE 'тест %'`)
+	defer func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.law_points WHERE code = 'ГК РФ' AND title LIKE 'тест %'`)
+	}()
+	for _, p := range []struct {
+		article string
+		axis    int
+	}{{"511", 0}, {"782", 0}, {"1225", 0}, {"330", 1}, {"314", 0}} {
+		if _, err := pool.Exec(ctx, `INSERT INTO pravkiapp.law_points (code, article, seq, point, title, text, embedding)
+		VALUES ('ГК РФ', $1, 900, '1', $2, 'текст', $3::vector)`, p.article, "тест "+p.article, vectorLiteral(axis(p.axis))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo := NewReviewsRepository(pool)
+	changes := `[{"id":"E001","kind":"replace","topic":"сроки исполнения","context":"30 дней","context_after":"10 дней"},
+	{"id":"E002","kind":"replace","topic":"налоги","context":"НДС 20%","context_after":"НДС 0%"},
+	{"id":"E003","kind":"comment","topic":"сроки исполнения","after":"Просим"},
+	{"id":"E004","kind":"replace","topic":"","context":"собственность","context_after":"собсвенность"},
+	{"id":"E005","kind":"replace","topic":"сроки исполнения","materiality":"техническая","context":"дней,","context_after":"дней"}]`
+	review := func(typ string) int {
+		rev, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: user, TheirsName: "x.docx", ContractType: typ},
+			core_domain.ReviewFiles{ReportHTML: []byte("-"), ReportXLSX: []byte("-"), Changes: []byte(changes)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rev.ID
+	}
+	supply := review("supply")
+	missing, err := repo.ChangesWithoutVectors(ctx, user, supply)
+	if err != nil || len(missing) != 1 || missing[0].ID != "E001" || missing[0].ContextAfter != "10 дней" {
+		t.Fatalf("only E001 needs a vector (taxes, comments, typos and technical edits are skipped): %+v, err = %v", missing, err)
+	}
+	if err := repo.SaveVectors(ctx, supply, "bge-m3", map[string][]float32{"E001": axis(0)}); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := repo.ChangesWithoutVectors(ctx, user, supply); len(again) != 0 {
+		t.Fatalf("vector saved, nothing left: %+v", again)
+	}
+	hints, err := repo.ListLawHints(ctx, user, supply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, h := range hints {
+		if strings.HasPrefix(h.Title, "тест ") {
+			got = append(got, h.Article)
+		}
+	}
+	// 782 (услуги) и 1225 (часть четвёртая) — не для поставки; 330 — дальше порога
+	if strings.Join(got, ",") != "511,314" && strings.Join(got, ",") != "314,511" {
+		t.Fatalf("supply hints: %v (all: %+v)", got, hints)
+	}
+	if _, err := repo.ListLawHints(ctx, user+100000, supply); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("other user's review: err = %v", err)
+	}
+	if m, _ := repo.ChangesWithoutVectors(ctx, user, review("lease")); len(m) != 0 {
+		t.Fatalf("lease: no law hints: %+v", m)
+	}
+}

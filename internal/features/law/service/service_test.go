@@ -16,7 +16,9 @@ type fakeRepo struct {
 	clears         int
 }
 
-func (f *fakeRepo) Meta(context.Context, string) (string, string, error) { return f.version, f.model, nil }
+func (f *fakeRepo) Meta(context.Context, string) (string, string, error) {
+	return f.version, f.model, nil
+}
 func (f *fakeRepo) Clear(context.Context, string) error {
 	f.clears++
 	f.points, f.withVec, f.version, f.model = nil, 0, "", ""

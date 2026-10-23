@@ -12,6 +12,9 @@ import (
 )
 
 type fakeRepo struct {
+	missing []core_domain.VectorChange
+	vectors map[string][]float32
+	saves   int
 	saved   []core_domain.ContractReview
 	files   []core_domain.ReviewFiles
 	listArg [3]int
@@ -42,21 +45,51 @@ func (f *fakeRepo) SaveChoice(_ context.Context, _, _ int, c core_domain.ReviewC
 	return nil
 }
 func (f *fakeRepo) DeleteReview(context.Context, int, int) error { return nil }
+func (f *fakeRepo) ChangesWithoutVectors(context.Context, int, int) ([]core_domain.VectorChange, error) {
+	return f.missing, nil
+}
+func (f *fakeRepo) SaveVectors(_ context.Context, _ int, model string, v map[string][]float32) error {
+	if f.vectors == nil {
+		f.vectors = map[string][]float32{}
+	}
+	for k, x := range v {
+		f.vectors[k] = x
+	}
+	f.saves++
+	return nil
+}
+func (f *fakeRepo) ListLawHints(context.Context, int, int) ([]core_domain.LawHint, error) {
+	return []core_domain.LawHint{{ChangeID: "E001", Article: "330"}}, nil
+}
 func (f *fakeRepo) ListPrecedents(context.Context, int, int) ([]core_domain.Precedent, error) {
 	return []core_domain.Precedent{{ChangeID: "E001", Choice: "reject"}}, nil
 }
 
 type fakeEngine struct {
-	err   error
-	calls int
-	got   core_domain.ReviewRequest
-	ans   []string // что пришло в Answer: единая версия, правки, автор
-	ansCh []core_domain.ReviewChoice
+	noEmbed  bool
+	embedded []string
+	err      error
+	calls    int
+	got      core_domain.ReviewRequest
+	ans      []string // что пришло в Answer: единая версия, правки, автор
+	ansCh    []core_domain.ReviewChoice
 }
 
 func (f *fakeEngine) Answer(_ context.Context, unified, document, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error) {
 	f.ans, f.ansCh = []string{string(unified), string(changes), author, string(document)}, choices
 	return engine.AnswerResult{DOCX: []byte("PKanswer")}, nil
+}
+
+func (f *fakeEngine) Embed(_ context.Context, texts []string) (string, [][]float32, error) {
+	if f.noEmbed {
+		return "", nil, engine.ErrNoEmbedModel
+	}
+	f.embedded = append(f.embedded, texts...)
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		out[i] = []float32{float32(len(f.embedded) - len(texts) + i)}
+	}
+	return "bge-m3", out, nil
 }
 
 func (f *fakeEngine) Playbooks(context.Context) ([]core_domain.Playbook, error) { return nil, nil }
@@ -186,5 +219,25 @@ func TestAnswer_SendsUnifiedChangesChoicesAndAuthor(t *testing.T) {
 	}
 	if _, err := NewReviewsService(repo, eng).Answer(context.Background(), 1, 3, string(make([]rune, MaxAuthor+1))); !errors.Is(err, core_errors.ErrInvalidArgument) {
 		t.Fatalf("long author: err = %v", err)
+	}
+}
+
+func TestLawHints_EmbedsMissingChangesInBatches(t *testing.T) {
+	repo, eng := &fakeRepo{}, &fakeEngine{}
+	for i := 0; i < 70; i++ {
+		repo.missing = append(repo.missing, core_domain.VectorChange{ID: fmt.Sprintf("E%03d", i), Kind: "replace",
+			Topic: "неустойка и штрафы", Context: "было", ContextAfter: fmt.Sprintf("стало %d", i)})
+	}
+	hints, err := NewReviewsService(repo, eng).LawHints(context.Background(), 1, 3)
+	if err != nil || len(hints) != 1 || hints[0].Article != "330" {
+		t.Fatalf("hints = %+v, err = %v", hints, err)
+	}
+	if repo.saves != 2 || len(repo.vectors) != 70 || eng.embedded[5] != "неустойка и штрафы. стало 5" || repo.vectors["E069"][0] != 69 {
+		t.Fatalf("saves=%d vectors=%d first=%q", repo.saves, len(repo.vectors), eng.embedded[0])
+	}
+	// модели для векторов нет — подсказки из уже посчитанного, без ошибки
+	repo2 := &fakeRepo{missing: repo.missing}
+	if _, err := NewReviewsService(repo2, &fakeEngine{noEmbed: true}).LawHints(context.Background(), 1, 3); err != nil || repo2.saves != 0 {
+		t.Fatalf("no model: err = %v, saves = %d", err, repo2.saves)
 	}
 }

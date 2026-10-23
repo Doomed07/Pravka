@@ -138,6 +138,46 @@ function precedentsBlock(ch) {
     </details>`;
 }
 
+// ---------- Что говорит ГК ----------
+
+function lawRef(h) {
+  return `ст. ${h.article}${h.point ? ` п. ${h.point}` : ''} ГК РФ`;
+}
+
+function lawBlock(hints) {
+  return html`
+    <details class="law">
+      <summary class="law__title">Что говорит ГК: ${hints.map(lawRef).join('; ')}</summary>
+      <ul class="law__list">
+        ${hints.map((h) => html`
+          <li class="law__item">
+            <p class="law__head"><b>${lawRef(h)}</b> · ${h.title}${h.edited ? html` <span class="law__ed">(ред. от ${fmtDate(h.edited)})</span>` : ''}</p>
+            <p class="law__text">${h.text}</p>
+          </li>`)}
+      </ul>
+      <p class="law__foot">Подобрано по смыслу из ГК РФ (pravo.gov.ru). Подсказка: применимость нормы оценивает юрист.</p>
+    </details>`;
+}
+
+// Подсказки по ГК приходят после отрисовки страницы: место для них — пустой блок в карточке правки.
+async function loadLaw(id) {
+  let hints = [];
+  try {
+    hints = (await reviews.law(id)) || [];
+  } catch {
+    return; // без подсказок по ГК страница работает как раньше
+  }
+  const by = new Map();
+  for (const h of hints) {
+    if (!by.has(h.change_id)) by.set(h.change_id, []);
+    by.get(h.change_id).push(h);
+  }
+  for (const [change, list] of by) {
+    const slot = document.querySelector(`.law-slot[data-change="${CSS.escape(change)}"]`);
+    if (slot) mount(slot, lawBlock(list));
+  }
+}
+
 function decideBlock(ch) {
   if (ch.kind === 'comment') return replyBlock(ch);
   const cur = CHOICES.get(ch.id) || {};
@@ -183,6 +223,7 @@ function note(ch, order) {
       ${ch.escalate_to ? html`<p class="note__foot">Согласовать: ${ch.escalate_to}</p>` : ''}
       ${ch.rule_id && ch.rule_id !== 'PARTY' || isSilent(ch) ? html`<p class="note__foot">${[ch.rule_id && ch.rule_id !== 'PARTY' ? `правило ${ch.rule_id}` : '', isSilent(ch) ? 'найдено сравнением редакций' : ''].filter(Boolean).join(' · ')}</p>` : ''}
       ${precedentsBlock(ch)}
+      <div class="law-slot" data-change="${ch.id}"></div>
       ${decideBlock(ch)}
     </article>`;
 }
@@ -610,7 +651,10 @@ async function load() {
   const body = doc && doc.length ? unifiedView(r, doc, changes || []) : legacyView(r);
   mount(box, body);
   wire(id);
-  if (doc && doc.length) wireDecisions(id, changes || []);
+  if (doc && doc.length) {
+    wireDecisions(id, changes || []);
+    loadLaw(id);
+  }
   // ссылка из «как решали раньше» ведёт к правке прошлого разбора: /reviews/3#c-E001
   const target = decodeURIComponent(location.hash.slice(1));
   if (target.startsWith('c-') && document.getElementById(target)) select(target.slice(2), 'doc');
