@@ -111,3 +111,23 @@ def test_table_cells_keep_coordinates_and_empty_cells(tmp_path):
     assert flags == [False] + [True] * 9 + [False]
     outside = [d for d in rv.document if not d["table"]]
     assert all(d["table"] is None for d in outside) and len(outside) == 2
+
+
+def test_replaced_clause_is_one_change_on_both_paragraphs(tmp_path):
+    base = p(r("1.3. Первый.")) + p(r("1.4. Список направляется на почту за 1 день.")) + p(r("1.5. Последний."))
+    theirs = p(r("1.3. Первый.")) + p(r("1.4. Список определяется формой на сайте за 5 дней.")) + p(r("1.5. Последний."))
+    doc, changes = _unified(tmp_path, base, theirs)
+    assert len(changes) == 1 and changes[0].kind == "replace" and changes[0].detail["replaced_para"] == "clause"
+    assert "почту" in changes[0].before and "сайте" in changes[0].after
+    assert [para["changes"] for para in doc] == [[], [changes[0].id], [changes[0].id], []]
+
+
+def test_party_comments_are_kept_whole_with_side(tmp_path):
+    body = p('<w:commentRangeStart w:id="1"/>', r("1.1. Срок 10 дней."), '<w:commentRangeEnd w:id="1"/>',
+             '<w:r><w:commentReference w:id="1"/></w:r>')
+    comments = ('<w:comment w:id="1" w:author="kandu" w:date="2026-03-27T10:00:00Z"><w:p><w:r><w:t>Просим 10 дней.</w:t></w:r></w:p>'
+                '<w:p><w:r><w:t>Иначе не успеем.</w:t></w:r></w:p></w:comment>')
+    t = read_docx(str(make_docx(tmp_path / "t.docx", body, comments=comments)))
+    doc = build_unified(None, t, {"kandu"}, [])
+    assert doc[0]["comments"] == [{"author": "kandu", "date": "2026-03-27T10:00:00Z", "text": "Просим 10 дней.\nИначе не успеем.",
+                                   "ours": True, "anchor": "1.1. Срок 10 дней."}]

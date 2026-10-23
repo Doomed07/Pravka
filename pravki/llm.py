@@ -34,6 +34,14 @@ GRAMMAR_SYSTEM = (
 )
 
 
+SAME_SYSTEM = (
+    "Ты сравниваешь две редакции договора. Абзац А удалён, на его место вставлен абзац Б. "
+    "Определи, о чём каждый абзац (его предмет: оплата, неустойка, список участников, приёмка, подсудность и т. п.). "
+    "Ответь одним словом: ДА — если предмет у А и Б один и тот же, даже если изменились сроки, способ, порядок "
+    "или обязанная сторона; НЕТ — если абзацы о разном."
+)
+
+
 class LLMError(Exception):
     pass
 
@@ -105,6 +113,15 @@ class Explainer:
         self.client = client
         self.rejected = 0
         self.used = 0
+
+    def same_condition(self, before: str, after: str) -> bool:
+        """Модель распознаёт, что удалённый и вставленный абзацы — одно условие в новой редакции.
+        Ответ влияет только на вид отчёта (одна правка вместо двух), не на решение."""
+        try:
+            text = self.client.complete(SAME_SYSTEM, json.dumps({"А": before[:1200], "Б": after[:1200]}, ensure_ascii=False))
+        except LLMError:
+            return False
+        return re.sub(r"[^А-ЯЁA-Z]", "", text.strip().upper()[:5]).startswith("ДА")
 
     def confirms_technical(self, ch: Change) -> bool:
         """Модель подтверждает, что техническая правка не меняет смысл. Модель может только отменить решение правила:

@@ -78,7 +78,7 @@ def review_files(
     if side_res.blocked:
         raise RoleCheckError(side_res)
 
-    changes = compare_versions(base, theirs, our_authors)
+    changes = compare_versions(base, theirs, our_authors, judge=explainer.same_condition if explainer else None)
     # C10: стороны и реквизиты между версиями — отдельные правки высшего приоритета
     changes = party_changes(base, theirs, ours) + changes
     if any(c.topic == PARTY_TOPIC for c in changes):
@@ -125,6 +125,9 @@ def review_files(
         if c.detail.get("technical_doubt"):  # сомнение модели — только юристу, «принять» по правилу не ставится
             c.level, c.lawyer_decision_needed = "review", True
             c.action = "Нужно решение юриста: правка похожа на грамматическую, но смысл может меняться"
+        if c.detail.get("replaced_para") == "model":  # замену пункта распознала модель — решает юрист
+            c.level, c.lawyer_decision_needed = "review", True
+            c.action = "Нужно решение юриста: пункт заменён новой редакцией"
     if explainer is not None:
         for c in regular:
             explainer.apply(c)

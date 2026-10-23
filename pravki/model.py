@@ -158,6 +158,7 @@ class Change:
             "explanation": self.explanation,
             "ai_explained": "template_explanation" in self.detail,  # пояснение написала модель
             "accepted_from_base": list(self.detail.get("accepted_from_base", [])),  # авторы принятой правки из нашей версии
+            "replaced_para": self.detail.get("replaced_para", ""),  # пункт заменён целиком: clause (по номеру) или model
             "suggested": self.suggested,
             "escalate_to": self.escalate_to,
             "lawyer_decision_needed": self.lawyer_decision_needed,

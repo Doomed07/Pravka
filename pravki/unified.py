@@ -107,7 +107,8 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
     label — номер пункта из автонумерации Word (его нет в тексте абзаца); пусто, если номер напечатан в тексте.
 
     index — номер абзаца в версии контрагента (-1 у абзаца, который есть только в нашей версии);
-    changes — номера правок (Change.id), относящихся к абзацу.
+    changes — номера правок (Change.id), относящихся к абзацу; comments — комментарии сторон к абзацу целиком
+    ({author, date, text, ours, anchor}).
     """
     ours = set(ours)
     paras: dict[int, dict] = {}
@@ -153,11 +154,30 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
     out.extend(p for _, p in pending[k:])
 
     by_index = {p["index"]: p for p in out if p["index"] >= 0}
+
+    def removed_with(text: str):
+        key = normalize(text)
+        return next((p for p in out if p["index"] < 0 and key and key in normalize(p["segments"][0]["t"])), None)
+
     for c in changes:
-        target = by_index.get(c.paragraph_index)
-        if target is None and c.paragraph_index < 0 and c.before:
-            key = normalize(c.before)
-            target = next((p for p in out if p["index"] < 0 and key in normalize(p["segments"][0]["t"])), None)
-        if target is not None and c.id:
-            target["changes"].append(c.id)
+        if not c.id:
+            continue
+        targets = [by_index.get(c.paragraph_index)]
+        if c.paragraph_index < 0 and c.before:
+            targets = [removed_with(c.before)]
+        if c.detail.get("replaced_para"):  # пункт заменён: правка относится и к прежней редакции абзаца
+            targets.append(by_index.get(c.detail.get("replaced_index", -1)) or removed_with(c.before))
+        for target in targets:
+            if target is not None and c.id not in target["changes"]:
+                target["changes"].append(c.id)
+
+    # комментарии сторон — целиком, для контекста (наши тоже: на них часто отвечает контрагент)
+    for p in out:
+        p["comments"] = []
+    for cm in sorted(theirs.comments.values(), key=lambda x: (x.date, x.id)):
+        target = by_index.get(cm.paragraph_index)
+        if target is None or cm.author == ANNOTATOR or not cm.text.strip():
+            continue
+        target["comments"].append({"author": cm.author, "date": cm.date, "text": cm.text, "ours": cm.author in ours,
+                                   "anchor": cm.anchor})
     return out

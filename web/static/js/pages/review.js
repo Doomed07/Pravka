@@ -67,18 +67,32 @@ function list(changes, order) {
 
 // ---------- Примечание к правке ----------
 
+function short(text, n = 90) {
+  const t = (text || '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+
+// Кто написал карточку: правило программы или модель. Отличается от комментариев сторон (значок в тексте).
+function noteBy(ch) {
+  const by = ch.ai_explained ? 'пояснение ИИ' : ch.rule_id && ch.rule_id !== 'PARTY' ? 'по плейбуку' : 'проверка программы';
+  return html`<p class="note__by"><span class="note__mark" aria-hidden="true">П</span>Правки · ${by}</p>`;
+}
+
 function note(ch, order) {
   const v = verdict(ch);
-  const diff = fromBase(ch)
+  const diff = ch.replaced_para
+    ? html`<p class="note__diff">Пункт заменён новой редакцией${isSilent(ch) ? ' без отметки в рецензировании' : ''}.</p>`
+    : fromBase(ch)
     ? html`<p class="note__diff">Принята правка из нашей версии (автор: ${ch.accepted_from_base.join(', ')}): было «${ch.before || '—'}», стало «${ch.after || '—'}».</p>`
     : isSilent(ch)
     ? html`<p class="note__diff">Изменено без отметки в рецензировании: было «${ch.before || '—'}», стало «${ch.after || '—'}».</p>`
     : ch.kind === 'comment'
-      ? html`<p class="note__diff">Комментарий контрагента: «${ch.after}»</p>`
+      ? html`<p class="note__diff">Нужен ответ на комментарий (автор: ${ch.author || 'не указан'}): «${short(ch.after)}». Полный текст — по значку в тексте.</p>`
       : '';
   const carried = (ch.flags || []).includes('из прошлого раунда');
   return html`
     <article class="note${isSilent(ch) ? ' note--silent' : ''}" id="c-${ch.id}" data-change="${ch.id}">
+      ${noteBy(ch)}
       <div class="note__head">
         <span class="note__id">${num(order.get(ch.id))} · ${changeTitle(ch)}</span>
         <span class="note__level note__level--${v.mod}">${v.label}</span>
@@ -88,8 +102,42 @@ function note(ch, order) {
       ${ch.explanation ? html`<p>${ch.explanation}</p>` : ''}
       ${ch.suggested ? html`<p class="note__suggest">Наша позиция: ${ch.suggested}</p>` : ''}
       ${ch.escalate_to ? html`<p class="note__foot">Согласовать: ${ch.escalate_to}</p>` : ''}
-      <p class="note__foot">${ch.ai_explained ? 'Пояснение ИИ' : ch.rule_id ? 'Пояснение по правилу' : 'Пояснение программы'}${ch.rule_id && ch.rule_id !== 'PARTY' ? ` · ${ch.rule_id}` : ''}${isSilent(ch) ? ' · найдено сравнением редакций' : ''}</p>
+      ${ch.rule_id && ch.rule_id !== 'PARTY' || isSilent(ch) ? html`<p class="note__foot">${[ch.rule_id && ch.rule_id !== 'PARTY' ? `правило ${ch.rule_id}` : '', isSilent(ch) ? 'найдено сравнением редакций' : ''].filter(Boolean).join(' · ')}</p>` : ''}
     </article>`;
+}
+
+// ---------- Комментарии сторон ----------
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('ru-RU');
+}
+
+function initials(name) {
+  const parts = (name || '?').trim().split(/\s+/);
+  return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+
+// Комментарии сторон из Word — целиком, но свёрнуты в значок, чтобы не мешать читать договор.
+function partyComments(list) {
+  if (!list || !list.length) return '';
+  const label = `Комментарии сторон: ${list.length}`;
+  return html`
+    <details class="cmt">
+      <summary class="cmt__badge" title="${label}" aria-label="${label}">
+        <span class="cmt__icon" aria-hidden="true"></span>${list.length > 1 ? list.length : initials(list[0].author)}
+      </summary>
+      <div class="cmt__pop">
+        ${list.map((c) => html`
+          <div class="cmt__item">
+            <p class="cmt__who"><span class="cmt__avatar${c.ours ? ' cmt__avatar--ours' : ''}">${initials(c.author)}</span>
+              <span><b>${c.author || 'без имени'}</b>${c.ours ? ' · наш' : ''}<br><span class="cmt__date">${fmtDate(c.date)}</span></span></p>
+            ${c.anchor ? html`<p class="cmt__anchor">к словам «${short(c.anchor, 80)}»</p>` : ''}
+            <p class="cmt__text">${c.text}</p>
+          </div>`)}
+      </div>
+    </details>`;
 }
 
 // ---------- Текст договора ----------
@@ -110,7 +158,15 @@ function isHeading(para, text) {
   return text.length < 90 && !/[.;:,]$/.test(text.trim()) && !/\./.test(para.clause || '') && !!para.clause;
 }
 
-function row(para, i, total, byID, order) {
+// shown — правки, карточки которых уже нарисованы: замена пункта относится к двум абзацам, карточка одна.
+function freshNotes(changes, order, shown) {
+  return changes.filter((ch) => !shown.has(ch.id)).map((ch) => {
+    shown.add(ch.id);
+    return note(ch, order);
+  });
+}
+
+function row(para, i, total, byID, order, shown) {
   const text = para.segments.map((s) => s.t).join('');
   const changes = para.changes.map((id) => byID.get(id)).filter(Boolean);
   const silent = para.segments.some((s) => s.k.startsWith('silent'));
@@ -128,14 +184,15 @@ function row(para, i, total, byID, order) {
       <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}>
         ${para.label ? `${para.label} ` : ''}${para.segments.map(segment)}
         ${para.index < 0 ? html` <span class="tag tag--silent">абзац удалён без отметки</span>` : ''}
+        ${partyComments(para.comments)}
       </div>
-      <div class="doc__notes">${changes.map((ch) => note(ch, order))}</div>
+      <div class="doc__notes">${freshNotes(changes, order, shown)}</div>
     </div>`;
 }
 
 // Таблица из Word собирается обратно по координатам ячеек (table = [номер, строка, столбец, ширина]):
 // один блок слева — вся таблица, справа — заметки ко всем её правкам.
-function tableRow(paras, i, total, byID, order) {
+function tableRow(paras, i, total, byID, order, shown) {
   const changes = paras.flatMap((p) => p.changes.map((id) => byID.get(id)).filter(Boolean));
   const changed = changes.length > 0 || paras.some((p) => p.segments.some((s) => s.k !== 'equal'));
   const silent = paras.some((p) => p.segments.some((s) => s.k.startsWith('silent')));
@@ -158,7 +215,7 @@ function tableRow(paras, i, total, byID, order) {
     return html`<tr>${[...cells.keys()].sort((a, b) => a - b).map((c) => {
       const cell = cells.get(c);
       return html`<td${cell.span > 1 ? html` colspan="${cell.span}"` : ''}>${cell.paras.map((p) => html`
-        <p class="doc-table__p" id="p-${p.index}" ${p.changes[0] ? html`data-change="${p.changes[0]}"` : ''}>${p.label ? `${p.label} ` : ''}${p.segments.map(segment)}</p>`)}</td>`;
+        <p class="doc-table__p" id="p-${p.index}" ${p.changes[0] ? html`data-change="${p.changes[0]}"` : ''}>${p.label ? `${p.label} ` : ''}${p.segments.map(segment)}${partyComments(p.comments)}</p>`)}</td>`;
     })}</tr>`;
   });
   return html`
@@ -167,7 +224,7 @@ function tableRow(paras, i, total, byID, order) {
       <div class="${cls.join(' ')}" ${first ? html`data-change="${first.id}"` : ''}>
         <table class="doc-table"><tbody>${body}</tbody></table>
       </div>
-      <div class="doc__notes">${changes.map((ch) => note(ch, order))}</div>
+      <div class="doc__notes">${freshNotes(changes, order, shown)}</div>
     </div>`;
 }
 
@@ -187,14 +244,15 @@ function documentView(doc, changes, order) {
   const placed = new Set(doc.flatMap((p) => p.changes));
   const orphans = changes.filter((c) => !placed.has(c.id));
   const parts = blocks(doc);
+  const shown = new Set();
   return html`
     <div class="doc">
       ${orphans.length ? html`
         <div class="doc__orphans">
           <p class="eyebrow">Без места в тексте: стороны, реквизиты, общие замечания</p>
-          ${orphans.map((ch) => note(ch, order))}
+          ${freshNotes(orphans, order, shown)}
         </div>` : ''}
-      ${parts.map((b, i) => (b.table ? tableRow(b.paras, i, parts.length, byID, order) : row(b.para, i, parts.length, byID, order)))}
+      ${parts.map((b, i) => (b.table ? tableRow(b.paras, i, parts.length, byID, order, shown) : row(b.para, i, parts.length, byID, order, shown)))}
     </div>`;
 }
 

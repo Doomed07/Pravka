@@ -962,6 +962,142 @@ del + ins {
   border-top-color: var(--accent);
 }
 
+/* Карточка программы и ИИ: подпись со знаком «П». Комментарии сторон — отдельно, значком в тексте (.cmt). */
+.note__by {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.note__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  color: var(--paper);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+/* ---------- Комментарии сторон: значок в тексте, полный текст во всплывающей карточке ---------- */
+
+.cmt {
+  position: relative;
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: 1px;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.cmt__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px 0 5px;
+  border-radius: 11px;
+  background: #e6e6e1;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cmt__badge::-webkit-details-marker {
+  display: none;
+}
+
+.cmt__badge:hover,
+.cmt[open] .cmt__badge {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* значок «облачко» из рамки, без картинок */
+.cmt__icon {
+  position: relative;
+  width: 11px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+
+.cmt__icon::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  bottom: -4px;
+  border: 3px solid transparent;
+  border-top-color: currentColor;
+  border-left-color: currentColor;
+}
+
+.cmt__pop {
+  position: absolute;
+  z-index: 5;
+  top: 28px;
+  left: -40px;
+  display: grid;
+  gap: 12px;
+  width: min(360px, 80vw);
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(20, 20, 20, 0.14);
+  font-size: 14px;
+}
+
+.cmt__item + .cmt__item {
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.cmt__who {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.cmt__avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #5b6b7a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cmt__avatar--ours {
+  background: var(--ink);
+}
+
+.cmt__date,
+.cmt__anchor {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cmt__text {
+  white-space: pre-wrap;
+}
+
 .note.is-current {
   background: #fff7f3;
   box-shadow: -10px 0 0 #fff7f3, 10px 0 0 #fff7f3;
