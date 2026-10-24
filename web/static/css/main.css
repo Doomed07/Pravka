@@ -2729,3 +2729,8 @@ select.form__input {
   margin: 4px 0;
   white-space: pre-wrap;
 }
+
+/* Кнопка «Показать все» под таблицей разборов: не вплотную к таблице */
+.table-wrap + p {
+  margin-top: 24px;
+}
