@@ -212,33 +212,41 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
 
 
 
-_END = ".;:!?)»\"…"
+_END = ".;:!?…"
 _NUMBERED = re.compile(r"^\s*(\d+(\.\d+)*[.)]?|[а-яa-z][.)])\s")
-MAX_TAIL = 40  # обрывок из следующего абзаца — не длиннее (символов)
+MAX_TAIL = 40  # короткий обрывок из следующего абзаца — не длиннее (символов)
 
 
 def _plain(p: dict) -> str:
     return "".join(s["t"] for s in p["segments"]).strip()
 
 
+def _heading(p: dict) -> bool:
+    style = (p.get("style") or "").lower()
+    return style.startswith("heading") or style.startswith("заголовок") or style == "title"
+
+
 def mark_broken_paragraphs(out: list[dict]) -> int:
-    """Предложение, разорванное границей абзаца («…гл. 26.2-1» и отдельным абзацем «НК РФ.»): абзацу, который надо
-    склеить со следующим, ставится join_next. Осторожно: оба абзаца без правок и вне таблиц, следующий идёт сразу за
-    первым, не пронумерован, не список, короткий и заканчивается знаком конца предложения, а первый до конца не дошёл.
-    Склейка — исправление вёрстки, не смысла: на сайте она подсвечена, юрист может её отклонить."""
+    """Предложение, разорванное границей абзаца: абзацу, который надо склеить со следующим, ставится join_next.
+    Осторожно: оба абзаца без правок в тексте и вне таблиц, следующий идёт сразу за первым, не пронумерован и не список,
+    а первый до конца предложения не дошёл. Признак продолжения — одно из двух: следующий абзац начинается со строчной
+    буквы («…5 (пяти)» / «рабочих дней…») либо он короткий и заканчивается знаком конца предложения («…гл. 26.2-1» /
+    «НК РФ.»). Склейка — исправление вёрстки, не смысла: на сайте она подсвечена, юрист может её отклонить."""
     n = 0
     for p, q in zip(out, out[1:]):
         if p["index"] < 0 or q["index"] != p["index"] + 1 or p.get("table") or q.get("table"):
             continue
-        if any(x["k"] != "equal" for x in p["segments"] + q["segments"]) or p["changes"] or q["changes"]:
+        if any(x["k"] != "equal" for x in p["segments"] + q["segments"]) or _heading(p) or _heading(q):
             continue
         if p.get("comments") or q.get("comments") or q.get("label") or q.get("list") or p.get("list") == "bullet":
             continue
         a, b = _plain(p), _plain(q)
-        if len(a) < 40 or not b or len(b) > MAX_TAIL or a[-1] in _END or b[-1] not in ".;" or _NUMBERED.match(b):
+        if not a or not b or a[-1] in _END or _NUMBERED.match(b):
             continue
-        if p["style"] != q["style"] and not (p["style"] or "").lower().startswith("list"):
-            continue
-        p["join_next"] = True
-        n += 1
+        lower = b[0].islower()
+        same_kind = p["style"] == q["style"] or (p["style"] or "").lower().startswith("list")
+        short = len(a) >= 40 and len(b) <= MAX_TAIL and b[-1] in ".;" and same_kind
+        if lower or short:
+            p["join_next"] = True
+            n += 1
     return n

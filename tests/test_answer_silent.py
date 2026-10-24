@@ -199,3 +199,14 @@ def test_sentence_broken_by_paragraph_is_found_and_joined_in_word(tmp_path):
     assert joined[0].endswith("26.2-1 НК РФ.") and "НК РФ." not in joined[1:2]
     stats2 = build_answer(src, str(tmp_path / "b.docx"), [], {"J000": {"choice": "reject"}}, AUTHOR, document)
     assert stats2["join"] == 0
+
+
+def test_continuation_in_lowercase_is_joined_even_when_long_and_with_a_note(tmp_path):
+    """«2.3.5 В течение 5 (пяти)» и длинный абзац «рабочих дней …»: начало со строчной буквы — признак продолжения.
+    Абзац-список, заголовок, пронумерованный пункт и законченное предложение не склеиваются."""
+    body = (p(r("2.3.5 В течение 5 (пяти)")) + p(r("рабочих дней со дня получения вернуть Организатору подписанный акт. Стороны вправе подписывать Акты через ЭДО.")) +
+            p(r("2.4 Заказчик вправе отказаться от договора.")) + p(r("поставщик обязан вернуть аванс.")) +
+            p(r("2.5 Стороны согласовали следующее")) + p(r("3.1 Поставка осуществляется в срок.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    assert [d["index"] for d in document if d.get("join_next")] == [0]
