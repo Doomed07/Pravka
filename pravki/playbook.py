@@ -376,6 +376,12 @@ def analyze(changes: list[Change], pb: Playbook) -> list[Change]:
 
 
 def _analyze_one(ch: Change, pb: Playbook) -> None:
+    if ch.materiality == "техническая" and ch.kind != "comment" and ch.detail.get("spelling_error"):
+        # контрагент испортил написание: принимать нельзя, смысл не меняется — отклоняем без юриста
+        ch.level = "reject"
+        ch.action = "Отклонить: контрагент внёс ошибку в написание"
+        ch.explanation = technical_explanation(ch)
+        return
     if ch.materiality == "техническая" and ch.kind != "comment":
         what = "грамматическая правка" if ch.detail.get("grammar") else "техническая правка"
         ch.level = "accept"

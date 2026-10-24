@@ -3,7 +3,7 @@ FROM python:3.13-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir lxml openpyxl pyyaml
+RUN pip install --no-cache-dir lxml openpyxl pyyaml pymorphy3==2.0.6 pymorphy3-dicts-ru==2.4.417150.4580142
 COPY pravki ./pravki
 # Учебные плейбуки — в образе; ваши плейбуки (playbooks/private) подключаются томом только для чтения.
 COPY playbooks/*.yaml ./playbooks/

@@ -118,13 +118,10 @@ def review_files(
     if explainer is not None:
         for c in regular:
             if c.materiality == "техническая" and c.kind != "comment" and not explainer.confirms_technical(c):
-                undo_technical(c)
+                note_technical_doubt(c)
     if pb is not None:
         analyze(regular, pb)
     for c in regular:
-        if c.detail.get("technical_doubt"):  # сомнение модели — только юристу, «принять» по правилу не ставится
-            c.level, c.lawyer_decision_needed = "review", True
-            c.action = "Нужно решение юриста: правка похожа на грамматическую, но смысл может меняться"
         if c.detail.get("replaced_para") == "model":  # замену пункта распознала модель — решает юрист
             c.level, c.lawyer_decision_needed = "review", True
             c.action = "Нужно решение юриста: пункт заменён новой редакцией"
@@ -156,13 +153,11 @@ def review_files(
     )
 
 
-def undo_technical(ch: Change) -> None:
-    """Модель усомнилась, что правка только техническая: правка идёт обычным путём, по плейбуку и к юристу."""
-    ch.detail.pop("grammar", None)
-    ch.detail["technical_doubt"] = True
-    ch.materiality = "средняя"
-    ch.explanation = ""
-    ch.notes.append("Модель усомнилась, что правка только грамматическая или техническая: проверьте смысл условия")
+def note_technical_doubt(ch: Change) -> None:
+    """Модель усомнилась, что правка только техническая. Решает правило (по словарю): правка остаётся технической,
+    сомнение — заметкой в карточке (решение владельца, 2026-10-24)."""
+    ch.notes.append("Модель усомнилась, что правка только грамматическая или техническая; по правилу и словарю — "
+                    "техническая. При желании проверьте смысл условия")
 
 
 def mark_accepted_from_base(ch: Change) -> None:

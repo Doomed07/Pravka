@@ -28,6 +28,7 @@ type ReviewsService interface {
 	Precedents(ctx context.Context, userID, id int) ([]core_domain.Precedent, error)
 	LawHints(ctx context.Context, userID, id int) ([]core_domain.LawHint, error)
 	Wordings(ctx context.Context, userID, id int) ([]core_domain.Wording, error)
+	Summary(ctx context.Context, userID, id int) (core_domain.RoundSummary, error)
 	Answer(ctx context.Context, userID, id int, author string) (engine.AnswerResult, error)
 }
 
@@ -76,6 +77,11 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 			Method: http.MethodGet, 
 			Path: "/reviews/{id}/changes", 
 			Handler: h.Changes, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/summary", 
+			Handler: h.Summary, 
 			Middlewares: auth},
 		{
 			Method: http.MethodGet, 

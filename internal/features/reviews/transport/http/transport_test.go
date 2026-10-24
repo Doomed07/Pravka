@@ -100,6 +100,14 @@ func (f *fakeService) Wordings(_ context.Context, userID, _ int) ([]core_domain.
 	return []core_domain.Wording{{ChangeID: "E002", ReviewID: 9, TheirsName: "Поставка_2025.docx", Clause: "3.1",
 		Text: "Поставщик поставляет Товар в течение 20 дней."}}, nil
 }
+func (f *fakeService) Summary(_ context.Context, userID, _ int) (core_domain.RoundSummary, error) {
+	if userID != 1 {
+		return core_domain.RoundSummary{}, core_errors.ErrNotFound
+	}
+	return core_domain.RoundSummary{Technical: 2, Topics: []core_domain.RoundTopic{{Topic: "порядок и сроки оплаты",
+		Verdicts: map[string]int{core_domain.VerdictReject: 1}, Silent: 1, Items: []core_domain.RoundItem{{ChangeID: "E003",
+			Clause: "2.3", Kind: "replace", Verdict: core_domain.VerdictReject, Silent: true, Before: "10 дней", After: "30 дней"}}}}}, nil
+}
 func (f *fakeService) Answer(_ context.Context, userID, _ int, author string) (engine.AnswerResult, error) {
 	if userID != 1 {
 		return engine.AnswerResult{}, core_errors.ErrNotFound
@@ -263,6 +271,11 @@ func TestChoicesAndAnswer(t *testing.T) {
 		!strings.Contains(rec.Body.String(), `"review_id":9`) || !strings.Contains(rec.Body.String(), `"clause":"3.1"`) {
 		t.Fatalf("wordings: %d %s", rec.Code, rec.Body.String())
 	}
+	if rec := do(1, http.MethodGet, "/reviews/5/summary", ""); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"technical":2`) || !strings.Contains(rec.Body.String(), `"verdicts":{"reject":1}`) ||
+		!strings.Contains(rec.Body.String(), `"change_id":"E003"`) || !strings.Contains(rec.Body.String(), `"silent":true`) {
+		t.Fatalf("summary: %d %s", rec.Code, rec.Body.String())
+	}
 	rec := do(1, http.MethodPost, "/reviews/5/answer", `{"author":"Иванова А."}`)
 	if rec.Code != http.StatusOK || rec.Body.String() != "PKanswer" || svc.author != "Иванова А." ||
 		!strings.Contains(rec.Header().Get("Content-Disposition"), "pravki_answer_5.docx") || rec.Header().Get("X-Pravki-reject") != "2" ||
@@ -276,6 +289,7 @@ func TestChoicesAndAnswer(t *testing.T) {
 		{http.MethodGet, "/reviews/5/precedents", ""},
 		{http.MethodGet, "/reviews/5/law", ""},
 		{http.MethodGet, "/reviews/5/wordings", ""},
+		{http.MethodGet, "/reviews/5/summary", ""},
 	} {
 		if rec := do(2, c.method, c.path, c.body); rec.Code != http.StatusNotFound {
 			t.Errorf("someone else's %s %s: %d, want 404", c.method, c.path, rec.Code)

@@ -1,4 +1,6 @@
 lxml>=5
+pymorphy3==2.0.6
+pymorphy3-dicts-ru==2.4.417150.4580142
 openpyxl>=3.1
 pyyaml>=6
 pytest>=8

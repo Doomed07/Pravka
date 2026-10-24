@@ -102,6 +102,8 @@ export const reviews = {
   get: (id) => api('/reviews/' + id),
   document: (id) => api('/reviews/' + id + '/document'),
   changes: (id) => api('/reviews/' + id + '/changes'),
+  // сводка раунда по темам (собирается из правок, без модели)
+  summary: (id) => api('/reviews/' + id + '/summary'),
   choices: (id) => api('/reviews/' + id + '/choices'),
   // «как решали раньше»: прошлые решения юриста по похожим правкам
   precedents: (id) => api('/reviews/' + id + '/precedents'),

@@ -8,6 +8,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from functools import lru_cache
+
+import pymorphy3
 
 from .model import Change
 from .textdiff import normalize, tokens
@@ -248,9 +251,49 @@ def _is_technical(change: Change) -> bool:
             return False
         if _sensitive(x) or _sensitive(y):  # «Заказчика» → «Заказчику» похоже на опечатку, но меняет, кому платят
             return False
-        if _stem_pair(x, y) and not (_agreeing(x) and _agreeing(y)):
-            return False  # другое окончание существительного: число или падеж («услуги» → «услуг»), не опечатка
+        if _stem_pair(x, y):
+            if not (_agreeing(x) and _agreeing(y)):
+                return False  # другое окончание существительного: число или падеж («услуги» → «услуг»), не опечатка
+            if _spelling(x, y) == "unknown":
+                return False
+        elif _spelling(x, y) not in ("fixed", "broken"):
+            return False  # два настоящих слова («предоставить» → «представить») или оба неизвестны — не опечатка
     return True
+
+
+@lru_cache(maxsize=1)
+def _morph() -> pymorphy3.MorphAnalyzer:
+    return pymorphy3.MorphAnalyzer()
+
+
+def _known(word: str) -> bool:
+    """Слово есть в словаре русского языка (pymorphy3, OpenCorpora; работает локально)."""
+    return _morph().word_is_known(word.lower())
+
+
+def _spelling(x: str, y: str) -> str:
+    """Что стало с написанием слова: «fixed» — ошибка исправлена, «broken» — ошибка внесена, «known» — оба слова
+    настоящие, «unknown» — словарь не знает ни одного (сокращения, названия, латиница)."""
+    kx, ky = _known(x), _known(y)
+    if kx and ky:
+        return "known"
+    if ky:
+        return "fixed"
+    if kx:
+        return "broken"
+    return "unknown"
+
+
+def spelling_error(change: Change) -> tuple[str, str] | None:
+    """Контрагент внёс ошибку в написание: первая пара слов «было» → «стало», где было настоящее слово, а стало
+    неизвестное словарю («собственность» → «собсвенность», «передаётся» → «передаеться»)."""
+    wb, wa = re.findall(r"\w+", normalize(change.before)), re.findall(r"\w+", normalize(change.after))
+    if len(wb) != len(wa):
+        return None
+    for x, y in zip(wb, wa):
+        if x.lower() != y.lower() and _spelling(x, y) == "broken":
+            return x, y
+    return None
 
 
 # Слова, у которых даже окончание меняет смысл условия: кто обязан, кому платят, вправе или обязан, «не».
@@ -306,6 +349,8 @@ def grammar_only(change: Change) -> bool:
             continue
         if not _stem_pair(x, y) or _sensitive(x) or _sensitive(y) or not (_agreeing(x) and _agreeing(y)):
             return False
+        if _spelling(x, y) == "unknown":
+            return False
     return True
 
 
@@ -314,9 +359,19 @@ TECH_NOTE = "Подозрительных трактовок условия с �
 
 def technical_explanation(change: Change) -> str:
     """Короткое пояснение к технической правке: что за правка и что смысл условия не меняется. Без ссылок на плейбук."""
+    err = change.detail.get("spelling_error")
+    if err:
+        return (f"Контрагент внёс ошибку в написание: «{err[0]}» → «{err[1]}» (такого слова нет в словаре). "
+                f"Смысл условия не меняется, но текст договора портится.")
     if change.detail.get("grammar"):
         return f"Грамматическая (стилистическая) правка: «{change.before}» → «{change.after}». {TECH_NOTE}"
     return f"Техническая правка: опечатка, знаки препинания, регистр или пробелы. {TECH_NOTE}"
+
+
+def _mark_spelling_error(change: Change) -> None:
+    err = spelling_error(change)
+    if err:
+        change.detail["spelling_error"] = list(err)
 
 
 def _raise(level: str, steps: int = 1) -> str:
@@ -370,10 +425,12 @@ def classify(change: Change) -> Change:
     if grammar_only(change):
         change.materiality = "техническая"
         change.detail["grammar"] = True
+        _mark_spelling_error(change)
         change.explanation = technical_explanation(change)
         return change
     if _is_technical(change):
         change.materiality = "техническая"
+        _mark_spelling_error(change)
         change.explanation = technical_explanation(change)
         return change
     level = base
