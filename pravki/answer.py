@@ -271,7 +271,8 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
             stats["edit"] += 1
         else:
             body = "".join(t for _, _, t in last)
-            writer.insert_after(last[-1][0], ("" if body.endswith(" ") else " ") + tail.strip(), last[-1][0])
+            glue = next((d.get("join_glue") for d in document or [] if d.get("index") == idx), False)
+            writer.insert_after(last[-1][0], ("" if glue or body.endswith(" ") else " ") + tail.strip(), last[-1][0])
         writer.delete_runs(runs)
         writer.mark_paragraph(rest, "del")
         max_id = writer.max_id

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from .compare import _align, label_policy, paired_views
 from .docx_reader import view_paragraphs
@@ -221,6 +222,21 @@ def _plain(p: dict) -> str:
     return "".join(s["t"] for s in p["segments"]).strip()
 
 
+_WORD = re.compile(r"[^\W\d_]+")
+
+
+def _mid_word(a: str, b: str, vocab: Counter) -> bool:
+    """Разрыв посреди слова («Орг» / «анизатор имеет…»): перенос по дефису либо целое слово есть в этом же договоре,
+    а его половин как отдельных слов нет. Слова «на» / «основании» так не склеиваются: обе половины — слова договора."""
+    if a.endswith("-") and b[:1].islower():
+        return True
+    left, right = _WORD.findall(a.lower()), _WORD.findall(b.lower())
+    if not left or not right or a[-1:].isalpha() is False:
+        return False
+    first, last = left[-1], right[0]
+    return vocab[first + last] > 0 and (vocab[first] <= 1 or vocab[last] <= 1)  # 1 — сам обрывок на этом месте
+
+
 def _heading(p: dict) -> bool:
     style = (p.get("style") or "").lower()
     return style.startswith("heading") or style.startswith("заголовок") or style == "title"
@@ -233,6 +249,7 @@ def mark_broken_paragraphs(out: list[dict]) -> int:
     буквы («…5 (пяти)» / «рабочих дней…») либо он короткий и заканчивается знаком конца предложения («…гл. 26.2-1» /
     «НК РФ.»). Склейка — исправление вёрстки, не смысла: на сайте она подсвечена, юрист может её отклонить."""
     n = 0
+    vocab = Counter(w for para in out for w in _WORD.findall(_plain(para).lower()))
     for p, q in zip(out, out[1:]):
         if p["index"] < 0 or q["index"] != p["index"] + 1 or p.get("table") or q.get("table"):
             continue
@@ -248,5 +265,7 @@ def mark_broken_paragraphs(out: list[dict]) -> int:
         short = len(a) >= 40 and len(b) <= MAX_TAIL and b[-1] in ".;" and same_kind
         if lower or short:
             p["join_next"] = True
+            if _mid_word(a, b, vocab):
+                p["join_glue"] = True  # слово разорвано границей абзаца: склеивать без пробела
             n += 1
     return n

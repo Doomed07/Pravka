@@ -498,7 +498,7 @@ function joinBroken(doc) {
     const q = doc[i + 1];
     const refused = CHOICES.get(joinKey(p.index))?.choice === 'reject';
     if (p.join_next && q && q.index === p.index + 1 && !refused) {
-      out.push({ ...p, joined: true, changes: [...p.changes, ...q.changes], segments: [...p.segments, { k: 'equal', t: ' ' }, ...q.segments.map((x) => ({ ...x, k: 'fixed' }))] });
+      out.push({ ...p, joined: true, changes: [...p.changes, ...q.changes], segments: [...p.segments, ...(p.join_glue ? [] : [{ k: 'equal', t: ' ' }]), ...q.segments.map((x) => ({ ...x, k: 'fixed' }))] });
       i++;
     } else out.push(p);
   }

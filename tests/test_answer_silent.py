@@ -254,3 +254,19 @@ def test_edit_of_a_joined_paragraph_changes_both_parts_and_keeps_numbering(tmp_p
     # а если склейку отклонили, правка относится только к первой части и вторая остаётся на месте
     stats2 = build_answer(src, str(tmp_path / "b.docx"), [], {"J000": {"choice": "reject"}}, AUTHOR, document)
     assert stats2["join"] == 0
+
+
+def test_word_broken_by_paragraph_is_joined_without_a_space(tmp_path):
+    """«Орг» / «анизатор имеет право…»: слово разорвано границей абзаца, склеивать без пробела. «на» / «основании» — это
+    два слова, между ними пробел."""
+    body = (p(r("2.5.1 Организатор обязан оказать услуги надлежащего качества.")) + p(r("2.5.3. Орг")) +
+            p(r("анизатор имеет право отказаться от исполнения Договора при условии соблюдения положений Договора.")) +
+            p(r("2.6 Исполнитель вправе действовать на")) + p(r("основании доверенности, выданной Заказчиком в срок.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    flags = {d["index"]: (d.get("join_next"), d.get("join_glue")) for d in document if d.get("join_next")}
+    assert flags == {1: (True, True), 3: (True, None)}
+    out = str(tmp_path / "a.docx")
+    assert build_answer(src, out, [], {}, AUTHOR, document)["join"] == 2
+    accepted = [normalize(t) for _, t in view_paragraphs(read_docx(out), "accepted", set()) if normalize(t)]
+    assert accepted[1].startswith("2.5.3. Организатор имеет право") and "на основании доверенности" in accepted[2]
