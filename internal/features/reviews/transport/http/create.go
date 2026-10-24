@@ -14,13 +14,6 @@ import (
 	"github.com/Doomed07/Pravka/internal/engine"
 )
 
-// RoleErrorDTO — ответ 422: юрист должен подтвердить роль и отправить договор ещё раз.
-type RoleErrorDTO struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
-	Role    string `json:"role"`
-}
-
 // maxForm — два docx по 30 МБ и поля формы.
 const maxForm = 2*core_domain.MaxUploadBytes + (1 << 20)
 

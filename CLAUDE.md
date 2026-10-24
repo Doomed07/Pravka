@@ -39,8 +39,8 @@
 * Тест не подгоняют под результат: сначала понять, ошибка в правиле, формулировке или движке.
 * Коммиты на русском, коротко: что и зачем.
 * Go — раскладка как в Bookshelf (`internal/features/<фича>/`): в `transport/http` — `transport.go` (интерфейс сервиса,
-  конструктор, `Routes`), `dto_common.go` (общие DTO и `…DTOFromDomain`) и файл на каждый обработчик со своими
-  Request/Response; в `service` — `service.go` (интерфейс хранилища, конструктор) и файл на каждый метод; в
+  конструктор, `Routes`), `dto_common.go` (все DTO ответов и `…DTOFromDomain`) и файл на каждый обработчик, в нём —
+  только сам обработчик и его Request; в `service` — `service.go` (интерфейс хранилища, конструктор) и файл на каждый метод; в
   `repository/postgres` — `repository.go`, `models.go` (модели строк и `…DomainFromModel`) и файл на каждый метод.
 
 ## Устройство

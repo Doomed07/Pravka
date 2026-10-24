@@ -34,3 +34,124 @@ func reviewsDTOFromDomain(revs []core_domain.ContractReview) []ReviewDTO {
 	}
 	return out
 }
+
+type PlaybookDTO struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+func playbookDTOFromDomain(p core_domain.Playbook) PlaybookDTO {
+	return PlaybookDTO{Key: p.Key, Name: p.Name, Role: p.Role}
+}
+
+func playbooksDTOFromDomain(list []core_domain.Playbook) []PlaybookDTO {
+	out := make([]PlaybookDTO, len(list))
+	for i, x := range list {
+		out[i] = playbookDTOFromDomain(x)
+	}
+	return out
+}
+
+type ChoiceDTO struct {
+	ChangeID string `json:"change_id"`
+	Choice   string `json:"choice"`
+	Text     string `json:"text"`
+}
+
+func choiceDTOFromDomain(c core_domain.ReviewChoice) ChoiceDTO {
+	return ChoiceDTO{ChangeID: c.ChangeID, Choice: c.Choice, Text: c.Text}
+}
+
+func choicesDTOFromDomain(list []core_domain.ReviewChoice) []ChoiceDTO {
+	out := make([]ChoiceDTO, len(list))
+	for i, x := range list {
+		out[i] = choiceDTOFromDomain(x)
+	}
+	return out
+}
+
+type PrecedentDTO struct {
+	ChangeID   string    `json:"change_id"`
+	ReviewID   int       `json:"review_id"`
+	PastChange string    `json:"past_change"`
+	TheirsName string    `json:"theirs_name"`
+	CreatedAt  time.Time `json:"created_at"`
+	Clause     string    `json:"clause"`
+	Topic      string    `json:"topic"`
+	Before     string    `json:"before"`
+	After      string    `json:"after"`
+	Choice     string    `json:"choice"`
+	Text       string    `json:"text"`
+	Same       bool      `json:"same"`
+	Semantic   bool      `json:"semantic"`
+	Score      float64   `json:"score"`
+}
+
+func precedentDTOFromDomain(p core_domain.Precedent) PrecedentDTO {
+	return PrecedentDTO{ChangeID: p.ChangeID, ReviewID: p.ReviewID, PastChange: p.PastChangeID, TheirsName: p.TheirsName, CreatedAt: p.CreatedAt,
+		Clause: p.Clause, Topic: p.Topic, Before: p.Before, After: p.After, Choice: p.Choice, Text: p.Text, Same: p.Same, Semantic: p.Semantic,
+		Score: p.Score}
+}
+
+func precedentsDTOFromDomain(list []core_domain.Precedent) []PrecedentDTO {
+	out := make([]PrecedentDTO, len(list))
+	for i, x := range list {
+		out[i] = precedentDTOFromDomain(x)
+	}
+	return out
+}
+
+type LawHintDTO struct {
+	ChangeID string  `json:"change_id"`
+	Article  string  `json:"article"`
+	Point    string  `json:"point"`
+	Title    string  `json:"title"`
+	Chapter  string  `json:"chapter"`
+	Edited   string  `json:"edited"`
+	Text     string  `json:"text"`
+	Distance float64 `json:"distance"`
+}
+
+func lawHintDTOFromDomain(l core_domain.LawHint) LawHintDTO {
+	return LawHintDTO{ChangeID: l.ChangeID, Article: l.Article, Point: l.Point, Title: l.Title, Chapter: l.Chapter,
+		Edited: l.Edited, Text: l.Text, Distance: l.Distance}
+}
+
+func lawHintsDTOFromDomain(list []core_domain.LawHint) []LawHintDTO {
+	out := make([]LawHintDTO, len(list))
+	for i, x := range list {
+		out[i] = lawHintDTOFromDomain(x)
+	}
+	return out
+}
+
+type WordingDTO struct {
+	ChangeID   string    `json:"change_id"`
+	ReviewID   int       `json:"review_id"`
+	TheirsName string    `json:"theirs_name"`
+	CreatedAt  time.Time `json:"created_at"`
+	Clause     string    `json:"clause"`
+	Text       string    `json:"text"`
+	Distance   float64   `json:"distance"`
+}
+
+func wordingDTOFromDomain(w core_domain.Wording) WordingDTO {
+	return WordingDTO{ChangeID: w.ChangeID, ReviewID: w.ReviewID, TheirsName: w.TheirsName, CreatedAt: w.CreatedAt,
+		Clause: w.Clause, Text: w.Text, Distance: w.Distance}
+}
+
+func wordingsDTOFromDomain(list []core_domain.Wording) []WordingDTO {
+	out := make([]WordingDTO, len(list))
+	for i, x := range list {
+		out[i] = wordingDTOFromDomain(x)
+	}
+	return out
+}
+
+// RoleErrorDTO — ответ 422: юрист должен подтвердить роль и отправить договор ещё раз.
+type RoleErrorDTO struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+	Role    string `json:"role"`
+}
