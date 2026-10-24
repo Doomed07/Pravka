@@ -65,11 +65,36 @@ def test_model_confirms_grammar(tmp_path):
     assert ch.level == "accept" and ch.explanation.startswith("Грамматическая")
 
 
-def test_model_doubt_sends_to_lawyer(tmp_path):
+def test_model_doubt_is_a_note_rule_decides(tmp_path):
+    # решение владельца 2026-10-24: правка, грамматическая по правилу и словарю, принимается; сомнение модели — заметка
     for answer in ("НЕТ", "Возможно, смысл меняется"):
         ch = _review(tmp_path, answer)
-        assert ch.lawyer_decision_needed and ch.level == "review" and ch.materiality != "техническая", answer
-        assert "смысл может меняться" in ch.action, answer
+        assert ch.level == "accept" and not ch.lawyer_decision_needed and ch.materiality == "техническая", answer
+        assert any("Модель усомнилась" in n for n in ch.notes), answer
+
+
+def test_introduced_spelling_error_is_technical_but_rejected():
+    for before, after in [("собственность", "собсвенность"), ("разработке", "разроботке"),
+                          ("Помещение передаётся", "Помещение передаеться")]:
+        ch = _ch(before, after)
+        analyze([ch], PB)
+        assert ch.materiality == "техническая" and ch.level == "reject" and not ch.lawyer_decision_needed, (before, after)
+        assert "внёс ошибку" in ch.action and "нет в словаре" in ch.explanation, (before, after)
+
+
+def test_fixed_spelling_error_is_accepted():
+    for before, after in [("собсвенность", "собственность"), ("Прилжения", "Приложения"), ("передаеться", "передаётся")]:
+        ch = _ch(before, after)
+        analyze([ch], PB)
+        assert ch.materiality == "техническая" and ch.level == "accept" and "spelling_error" not in ch.detail, (before, after)
+
+
+def test_two_real_words_or_unknown_words_are_not_typos():
+    # «предоставить» и «представить» — разные слова; сокращения и латиница словарю неизвестны — решает юрист
+    for before, after in [("предоставить", "представить"), ("приложить", "предложить"), ("ЭДО", "ЭДОО"),
+                          ("Ltd", "Ltdd"), ("разроботке", "разроботки"),
+                          ("закрепленый", "закрепленого"), ("предоставленый", "предоставленая")]:
+        assert _ch(before, after).materiality != "техническая", (before, after)
 
 
 def test_role_word_and_noun_endings_are_not_typos():
