@@ -68,8 +68,14 @@ function header({ nav = '', navDetail = false }) {
     </header>`;
 }
 
-function footer() {
+// Нижнее меню на телефоне: те же ссылки, что в шапке, под большой палец (на широком экране скрыто стилями)
+function tabbar(nav, navDetail) {
+  return html`<nav class="tabbar" aria-label="Меню">${NAV.map((item) => html`<a href="${item.href}"${item.key === nav ? html` aria-current="${navDetail ? 'true' : 'page'}"` : ''}>${item.label}</a>`)}</nav>`;
+}
+
+function footer(nav, navDetail) {
   return html`
+    ${tabbar(nav, navDetail)}
     <footer class="site-footer">
       <div class="container site-footer__inner">
         <nav class="footer-nav" aria-label="Ссылки в подвале">
@@ -184,7 +190,7 @@ export function safeNext(raw, fallback) {
 // и, когда станет известно, кто вошёл, — ссылки аккаунта в шапку.
 export function renderLayout(options = {}) {
   mount($('#site-header'), header(options));
-  mount($('#site-footer'), footer());
+  mount($('#site-footer'), footer(options.nav, options.navDetail));
   const toggle = $('#theme-toggle');
   if (toggle) toggle.addEventListener('click', toggleTheme);
   paintToggle();

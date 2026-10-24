@@ -2511,3 +2511,171 @@ select.form__input {
   color: var(--silent-ink);
   text-decoration: line-through;
 }
+
+
+/* ---------- Телефон и планшет ---------- */
+
+.tabbar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --gutter: 16px;
+  }
+
+  body {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+
+  /* шапка в одну строку: логотип слева, учётная запись и тема справа; меню уходит вниз */
+  .site-header__inner {
+    flex-wrap: nowrap;
+    gap: 10px;
+    min-height: 56px;
+  }
+
+  .main-nav {
+    display: none;
+  }
+
+  .auth-nav {
+    margin-left: auto;
+  }
+
+  .tabbar {
+    position: fixed;
+    right: 12px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    left: 12px;
+    z-index: 35;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: var(--glass);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    backdrop-filter: saturate(180%) blur(18px);
+    box-shadow: var(--shadow);
+  }
+
+  .tabbar a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    border-radius: 16px;
+    color: var(--muted);
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .tabbar a[aria-current] {
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  .footer-nav {
+    display: none;
+  }
+
+  /* кнопка «Ответ контрагенту» над нижним меню */
+  .fab {
+    right: 16px;
+    bottom: calc(86px + env(safe-area-inset-bottom));
+  }
+
+  .drawer {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: calc(100vw - 16px);
+  }
+
+  /* крупные цели нажатия */
+  .button,
+  .button--small,
+  .decide__btn,
+  .form__input,
+  select,
+  input[type="text"],
+  input[type="search"] {
+    min-height: 46px;
+  }
+
+  .decide__btn {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .doc__pen {
+    min-height: 36px;
+    padding: 6px 14px;
+    font-size: 13px;
+  }
+
+  .doc__unjoin {
+    padding: 8px 4px;
+  }
+
+  .decide__text,
+  .doc__area,
+  textarea {
+    font-size: 16px; /* меньше 16px — iPhone приближает страницу при вводе */
+  }
+
+  h1,
+  .page-title {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .doc__pen {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  /* текст договора на всю ширину: отступы списков из Word на телефоне не нужны, иначе остаётся узкая полоска */
+  .doc {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .doc__text,
+  .doc__text[style] {
+    padding-right: 6px;
+    padding-left: 12px !important;
+    font-size: 16px;
+  }
+
+  .doc__hint {
+    padding: 8px 12px;
+  }
+
+  .doc__num {
+    font-size: 11px;
+  }
+}
+
+/* Планшет и телефон: «Править» не накладывается на текст, а стоит под абзацем справа */
+@media (max-width: 1024px), (hover: none) {
+  .doc__pen {
+    position: static;
+    display: block;
+    margin: 6px 0 0 auto;
+    opacity: 1;
+  }
+}
+
+.doc__pen {
+  font: 400 12px/1.2 var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
