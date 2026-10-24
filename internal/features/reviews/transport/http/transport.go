@@ -42,22 +42,86 @@ func NewReviewsHTTPHandler(service ReviewsService) *ReviewsHTTPHandler {
 func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 	auth := []core_http_middleware.Middleware{core_http_middleware.RequireAuth()}
 	return []core_http_server.Route{
-		{Method: http.MethodGet, Path: "/playbooks", Handler: h.Playbooks, Middlewares: auth},
-		{Method: http.MethodPost, Path: "/reviews", Handler: h.Create, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews", Handler: h.List, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}", Handler: h.Get, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/report", Handler: h.Report, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/xlsx", Handler: h.XLSX, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/changes", Handler: h.Changes, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/document", Handler: h.Document, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/docx", Handler: h.DOCX, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/choices", Handler: h.Choices, Middlewares: auth},
-		{Method: http.MethodPut, Path: "/reviews/{id}/choices/{change}", Handler: h.SaveChoice, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/precedents", Handler: h.Precedents, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/law", Handler: h.LawHints, Middlewares: auth},
-		{Method: http.MethodGet, Path: "/reviews/{id}/wordings", Handler: h.Wordings, Middlewares: auth},
-		{Method: http.MethodPost, Path: "/reviews/{id}/answer", Handler: h.Answer, Middlewares: auth},
-		{Method: http.MethodDelete, Path: "/reviews/{id}", Handler: h.Delete, Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/playbooks", 
+			Handler: h.Playbooks, 
+			Middlewares: auth},
+		{
+			Method: http.MethodPost, 
+			Path: "/reviews", 
+			Handler: h.Create, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews", 
+			Handler: h.List, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}", 
+			Handler: h.Get, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/report", 
+			Handler: h.Report, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/xlsx", 
+			Handler: h.XLSX, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/changes", 
+			Handler: h.Changes, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/document", 
+			Handler: h.Document, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/docx", 
+			Handler: h.DOCX, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/choices", 
+			Handler: h.Choices, 
+			Middlewares: auth},
+		{
+			Method: http.MethodPut, 
+			Path: "/reviews/{id}/choices/{change}", 
+			Handler: h.SaveChoice, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/precedents", 
+			Handler: h.Precedents, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/law", 
+			Handler: h.LawHints, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/wordings", 
+			Handler: h.Wordings, 
+			Middlewares: auth},
+		{
+			Method: http.MethodPost, 
+			Path: "/reviews/{id}/answer", 
+			Handler: h.Answer, 
+			Middlewares: auth},
+		{
+			Method: http.MethodDelete, 
+			Path: "/reviews/{id}", 
+			Handler: h.Delete, 
+			Middlewares: auth},
 	}
 }
 
