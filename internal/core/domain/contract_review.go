@@ -21,6 +21,9 @@ type ContractReview struct {
 	UserID    int
 	CreatedAt time.Time
 
+	ProjectID    int // договор (проект), раундом которого стал разбор
+	ProjectName  string
+	Round        int // номер раунда в проекте: порядок разборов по времени
 	TheirsName   string
 	BaseName     string
 	Playbook     string
@@ -55,6 +58,8 @@ type ReviewRequest struct {
 	OurAuthors  string
 	Company     string
 	ConfirmRole string
+	ProjectID   int    // 0 — новый договор; иначе очередной раунд существующего
+	ProjectName string // название нового договора; пусто — имя файла контрагента
 }
 
 // Validate проверяет запрос до обращения к движку: дешёвые ошибки ловим сразу.

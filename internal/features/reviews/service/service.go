@@ -31,6 +31,9 @@ type ReviewsRepository interface {
 	MarkIndexed(ctx context.Context, reviewID int) error
 	ListWordings(ctx context.Context, userID, reviewID int) ([]core_domain.Wording, error)
 	ListSemanticPrecedents(ctx context.Context, userID, reviewID int, skip []string) ([]core_domain.Precedent, error)
+	GetProject(ctx context.Context, userID, id int) (core_domain.ProjectSummary, error)
+	ListProjects(ctx context.Context, userID, limit int) ([]core_domain.ProjectSummary, error)
+	ListProjectRounds(ctx context.Context, userID, projectID int) ([]core_domain.ProjectRound, error)
 }
 
 type Engine interface {

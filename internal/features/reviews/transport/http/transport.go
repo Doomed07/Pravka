@@ -29,6 +29,9 @@ type ReviewsService interface {
 	LawHints(ctx context.Context, userID, id int) ([]core_domain.LawHint, error)
 	Wordings(ctx context.Context, userID, id int) ([]core_domain.Wording, error)
 	Summary(ctx context.Context, userID, id int) (core_domain.RoundSummary, error)
+	Projects(ctx context.Context, userID int) ([]core_domain.ProjectSummary, error)
+	Project(ctx context.Context, userID, id int) (core_domain.ProjectView, error)
+	Rounds(ctx context.Context, userID, id int) (core_domain.ReviewRounds, error)
 	Answer(ctx context.Context, userID, id int, author string) (engine.AnswerResult, error)
 }
 
@@ -117,6 +120,21 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 			Method: http.MethodGet, 
 			Path: "/reviews/{id}/wordings", 
 			Handler: h.Wordings, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/reviews/{id}/rounds", 
+			Handler: h.Rounds, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/projects", 
+			Handler: h.Projects, 
+			Middlewares: auth},
+		{
+			Method: http.MethodGet, 
+			Path: "/projects/{id}", 
+			Handler: h.Project, 
 			Middlewares: auth},
 		{
 			Method: http.MethodPost, 

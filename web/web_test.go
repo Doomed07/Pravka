@@ -22,6 +22,7 @@ func TestRoutes(t *testing.T) {
 	}{
 		{"home", http.MethodGet, "/", http.StatusOK, "text/html; charset=utf-8", "pages/home.js"},
 		{"review", http.MethodGet, "/reviews/12", http.StatusOK, "text/html; charset=utf-8", "pages/review.js"},
+		{"project", http.MethodGet, "/projects/3", http.StatusOK, "text/html; charset=utf-8", "pages/project.js"},
 		{"signup", http.MethodGet, "/signup", http.StatusOK, "text/html; charset=utf-8", "pages/signup.js"},
 		{"login", http.MethodGet, "/login?next=/reviews/3", http.StatusOK, "text/html; charset=utf-8", "pages/login.js"},
 		{"about", http.MethodGet, "/about", http.StatusOK, "text/html; charset=utf-8", "pages/static.js"},

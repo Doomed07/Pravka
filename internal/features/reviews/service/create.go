@@ -22,6 +22,23 @@ func (s *ReviewsService) Create(ctx context.Context, userID int, req core_domain
 		core_metrics.ReviewsFailed.WithLabelValues("invalid").Inc()
 		return core_domain.ContractReview{}, err
 	}
+	// очередной раунд существующего договора или новый договор: название и права проверяем до долгого разбора
+	var project *core_domain.ProjectSummary
+	projectName := ""
+	if req.ProjectID > 0 {
+		p, err := s.repo.GetProject(ctx, userID, req.ProjectID)
+		if err != nil {
+			core_metrics.ReviewsFailed.WithLabelValues("invalid").Inc()
+			return core_domain.ContractReview{}, err
+		}
+		project = &p
+	} else {
+		var err error
+		if projectName, err = core_domain.ProjectName(req.ProjectName, req.Theirs.Name); err != nil {
+			core_metrics.ReviewsFailed.WithLabelValues("invalid").Inc()
+			return core_domain.ContractReview{}, err
+		}
+	}
 	start := time.Now()
 	res, xlsx, err := s.engine.Review(ctx, req)
 	core_metrics.ReviewDuration.Observe(time.Since(start).Seconds())
@@ -37,7 +54,14 @@ func (s *ReviewsService) Create(ctx context.Context, userID int, req core_domain
 		core_metrics.ReviewsFailed.WithLabelValues(reason).Inc()
 		return core_domain.ContractReview{}, err
 	}
+	// роль по плейбуку должна совпадать с ролью прошлых раундов: договор один, и мы в нём одна сторона
+	if project != nil && project.OurRole != "" && res.OurRole != "" && project.OurRole != res.OurRole {
+		core_metrics.ReviewsFailed.WithLabelValues("invalid").Inc()
+		return core_domain.ContractReview{}, fmt.Errorf("в договоре «%s» прошлые раунды разобраны за роль «%s», а выбранный плейбук — за «%s»: %w",
+			project.Name, project.OurRole, res.OurRole, core_errors.ErrInvalidArgument)
+	}
 	rev := core_domain.ContractReview{
+		ProjectID: req.ProjectID, ProjectName: projectName,
 		UserID: userID, TheirsName: req.Theirs.Name, Playbook: req.Playbook, PlaybookName: res.PlaybookName,
 		OurRole: res.OurRole, ContractType: res.ContractType, Side: res.Side, Counts: res.Counts, Warnings: res.Warnings,
 	}

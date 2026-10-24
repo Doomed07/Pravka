@@ -9,6 +9,9 @@ import (
 type ReviewDTO struct {
 	ID           int            `json:"id"`
 	CreatedAt    time.Time      `json:"created_at"`
+	ProjectID    int            `json:"project_id"`
+	ProjectName  string         `json:"project_name"`
+	Round        int            `json:"round"`
 	TheirsName   string         `json:"theirs_name"`
 	BaseName     string         `json:"base_name"`
 	Playbook     string         `json:"playbook"`
@@ -23,7 +26,8 @@ func reviewDTOFromDomain(r core_domain.ContractReview) ReviewDTO {
 	if r.Warnings == nil {
 		r.Warnings = []string{}
 	}
-	return ReviewDTO{ID: r.ID, CreatedAt: r.CreatedAt, TheirsName: r.TheirsName, BaseName: r.BaseName, Playbook: r.Playbook,
+	return ReviewDTO{ID: r.ID, CreatedAt: r.CreatedAt, ProjectID: r.ProjectID, ProjectName: r.ProjectName, Round: r.Round,
+		TheirsName: r.TheirsName, BaseName: r.BaseName, Playbook: r.Playbook,
 		PlaybookName: r.PlaybookName, OurRole: r.OurRole, Side: r.Side, Counts: r.Counts, Warnings: r.Warnings}
 }
 
@@ -192,6 +196,106 @@ func roundSummaryDTOFromDomain(s core_domain.RoundSummary) RoundSummaryDTO {
 			items[j] = roundItemDTOFromDomain(it)
 		}
 		out.Topics[i] = RoundTopicDTO{Topic: t.Topic, Verdicts: t.Verdicts, Silent: t.Silent, Deleted: t.Deleted, Items: items}
+	}
+	return out
+}
+
+type ProjectDTO struct {
+	ID           int       `json:"id"`
+	Name         string    `json:"name"`
+	CreatedAt    time.Time `json:"created_at"`
+	Rounds       int       `json:"rounds"`
+	LastReviewID int       `json:"last_review_id"`
+	LastAt       time.Time `json:"last_at"`
+	Playbook     string    `json:"playbook"`
+	PlaybookName string    `json:"playbook_name"`
+	OurRole      string    `json:"our_role"`
+	ContractType string    `json:"contract_type"`
+}
+
+func projectDTOFromDomain(p core_domain.ProjectSummary) ProjectDTO {
+	return ProjectDTO{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt, Rounds: p.Rounds, LastReviewID: p.LastReviewID,
+		LastAt: p.LastAt, Playbook: p.Playbook, PlaybookName: p.PlaybookName, OurRole: p.OurRole, ContractType: p.ContractType}
+}
+
+func projectsDTOFromDomain(list []core_domain.ProjectSummary) []ProjectDTO {
+	out := make([]ProjectDTO, len(list))
+	for i, p := range list {
+		out[i] = projectDTOFromDomain(p)
+	}
+	return out
+}
+
+type ProjectRoundDTO struct {
+	ReviewID   int       `json:"review_id"`
+	Round      int       `json:"round"`
+	CreatedAt  time.Time `json:"created_at"`
+	TheirsName string    `json:"theirs_name"`
+	BaseName   string    `json:"base_name"`
+	Total      int       `json:"total"`
+	New        int       `json:"new"`
+	Repeat     int       `json:"repeat"`
+	Returned   int       `json:"returned"`
+	Closed     int       `json:"closed"`
+}
+
+type ProjectViewDTO struct {
+	Project ProjectDTO        `json:"project"`
+	Rounds  []ProjectRoundDTO `json:"rounds"`
+}
+
+func projectViewDTOFromDomain(v core_domain.ProjectView) ProjectViewDTO {
+	out := ProjectViewDTO{Project: projectDTOFromDomain(v.Project), Rounds: make([]ProjectRoundDTO, len(v.Rounds))}
+	for i, r := range v.Rounds {
+		out.Rounds[i] = ProjectRoundDTO{ReviewID: r.ReviewID, Round: r.Round, CreatedAt: r.CreatedAt, TheirsName: r.TheirsName,
+			BaseName: r.BaseName, Total: r.Total, New: r.New, Repeat: r.Repeat, Returned: r.Returned, Closed: r.Closed}
+	}
+	return out
+}
+
+type RoundLinkDTO struct {
+	ChangeID     string `json:"change_id"`
+	Relation     string `json:"relation"`
+	Round        int    `json:"round"`
+	ReviewID     int    `json:"review_id"`
+	PastChangeID string `json:"past_change_id"`
+	PastBefore   string `json:"past_before"`
+	PastAfter    string `json:"past_after"`
+	Decision     string `json:"decision"`
+	DecisionText string `json:"decision_text"`
+}
+
+type RoundClosedDTO struct {
+	Round        int    `json:"round"`
+	ReviewID     int    `json:"review_id"`
+	ChangeID     string `json:"change_id"`
+	Clause       string `json:"clause"`
+	Topic        string `json:"topic"`
+	Before       string `json:"before"`
+	After        string `json:"after"`
+	Decision     string `json:"decision"`
+	DecisionText string `json:"decision_text"`
+}
+
+type ReviewRoundsDTO struct {
+	Project      ProjectDTO       `json:"project"`
+	Round        int              `json:"round"`
+	PrevReviewID int              `json:"prev_review_id"`
+	Links        []RoundLinkDTO   `json:"links"`
+	Closed       []RoundClosedDTO `json:"closed"`
+}
+
+func reviewRoundsDTOFromDomain(v core_domain.ReviewRounds) ReviewRoundsDTO {
+	out := ReviewRoundsDTO{Project: projectDTOFromDomain(v.Project), Round: v.Round, PrevReviewID: v.PrevReviewID,
+		Links: make([]RoundLinkDTO, len(v.Comparison.Links)), Closed: make([]RoundClosedDTO, len(v.Comparison.Closed))}
+	for i, l := range v.Comparison.Links {
+		out.Links[i] = RoundLinkDTO{ChangeID: l.ChangeID, Relation: l.Relation, Round: l.Round, ReviewID: l.ReviewID,
+			PastChangeID: l.PastChangeID, PastBefore: l.PastBefore, PastAfter: l.PastAfter, Decision: l.Decision,
+			DecisionText: l.DecisionText}
+	}
+	for i, c := range v.Comparison.Closed {
+		out.Closed[i] = RoundClosedDTO{Round: c.Round, ReviewID: c.ReviewID, ChangeID: c.ChangeID, Clause: c.Clause, Topic: c.Topic,
+			Before: c.Before, After: c.After, Decision: c.Decision, DecisionText: c.DecisionText}
 	}
 	return out
 }

@@ -41,6 +41,11 @@ func Routes() []core_http_server.Route {
 		},
 		{
 			Method:  http.MethodGet,
+			Path:    "/projects/{id}",
+			Handler: page("project.html", http.StatusOK),
+		},
+		{
+			Method:  http.MethodGet,
 			Path:    "/signup",
 			Handler: page("signup.html", http.StatusOK),
 		},

@@ -714,6 +714,55 @@ a:hover {
   gap: 8px;
 }
 
+.form__field[hidden] {
+  display: none;
+}
+
+/* Раунд договора: строка над сводкой и отметка в карточке правки */
+.round-bar {
+  display: grid;
+  gap: 8px;
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.round-bar__line {
+  font-size: 15px;
+}
+
+.round-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  font-size: 14px;
+}
+
+.round-bar__closed summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.round-mark {
+  margin: 4px 0;
+  padding: 4px 8px;
+  border-left: 3px solid var(--ink);
+  background: var(--line-soft);
+  font-size: 13px;
+}
+
+.round-mark--returned {
+  border-left-color: var(--accent);
+}
+
+.num--hot {
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
 /* Сводка раунда: строка на тему, раскрывается списком правок */
 .round {
   margin: 20px 0 28px;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
@@ -24,6 +25,10 @@ type fakeRepo struct {
 	files     []core_domain.ReviewFiles
 	listArg   [3]int
 	choices   []core_domain.ReviewChoice
+	project   core_domain.ProjectSummary // договор, который отдаёт GetProject; ID 0 — договора нет
+	rounds    []core_domain.ProjectRound
+	asked     [2]int // для кого и какой договор запрашивали
+	review    core_domain.ContractReview
 }
 
 func (f *fakeRepo) CreateReview(_ context.Context, rev core_domain.ContractReview, files core_domain.ReviewFiles) (core_domain.ContractReview, error) {
@@ -37,7 +42,7 @@ func (f *fakeRepo) ListReviews(_ context.Context, userID, limit, offset int) ([]
 	return nil, nil
 }
 func (f *fakeRepo) GetReview(context.Context, int, int) (core_domain.ContractReview, error) {
-	return core_domain.ContractReview{}, nil
+	return f.review, nil
 }
 func (f *fakeRepo) GetFile(_ context.Context, _, _ int, kind string) ([]byte, error) {
 	return []byte("file:" + kind), nil
@@ -91,6 +96,20 @@ func (f *fakeRepo) ListLawHints(context.Context, int, int) ([]core_domain.LawHin
 }
 func (f *fakeRepo) ListPrecedents(context.Context, int, int) ([]core_domain.Precedent, error) {
 	return []core_domain.Precedent{{ChangeID: "E001", Choice: "reject"}}, nil
+}
+
+func (f *fakeRepo) GetProject(_ context.Context, userID, id int) (core_domain.ProjectSummary, error) {
+	f.asked = [2]int{userID, id}
+	if f.project.ID == 0 || f.project.ID != id || f.project.UserID != userID {
+		return core_domain.ProjectSummary{}, core_errors.ErrNotFound
+	}
+	return f.project, nil
+}
+func (f *fakeRepo) ListProjects(context.Context, int, int) ([]core_domain.ProjectSummary, error) {
+	return []core_domain.ProjectSummary{f.project}, nil
+}
+func (f *fakeRepo) ListProjectRounds(context.Context, int, int) ([]core_domain.ProjectRound, error) {
+	return f.rounds, nil
 }
 
 type fakeEngine struct {
@@ -297,5 +316,138 @@ func TestIndexReview_ParagraphsAndChangesThenMarked(t *testing.T) {
 	repo2 := &fakeRepo{needIndex: true, document: []byte(doc)}
 	if _, err := NewReviewsService(repo2, &fakeEngine{noEmbed: true}).Wordings(context.Background(), 1, 7); err != nil || len(repo2.indexed) != 0 {
 		t.Fatalf("no model: err = %v, indexed = %v", err, repo2.indexed)
+	}
+}
+
+func TestCreate_NewProjectGetsNameFromEnteredOrFile(t *testing.T) {
+	repo := &fakeRepo{}
+	s := NewReviewsService(repo, &fakeEngine{})
+	if _, err := s.Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx}); err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.saved[0]; got.ProjectID != 0 || got.ProjectName != "Договор 03.04" {
+		t.Errorf("по умолчанию — имя файла без .docx: %+v", got)
+	}
+	if _, err := s.Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectName: "  Поставка   Омега "}); err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.saved[1]; got.ProjectName != "Поставка Омега" {
+		t.Errorf("введённое название: %+v", got)
+	}
+	eng := &fakeEngine{}
+	_, err := NewReviewsService(&fakeRepo{}, eng).Create(context.Background(), 7,
+		core_domain.ReviewRequest{Theirs: docx, ProjectName: strings.Repeat("я", 300)})
+	if !errors.Is(err, core_errors.ErrInvalidArgument) || eng.calls != 0 {
+		t.Errorf("слишком длинное название договора: err = %v, engine calls = %d", err, eng.calls)
+	}
+}
+
+func TestCreate_NextRoundOfProject(t *testing.T) {
+	proj := core_domain.ProjectSummary{Project: core_domain.Project{ID: 5, UserID: 7, Name: "Поставка Омега"}, Rounds: 1,
+		OurRole: "Заказчик"}
+	repo := &fakeRepo{project: proj}
+	eng := &fakeEngine{}
+	rev, err := NewReviewsService(repo, eng).Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.saved[0]; got.ProjectID != 5 || got.ProjectName != "" || rev.ProjectID != 5 {
+		t.Errorf("очередной раунд записывается в тот же договор: %+v", got)
+	}
+}
+
+func TestCreate_ProjectGuards(t *testing.T) {
+	proj := core_domain.ProjectSummary{Project: core_domain.Project{ID: 5, UserID: 7, Name: "Поставка Омега"}, OurRole: "Поставщик"}
+	// чужой или несуществующий договор — 404 до долгого разбора
+	repo, eng := &fakeRepo{project: proj}, &fakeEngine{}
+	_, err := NewReviewsService(repo, eng).Create(context.Background(), 8, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5})
+	if !errors.Is(err, core_errors.ErrNotFound) || eng.calls != 0 || len(repo.saved) != 0 {
+		t.Fatalf("чужой договор: err = %v, engine calls = %d, saved = %d", err, eng.calls, len(repo.saved))
+	}
+	// плейбук за другую роль, чем в прошлых раундах (движок вернул «Заказчик»), — не сохраняем
+	repo = &fakeRepo{project: proj}
+	_, err = NewReviewsService(repo, &fakeEngine{}).Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5})
+	if !errors.Is(err, core_errors.ErrInvalidArgument) || len(repo.saved) != 0 {
+		t.Fatalf("другая роль: err = %v, saved = %d", err, len(repo.saved))
+	}
+	for _, want := range []string{"Поставка Омега", "Поставщик", "Заказчик"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в сообщении нет %q: %v", want, err)
+		}
+	}
+	// у прошлых раундов роли не было (разбор без плейбука) — проверять нечего
+	proj.OurRole = ""
+	repo = &fakeRepo{project: proj}
+	if _, err := NewReviewsService(repo, &fakeEngine{}).Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5}); err != nil {
+		t.Fatalf("роли в договоре нет: %v", err)
+	}
+}
+
+func roundRepo() *fakeRepo {
+	changes := func(fp, clause, after string) []byte {
+		return []byte(`[{"id":"E001","fingerprint":"` + fp + `","clause":"` + clause + `","topic":"порядок и сроки оплаты","kind":"replace",` +
+			`"before":"30%","after":"` + after + `","materiality":"высокая"}]`)
+	}
+	return &fakeRepo{
+		project: core_domain.ProjectSummary{Project: core_domain.Project{ID: 5, UserID: 7, Name: "Поставка"}, Rounds: 4},
+		review:  core_domain.ContractReview{ID: 12, UserID: 7, ProjectID: 5, Round: 2},
+		rounds: []core_domain.ProjectRound{
+			{ReviewID: 11, Round: 1, Changes: changes("a", "2.2", "10%"),
+				Choices: []core_domain.ReviewChoice{{ChangeID: "E001", Choice: core_domain.ChoiceReject}}},
+			{ReviewID: 12, Round: 2, Changes: changes("a", "2.2", "10%")},
+			{ReviewID: 13, Round: 3, Changes: changes("b", "2.2", "15%")},
+			{ReviewID: 14, Round: 4, Changes: changes("c", "9.9", "40%")}, // к пункту 2.2 контрагент больше не вернулся
+		},
+	}
+}
+
+func TestRounds_ComparesWithEarlierRoundsOnly(t *testing.T) {
+	v, err := NewReviewsService(roundRepo(), &fakeEngine{}).Rounds(context.Background(), 7, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Round != 2 || v.PrevReviewID != 11 || v.Project.Name != "Поставка" || len(v.Comparison.Links) != 1 {
+		t.Fatalf("rounds = %+v", v)
+	}
+	// раунд 3 (правка «15%») в сравнение раунда 2 не входит: правка раунда 2 — повтор раунда 1, решение «отклонить» видно
+	if l := v.Comparison.Links[0]; l.Relation != core_domain.RelationRepeat || l.ReviewID != 11 || l.Decision != core_domain.ChoiceReject {
+		t.Errorf("link = %+v", l)
+	}
+	later := roundRepo()
+	later.review.ID, later.review.Round = 14, 4
+	if v4, err := NewReviewsService(later, &fakeEngine{}).Rounds(context.Background(), 7, 14); err != nil || v4.PrevReviewID != 13 ||
+		len(v4.Comparison.Closed) != 1 || v4.Comparison.Closed[0].ReviewID != 13 {
+		t.Errorf("раунд 4: %+v, %v", v4, err)
+	}
+	first, err := NewReviewsService(func() *fakeRepo { r := roundRepo(); r.review.ID, r.review.Round = 11, 1; return r }(), &fakeEngine{}).
+		Rounds(context.Background(), 7, 11)
+	if err != nil || first.PrevReviewID != 0 || first.Comparison.Count(core_domain.RelationNew) != 1 {
+		t.Errorf("первый раунд: %+v, %v", first, err)
+	}
+}
+
+func TestProject_HistoryCountsPerRound(t *testing.T) {
+	v, err := NewReviewsService(roundRepo(), &fakeEngine{}).Project(context.Background(), 7, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Rounds) != 4 {
+		t.Fatalf("rounds = %+v", v.Rounds)
+	}
+	r1, r2, r3, r4 := v.Rounds[0], v.Rounds[1], v.Rounds[2], v.Rounds[3]
+	if r1.New != 1 || r1.Repeat != 0 || r1.Closed != 0 || r1.Total != 1 {
+		t.Errorf("раунд 1 = %+v", r1)
+	}
+	if r2.Repeat != 1 || r2.New != 0 || r2.Closed != 0 {
+		t.Errorf("раунд 2 = %+v", r2)
+	}
+	if r3.Returned != 1 || r3.Repeat != 0 || r3.Closed != 0 || r3.ReviewID != 13 {
+		t.Errorf("раунд 3 = %+v", r3)
+	}
+	if r4.New != 1 || r4.Closed != 1 || r4.Repeat != 0 || r4.Returned != 0 {
+		t.Errorf("раунд 4: правка раунда 3 снята, новая — по другому пункту: %+v", r4)
+	}
+	if _, err := NewReviewsService(roundRepo(), &fakeEngine{}).Project(context.Background(), 8, 5); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("чужой договор: %v", err)
 	}
 }

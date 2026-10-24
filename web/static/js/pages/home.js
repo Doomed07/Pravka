@@ -1,5 +1,5 @@
 // Главная: гостю — что это за сервис и вход; вошедшему — форма нового разбора и список прошлых.
-import { ApiError, reviews } from '../api.js';
+import { ApiError, projects, reviews } from '../api.js';
 import { $, currentUser, emptyState, html, mount, renderLayout, setTitle } from '../ui.js';
 
 renderLayout({ nav: 'home' });
@@ -50,7 +50,7 @@ function guestView() {
     </ol>`;
 }
 
-function formView(playbooks, memo) {
+function formView(playbooks, memo, contracts, chosen) {
   const options = playbooks.map((p) => html`<option value="${p.key}" data-role="${p.role}"${p.key === memo.playbook ? ' selected' : ''}>${p.name}</option>`);
   return html`
     <header class="page-header">
@@ -70,6 +70,19 @@ function formView(playbooks, memo) {
           <span class="drop__file" data-empty="Его ответ, .docx — перетащите или выберите">Его ответ, .docx — перетащите или выберите</span>
           <input id="f-theirs" name="theirs" type="file" accept=".docx" required>
         </label>
+      </div>
+      <div class="form__row">
+        <div class="form__field">
+          <label class="form__label" for="f-project">Договор</label>
+          <select class="form__input" id="f-project" name="project_id">
+            <option value="">Новый договор</option>
+            ${contracts.map((c) => html`<option value="${c.id}" data-playbook="${c.playbook}" data-role="${c.our_role}"${c.id === chosen ? ' selected' : ''}>Следующий раунд: ${c.name} (раундов: ${c.rounds})</option>`)}
+          </select>
+        </div>
+        <div class="form__field" id="f-project-name-field">
+          <label class="form__label" for="f-project-name">Название нового договора</label>
+          <input class="form__input" id="f-project-name" name="project_name" type="text" maxlength="255" placeholder="по умолчанию — имя файла контрагента">
+        </div>
       </div>
       <div class="form__field">
         <label class="form__label" for="f-playbook">Плейбук</label>
@@ -111,24 +124,28 @@ function listView(items) {
     <tr>
       <td>${fmtDate(r.created_at)}</td>
       <td><a href="/reviews/${r.id}">${r.theirs_name}</a></td>
+      <td>${r.project_name ? html`<a href="/projects/${r.project_id}">${r.project_name}</a> · раунд ${r.round}` : '—'}</td>
       <td>${r.playbook_name || '—'}</td>
       ${COUNTS.map(([k]) => html`<td class="num">${(r.counts || {})[k] ?? 0}</td>`)}
     </tr>`);
   return html`
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Когда</th><th>Файл контрагента</th><th>Плейбук</th>${COUNTS.map(([, l]) => html`<th class="num">${l}</th>`)}</tr></thead>
+        <thead><tr><th>Когда</th><th>Файл контрагента</th><th>Договор</th><th>Плейбук</th>${COUNTS.map(([, l]) => html`<th class="num">${l}</th>`)}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
 }
 
 async function loggedInView() {
-  const [playbooks, items] = await Promise.all([reviews.playbooks().catch(() => null), reviews.list(50, 0)]);
+  const [playbooks, items, contracts] = await Promise.all([reviews.playbooks().catch(() => null), reviews.list(50, 0),
+    projects.list().catch(() => [])]);
   const memo = memoLoad();
+  const asked = Number(new URLSearchParams(location.search).get('project')) || 0; // ссылка «Следующий раунд»
+  const chosen = (contracts || []).some((c) => c.id === asked) ? asked : 0;
   mount($('#home'), html`
     ${playbooks === null ? html`<p class="alert">Движок разбора не отвечает: список плейбуков не загружен. Разбор без плейбука всё равно можно запустить.</p>` : ''}
-    ${formView(playbooks || [], memo)}
+    ${formView(playbooks || [], memo, contracts || [], chosen)}
     <section class="section" aria-labelledby="list-title">
       <div class="section-heading"><h2 class="section-heading__title" id="list-title">Мои разборы</h2></div>
       ${listView(items || [])}
@@ -153,8 +170,27 @@ function wireDrops() {
   });
 }
 
+// Выбран существующий договор: плейбук берём из прошлого раунда и не даём поменять (роль у договора одна),
+// а поле названия нового договора прячем.
+function wireProject() {
+  const project = $('#f-project');
+  const playbook = $('#f-playbook');
+  const apply = () => {
+    const opt = project.selectedOptions[0];
+    const existing = !!project.value;
+    $('#f-project-name-field').hidden = existing;
+    if (existing && opt.dataset.playbook && [...playbook.options].some((o) => o.value === opt.dataset.playbook)) {
+      playbook.value = opt.dataset.playbook;
+    }
+    playbook.disabled = existing && !!opt.dataset.playbook;
+  };
+  project.addEventListener('change', apply);
+  apply();
+}
+
 function wireForm() {
   wireDrops();
+  wireProject();
   const form = $('#review-form');
   const alertBox = $('#review-alert');
   const submit = $('#review-submit');
@@ -178,13 +214,15 @@ function wireForm() {
     const select = $('#f-playbook');
     const role = select.selectedOptions[0] ? select.selectedOptions[0].dataset.role || '' : '';
     const confirm = $('#f-confirm').checked;
-    memoSave({ our_authors: $('#f-authors').value, company: $('#f-company').value, playbook: select.value, confirm });
+    memoSave({ our_authors: $('#f-authors').value, company: $('#f-company').value, playbook: $('#f-project').value ? memoLoad().playbook : select.value, confirm });
 
     const fd = new FormData();
     fd.append('theirs', theirs);
     const base = $('#f-base').files[0];
     if (base) fd.append('base', base);
     fd.append('playbook', select.value);
+    if ($('#f-project').value) fd.append('project_id', $('#f-project').value);
+    else fd.append('project_name', $('#f-project-name').value);
     fd.append('our_authors', $('#f-authors').value);
     fd.append('company', $('#f-company').value);
     if (confirmRole || (confirm && role)) fd.append('confirm_role', confirmRole || role);
@@ -201,7 +239,8 @@ function wireForm() {
         show(`Сторона договора не подтверждена: ${err.message} Если вы действительно «${err.data.role}», нажмите «Разобрать» ещё раз — роль будет подтверждена вручную.`);
         submit.textContent = `Подтвердить роль «${err.data.role}» и разобрать →`;
       } else if (status === 400) {
-        show(`Не удалось разобрать: ${err.message}`);
+        // текст ошибки проверки (неверный файл, роль не совпала с прошлыми раундами) — для юриста, без служебного хвоста
+        show(`Не удалось разобрать: ${(err.detail || '').replace(/: invalid argument$/, '') || err.message}`);
       } else if (status === 502) {
         show('Движок разбора не отвечает. Проверьте, что контейнер engine запущен, и попробуйте ещё раз.');
       } else if (status === 401) {
