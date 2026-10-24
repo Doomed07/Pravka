@@ -155,3 +155,43 @@ type RoleErrorDTO struct {
 	Message string `json:"message"`
 	Role    string `json:"role"`
 }
+
+type RoundItemDTO struct {
+	ChangeID string `json:"change_id"`
+	Clause   string `json:"clause"`
+	Kind     string `json:"kind"`
+	Verdict  string `json:"verdict"`
+	Silent   bool   `json:"silent"`
+	Before   string `json:"before"`
+	After    string `json:"after"`
+}
+
+type RoundTopicDTO struct {
+	Topic    string         `json:"topic"`
+	Verdicts map[string]int `json:"verdicts"`
+	Silent   int            `json:"silent"`
+	Deleted  int            `json:"deleted"`
+	Items    []RoundItemDTO `json:"items"`
+}
+
+type RoundSummaryDTO struct {
+	Topics    []RoundTopicDTO `json:"topics"`
+	Technical int             `json:"technical"`
+}
+
+func roundItemDTOFromDomain(it core_domain.RoundItem) RoundItemDTO {
+	return RoundItemDTO{ChangeID: it.ChangeID, Clause: it.Clause, Kind: it.Kind, Verdict: it.Verdict, Silent: it.Silent,
+		Before: it.Before, After: it.After}
+}
+
+func roundSummaryDTOFromDomain(s core_domain.RoundSummary) RoundSummaryDTO {
+	out := RoundSummaryDTO{Topics: make([]RoundTopicDTO, len(s.Topics)), Technical: s.Technical}
+	for i, t := range s.Topics {
+		items := make([]RoundItemDTO, len(t.Items))
+		for j, it := range t.Items {
+			items[j] = roundItemDTOFromDomain(it)
+		}
+		out.Topics[i] = RoundTopicDTO{Topic: t.Topic, Verdicts: t.Verdicts, Silent: t.Silent, Deleted: t.Deleted, Items: items}
+	}
+	return out
+}

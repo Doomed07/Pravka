@@ -65,6 +65,71 @@ function list(changes, order) {
     </nav>`;
 }
 
+// ---------- Сводка раунда ----------
+
+// Порядок и подписи выводов плейбука в строке темы: сначала то, что требует внимания.
+const ROUND_VERDICTS = [
+  ['reject', 'Отклонить', true],
+  ['lawyer', 'Решает юрист', true],
+  ['fallback', 'Уступка', false],
+  ['agreed', 'Согласовано', false],
+  ['accept', 'Принять', false],
+  ['none', 'Без вывода', false],
+];
+const VERDICT_LABEL = Object.fromEntries(ROUND_VERDICTS.map(([k, label]) => [k, label]));
+
+// Что сделал контрагент — только из текста правки, без пересказа.
+function roundWhat(it) {
+  switch (it.kind) {
+    case 'comment':
+      return `комментарий: «${it.after}»`;
+    case 'insert':
+      return `добавлено «${it.after}»`;
+    case 'delete':
+      return `удалено «${it.before}»`;
+    case 'para_insert':
+      return `новый пункт: «${it.after}»`;
+    case 'para_delete':
+      return `удалён пункт: «${it.before}»`;
+    default:
+      return `«${it.before || '—'}» → «${it.after || '—'}»`;
+  }
+}
+
+function roundCounts(t) {
+  const parts = ROUND_VERDICTS.filter(([k]) => t.verdicts[k]).map(([k, label, hot]) =>
+    html`<span class="round__count${hot ? ' round__count--hot' : ''}">${label} ${t.verdicts[k]}</span>`);
+  if (t.silent) parts.push(html`<span class="round__count round__count--silent">без отметки ${t.silent}</span>`);
+  if (t.deleted) parts.push(html`<span class="round__count">удалено ${t.deleted}</span>`);
+  return parts;
+}
+
+function roundView(sum) {
+  if (!sum || !sum.topics.length) return '';
+  return html`
+    <section class="round" aria-labelledby="round-title">
+      <div class="round__head">
+        <h2 class="round__title" id="round-title">Сводка раунда</h2>
+        <p class="round__meta">Тем: ${sum.topics.length}${sum.technical ? html` · технических правок: ${sum.technical}` : ''}</p>
+      </div>
+      ${sum.topics.map((t) => html`
+        <details class="round__topic">
+          <summary class="round__summary">
+            <span class="round__name">${t.topic}</span>
+            <span class="round__counts">${roundCounts(t)}</span>
+          </summary>
+          <ul class="round__items">
+            ${t.items.map((it) => html`
+              <li><button class="round__item" type="button" data-change="${it.change_id}">
+                <span class="round__where">${it.clause ? (/^\d/.test(it.clause) ? `п. ${it.clause}` : it.clause) : 'без пункта'}</span>
+                <span class="round__what">${roundWhat(it)}</span>
+                <span class="round__verdict">${VERDICT_LABEL[it.verdict] || ''}${it.silent ? ' · без отметки' : ''}</span>
+              </button></li>`)}
+          </ul>
+        </details>`)}
+    </section>`;
+}
+
 // ---------- Примечание к правке ----------
 
 function short(text, n = 90) {
@@ -505,11 +570,12 @@ function answerPanel(changes) {
     </section>`;
 }
 
-function unifiedView(r, doc, changes) {
+function unifiedView(r, doc, changes, sum) {
   const order = new Map(changes.map((c, i) => [c.id, i + 1]));
   const warnings = r.warnings || [];
   return html`
     ${head(r, true)}
+    ${roundView(sum)}
     <div class="rv">
       <aside class="rv-side">
         ${answerPanel(changes)}
@@ -644,7 +710,7 @@ function wireDecisions(id, changes) {
 }
 
 function wire(id) {
-  document.querySelectorAll('.rv-list__item').forEach((el) => {
+  document.querySelectorAll('.rv-list__item, .round__item').forEach((el) => {
     el.addEventListener('click', () => select(el.dataset.change, 'doc'));
   });
   document.querySelectorAll('.note, .doc__text[data-change]').forEach((el) => {
@@ -678,8 +744,9 @@ async function load() {
     return;
   }
   const id = pathID();
-  const [r, doc, changes, choices, precedents] = await Promise.all([reviews.get(id), reviews.document(id), reviews.changes(id),
-    reviews.choices(id).catch(() => []), reviews.precedents(id).catch(() => [])]);
+  const [r, doc, changes, choices, precedents, sum] = await Promise.all([reviews.get(id), reviews.document(id),
+    reviews.changes(id), reviews.choices(id).catch(() => []), reviews.precedents(id).catch(() => []),
+    reviews.summary(id).catch(() => null)]);
   PRECEDENTS.clear();
   for (const p of precedents || []) {
     if (!PRECEDENTS.has(p.change_id)) PRECEDENTS.set(p.change_id, []);
@@ -690,7 +757,7 @@ async function load() {
   setTitle(r.theirs_name);
   const box = $('#review');
   box.classList.add('container--wide');
-  const body = doc && doc.length ? unifiedView(r, doc, changes || []) : legacyView(r);
+  const body = doc && doc.length ? unifiedView(r, doc, changes || [], sum) : legacyView(r);
   mount(box, body);
   wire(id);
   if (doc && doc.length) {
