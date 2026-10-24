@@ -127,6 +127,8 @@ export const projects = {
   get: (id) => api('/projects/' + id),
   // перенести договор к другому контрагенту (папка договора на диске остаётся прежней)
   move: (id, counterpartyID) => api('/projects/' + id, { method: 'PATCH', body: { counterparty_id: counterpartyID } }),
+  // удалить договор со всеми раундами; файлы на диске остаются
+  remove: (id) => api('/projects/' + id, { method: 'DELETE' }),
 };
 
 // Контрагенты: у контрагента — договоры, у договора — раунды.

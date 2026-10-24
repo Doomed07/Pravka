@@ -603,12 +603,21 @@ func TestReviewsRepository_Projects(t *testing.T) {
 	if left != 1 {
 		t.Errorf("осталось договоров: %d, want 1", left)
 	}
-	// удаление договора уносит и его разборы (каскад)
-	if _, err := pool.Exec(ctx, `DELETE FROM pravkiapp.projects WHERE id = $1`, other.ProjectID); err != nil {
+	// удаление договора целиком: чужой не может, свой уходит вместе с раундами (каскад)
+	if err := repo.DeleteProject(ctx, u2, other.ProjectID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("чужой договор удалён или другая ошибка: %v", err)
+	}
+	if err := repo.DeleteProject(ctx, u1, other.ProjectID); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := repo.GetProject(ctx, u1, other.ProjectID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("договор остался: %v", err)
 	}
 	if _, err := repo.GetReview(ctx, u1, other.ID); !errors.Is(err, core_errors.ErrNotFound) {
 		t.Errorf("разбор удалённого договора остался: %v", err)
+	}
+	if err := repo.DeleteProject(ctx, u1, other.ProjectID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("повторное удаление: %v", err)
 	}
 }
 

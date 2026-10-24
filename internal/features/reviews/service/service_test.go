@@ -163,6 +163,7 @@ func (f *fakeRepo) ListCounterpartyProjects(context.Context, int, int) ([]core_d
 }
 func (f *fakeRepo) RenameCounterparty(context.Context, int, int, string, string) error { return nil }
 func (f *fakeRepo) MoveProject(context.Context, int, int, int) error                   { return nil }
+func (f *fakeRepo) DeleteProject(context.Context, int, int) error                      { return nil }
 
 type fakeEngine struct {
 	parties  core_domain.DetectedParties

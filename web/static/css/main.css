@@ -2033,7 +2033,8 @@ textarea:focus {
   font-weight: 700;
 }
 
-.cards .card {
+.cards .card-box .card,
+.cards > .card {
   animation: rise 0.5s var(--ease) backwards;
 }
 
@@ -2733,4 +2734,15 @@ select.form__input {
 /* Кнопка «Показать все» под таблицей разборов: не вплотную к таблице */
 .table-wrap + p {
   margin-top: 24px;
+}
+
+/* Карточка договора с кнопкой «Удалить» под ней */
+.card-box {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+}
+
+.card-box__del {
+  justify-self: start;
 }

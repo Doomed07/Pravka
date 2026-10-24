@@ -37,6 +37,7 @@ type ReviewsService interface {
 	Counterparty(ctx context.Context, userID, id int) (core_domain.CounterpartyView, error)
 	RenameCounterparty(ctx context.Context, userID, id int, name, inn string) error
 	MoveProject(ctx context.Context, userID, projectID, counterpartyID int) error
+	DeleteProject(ctx context.Context, userID, id int) error
 	DetectParties(ctx context.Context, theirs core_domain.UploadedFile, company string) (core_domain.DetectedParties, error)
 }
 
@@ -145,6 +146,11 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 			Method:      http.MethodPatch,
 			Path:        "/projects/{id}",
 			Handler:     h.MoveProject,
+			Middlewares: auth},
+		{
+			Method:      http.MethodDelete,
+			Path:        "/projects/{id}",
+			Handler:     h.DeleteProject,
 			Middlewares: auth},
 		{
 			Method:      http.MethodGet,

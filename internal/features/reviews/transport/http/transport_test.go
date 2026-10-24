@@ -28,6 +28,7 @@ type fakeService struct {
 	author    string
 	renamed   string
 	moved     [2]int
+	deleted   int
 	company   string
 }
 
@@ -154,6 +155,13 @@ func (f *fakeService) MoveProject(_ context.Context, userID, projectID, counterp
 		return core_errors.ErrNotFound
 	}
 	f.moved = [2]int{projectID, counterpartyID}
+	return nil
+}
+func (f *fakeService) DeleteProject(_ context.Context, userID, id int) error {
+	if userID != 1 || id == 99 {
+		return core_errors.ErrNotFound
+	}
+	f.deleted = id
 	return nil
 }
 func (f *fakeService) DetectParties(_ context.Context, theirs core_domain.UploadedFile, company string) (core_domain.DetectedParties, error) {
@@ -509,6 +517,12 @@ func TestUpdateCounterpartyAndMoveProject(t *testing.T) {
 	}
 	if code := send(http.MethodPatch, "/projects/3", `{"counterparty_id":2}`); code != http.StatusNoContent || svc.moved != [2]int{3, 2} {
 		t.Errorf("перенос договора: %d, %v", code, svc.moved)
+	}
+	if code := send(http.MethodDelete, "/projects/3", ""); code != http.StatusNoContent || svc.deleted != 3 {
+		t.Errorf("удаление договора: %d, %d", code, svc.deleted)
+	}
+	if code := send(http.MethodDelete, "/projects/99", ""); code != http.StatusNotFound {
+		t.Errorf("чужой договор: %d, want 404", code)
 	}
 }
 

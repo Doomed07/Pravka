@@ -43,6 +43,7 @@ type ReviewsRepository interface {
 	ListCounterpartyProjects(ctx context.Context, userID, counterpartyID int) ([]core_domain.ProjectSummary, error)
 	RenameCounterparty(ctx context.Context, userID, id int, name, inn string) error
 	MoveProject(ctx context.Context, userID, projectID, counterpartyID int) error
+	DeleteProject(ctx context.Context, userID, id int) error
 }
 
 type Engine interface {

@@ -1,21 +1,58 @@
 // Страница контрагента: его договоры. Договор открывает раунды.
-import { ApiError, counterparties } from '../api.js';
+import { ApiError, counterparties, projects } from '../api.js';
 import { $, currentUser, emptyState, errorView, html, mount, pathID, renderLayout, setTitle } from '../ui.js';
 import { fmtDate } from '../upload.js';
 
 renderLayout({ nav: 'home', navDetail: true });
 
-function contractCards(projects) {
-  if (!projects.length) return emptyState('У контрагента пока нет договоров.');
-  return html`<div class="cards">${projects.map((p) => html`
-    <a class="card" href="/projects/${p.id}">
-      <span class="card__title">${p.name}</span>
-      <span class="card__meta">${p.playbook_name || 'без плейбука'}${p.our_role ? ` · мы — ${p.our_role}` : ''}</span>
-      <span class="card__foot">
-        <span class="chip">раундов: ${p.rounds}</span>
-        <span class="card__date">${fmtDate(p.last_at)}</span>
-      </span>
-    </a>`)}</div>`;
+function contractCards(list) {
+  if (!list.length) return emptyState('У контрагента пока нет договоров.');
+  return html`<div class="cards" id="contracts">${list.map((p) => html`
+    <div class="card-box" data-project="${p.id}">
+      <a class="card" href="/projects/${p.id}">
+        <span class="card__title">${p.name}</span>
+        <span class="card__meta">${p.playbook_name || 'без плейбука'}${p.our_role ? ` · мы — ${p.our_role}` : ''}</span>
+        <span class="card__foot">
+          <span class="chip">раундов: ${p.rounds}</span>
+          <span class="card__date">${fmtDate(p.last_at)}</span>
+        </span>
+      </a>
+      <button class="button button--ghost button--small card-box__del" type="button">Удалить</button>
+    </div>`)}</div>`;
+}
+
+// Удаление договора в два нажатия, без всплывающих окон браузера: раунды уходят с сайта, файлы на диске остаются
+function wireDeletes() {
+  document.querySelectorAll('.card-box').forEach((box) => {
+    const button = box.querySelector('.card-box__del');
+    let armed = false;
+    let timer;
+    const reset = () => {
+      armed = false;
+      button.textContent = 'Удалить';
+      button.classList.remove('button--danger');
+    };
+    button.addEventListener('click', async () => {
+      if (!armed) {
+        armed = true;
+        button.textContent = 'Точно удалить? Нажмите ещё раз';
+        button.classList.add('button--danger');
+        clearTimeout(timer);
+        timer = setTimeout(reset, 5000); // передумали — кнопка возвращается сама
+        return;
+      }
+      button.disabled = true;
+      button.textContent = 'Удаляю…';
+      try {
+        await projects.remove(box.dataset.project);
+        location.reload();
+      } catch {
+        button.disabled = false;
+        reset();
+        button.textContent = 'Не удалось. Ещё раз?';
+      }
+    });
+  });
 }
 
 function renameForm(c) {
@@ -62,6 +99,8 @@ async function load() {
       <div class="section-heading"><h2 class="section-heading__title" id="contracts-title">Договоры</h2></div>
       ${contractCards(v.projects)}
     </section>`);
+
+  wireDeletes();
 
   const form = $('#rename-form');
   const status = $('#rename-status');
