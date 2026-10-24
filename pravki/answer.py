@@ -235,6 +235,21 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
             _apply(e, choice, author, date)
         stats[choice] += 1
 
+    # лишние пробелы внутри абзаца: серия сокращается до одного пробела нашей правкой. Абзацы, которые юрист правил сам, пропускаются: там
+    # пробелы убирает его правка; вторая часть склеенного абзаца удаляется целиком. Делается до правок и склейки: у абзаца
+    # с нашими вставками и удалениями серии пробелов уже не найти.
+    mark_extra_spaces(document or [])  # пометки считаются заново: работает и для разборов, сделанных до этой правки
+    for para in document or []:
+        idx = para.get("index", -1)
+        if not para.get("extra_spaces") or idx - 1 in joins or not 0 <= idx < len(paras):
+            continue
+        if (choices.get(f"P{idx:03d}") or {}).get("choice") == EDIT:
+            continue
+        writer = Writer(author, date, max_id)
+        if collapse_spaces(paras[idx], writer):
+            max_id = writer.max_id
+            stats["spaces"] += 1
+
     # правки текста абзацев, сделанные юристом на сайте: choices["P<номер абзаца>"] = {"choice": "edit", "text": ...}
     for key, sel in choices.items():
         if not (key.startswith("P") and sel.get("choice") == EDIT):
@@ -278,20 +293,6 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         writer.mark_paragraph(rest, "del")
         max_id = writer.max_id
         stats["join"] += 1
-
-    # лишние пробелы внутри абзаца: серия сокращается до одного пробела нашей правкой. Абзацы, которые юрист правил сам
-    # или которые склеены, пропускаются: там пробелы убирает их собственная правка.
-    mark_extra_spaces(document or [])  # пометки считаются заново: работает и для разборов, сделанных до этой правки
-    for para in document or []:
-        idx = para.get("index", -1)
-        if not para.get("extra_spaces") or idx in joins or idx - 1 in joins or not 0 <= idx < len(paras):
-            continue
-        if (choices.get(f"P{idx:03d}") or {}).get("choice") == EDIT:
-            continue
-        writer = Writer(author, date, max_id)
-        if collapse_spaces(paras[idx], writer):
-            max_id = writer.max_id
-            stats["spaces"] += 1
 
     # точки посреди предложения: флаг stray_dots поставлен при разборе (по нему сайт показывает то же место); юрист мог
     # отказаться (решение reject у D<абзац>) или править абзац сам

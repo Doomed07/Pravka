@@ -310,6 +310,7 @@ def test_stray_dot_inside_a_sentence_is_found_and_removed_in_word(tmp_path):
     from pravki.unified import find_stray_dots
     assert find_stray_dots("согласно ст. 5 и п. 2.1, стоимость 100 руб. и более. Новое предложение, т.е. так") == []
     assert find_stray_dots("услуги оказаны. б) поставка и Конец. Новое") == []
+    assert find_stray_dots("Кор. счёт: 30101810400000, Расч. счёт: 40702, Почт. адрес: Москва") == []  # реквизиты
     body = p(r("2.2 Участник имеет право.            отказаться от участия.")) + p(r("Срок: согласно ст. 5 и п. 2.1 договора."))
     src = str(make_docx(tmp_path / "t.docx", body))
     document = build_unified(None, read_docx(src), set(), [])
@@ -323,3 +324,17 @@ def test_stray_dot_inside_a_sentence_is_found_and_removed_in_word(tmp_path):
     assert "право." in [t for _, t in view_paragraphs(doc, "rejected", set()) if t.strip()][0]
     for decision in ({"D000": {"choice": "reject"}}, {"P000": {"choice": "edit", "text": "2.2 Участник имеет право. отказаться."}}):
         assert build_answer(src, str(tmp_path / "b.docx"), [], decision, AUTHOR, document)["dots"] == 0
+
+
+def test_extra_spaces_are_removed_in_a_joined_paragraph_too(tmp_path):
+    """В склеенном абзаце лишние пробелы первой части тоже убираются (раньше такой абзац пропускался)."""
+    body = (p(r("1.3 Стоимость услуг: четыреста семьдесят пять  тысяч рублей, НДС не облагается на основании гл. 26.2-1")) +
+            p(r("НК РФ.")) + p(r("Следующий пункт.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    assert document[0].get("join_next") and document[0].get("extra_spaces")
+    out = str(tmp_path / "a.docx")
+    stats = build_answer(src, out, [], {}, AUTHOR, document)
+    assert stats["join"] == 1 and stats["spaces"] == 1
+    accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip()]
+    assert accepted[0] == "1.3 Стоимость услуг: четыреста семьдесят пять тысяч рублей, НДС не облагается на основании гл. 26.2-1 НК РФ."
