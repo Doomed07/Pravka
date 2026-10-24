@@ -802,6 +802,52 @@ function wireDecisions(id, changes) {
   });
 }
 
+// Карточки на полях стоят рядом со своим абзацем, но не растягивают его: абзац идёт сплошным текстом, а карточки
+// раскладываются по высоте, не наезжая друг на друга (как комментарии в Word). На узком экране они остаются под абзацем.
+function layoutNotes() {
+  const doc = document.querySelector('.doc');
+  if (!doc) return;
+  const notes = [...doc.querySelectorAll('.doc__row > .doc__notes')];
+  if (!matchMedia('(min-width: 1181px)').matches) {
+    notes.forEach((n) => { n.style.top = n.style.left = n.style.width = ''; });
+    doc.style.minHeight = '';
+    return;
+  }
+  const box = doc.getBoundingClientRect();
+  let bottom = 0;
+  for (const n of notes) {
+    if (!n.firstElementChild) continue;
+    const t = n.previousElementSibling.getBoundingClientRect();
+    const top = Math.max(t.top - box.top, bottom + 10);
+    n.style.left = `${t.right - box.left + 20}px`;
+    n.style.width = `${box.right - t.right - 20}px`;
+    n.style.top = `${top}px`;
+    bottom = top + n.offsetHeight;
+  }
+  doc.style.minHeight = `${bottom}px`;
+}
+
+function wireNotesLayout() {
+  const doc = document.querySelector('.doc');
+  if (!doc) return;
+  let queued = false;
+  const again = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      layoutNotes();
+    });
+  };
+  // высота карточек меняется, когда догружаются подсказки, раскрываются списки и открывается поле встречной редакции
+  const watcher = new ResizeObserver(again);
+  watcher.observe(doc);
+  doc.querySelectorAll('.doc__row > .doc__notes').forEach((n) => watcher.observe(n));
+  matchMedia('(min-width: 1181px)').addEventListener('change', again);
+  document.fonts?.ready.then(again);
+  again();
+}
+
 function wire(id) {
   document.querySelectorAll('.rv-list__item, .round__item').forEach((el) => {
     el.addEventListener('click', () => select(el.dataset.change, 'doc'));
@@ -857,6 +903,7 @@ async function load() {
   mount(box, body);
   wire(id);
   if (doc && doc.length) {
+    wireNotesLayout();
     wireDecisions(id, changes || []);
     loadWordings(id);
     loadLaw(id);

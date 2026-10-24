@@ -2352,3 +2352,30 @@ select.form__input {
   max-height: 180px;
   overflow-y: auto;
 }
+
+/* Широкий экран: карточки на полях не задают высоту строки (раскладывает review.js: layoutNotes) */
+@media (min-width: 1181px) {
+  .doc {
+    position: relative;
+  }
+
+  .doc__row > .doc__notes {
+    position: absolute;
+    top: 0;
+    padding: 0;
+    z-index: 1;
+  }
+
+  .doc__row > .doc__notes:empty {
+    display: none;
+  }
+
+  /* карточка вышла из сетки: номер и текст сами держатся своих столбцов, иначе строки «съезжают» */
+  .doc__row > .doc__num {
+    grid-column: 1;
+  }
+
+  .doc__row > .doc__text {
+    grid-column: 2;
+  }
+}
