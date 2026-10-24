@@ -164,7 +164,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         els = [e for r in ch.get("revs") or [] for e in by_id.get(r, []) if e.getparent() is not None]
         if not els:
             # правка без отметки в рецензировании: текст контрагента становится нашей правкой (answer_silent)
-            silent = ch.get("source") in ("silent", "diff") and ch.get("rule_id") != "PARTY"
+            silent = ch.get("source") in ("silent", "diff", "clause") and ch.get("rule_id") != "PARTY"  # clause — положение первой версии
             if silent and (choice != "counter" or text.strip()):
                 writer = Writer(author, date, max_id)
                 done = apply_silent(paras, ch, choice, text, writer, document)
