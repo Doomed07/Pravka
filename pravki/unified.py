@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from .classify import _known
 from .compare import _align, label_policy, paired_views
 from .docx_reader import view_paragraphs
 from .extract import _net_zero
@@ -234,7 +235,12 @@ def _mid_word(a: str, b: str, vocab: Counter) -> bool:
     if not left or not right or a[-1:].isalpha() is False:
         return False
     first, last = left[-1], right[0]
-    return vocab[first + last] > 0 and (vocab[first] <= 1 or vocab[last] <= 1)  # 1 — сам обрывок на этом месте
+    if vocab[first + last] > 0 and (vocab[first] <= 1 or vocab[last] <= 1):  # 1 — сам обрывок на этом месте
+        return True
+    # слова нет в договоре — решает словарь русского языка (pymorphy3, локально): целое слово словарю знакомо, а
+    # обе половины настоящие слова не все сразу («Организ» / «атор»), либо словарь не знает ни одной половины («Орг» / «анизатор»)
+    k1, k2, kj = _known(first), _known(last), _known(first + last)
+    return (kj and not (k1 and k2)) or (not k1 and not k2)
 
 
 def _heading(p: dict) -> bool:

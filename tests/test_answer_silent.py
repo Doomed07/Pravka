@@ -270,3 +270,16 @@ def test_word_broken_by_paragraph_is_joined_without_a_space(tmp_path):
     assert build_answer(src, out, [], {}, AUTHOR, document)["join"] == 2
     accepted = [normalize(t) for _, t in view_paragraphs(read_docx(out), "accepted", set()) if normalize(t)]
     assert accepted[1].startswith("2.5.3. Организатор имеет право") and "на основании доверенности" in accepted[2]
+
+
+def test_word_broken_inside_is_glued_by_dictionary_when_the_contract_does_not_have_it_elsewhere(tmp_path):
+    """Целого слова в договоре больше нет: решает словарь русского языка. «Орг» / «анизатор» — словарь не знает ни одной
+    половины, «Исполни» / «тель» — знает только целое; «на» / «основании» — два настоящих слова, пробел остаётся."""
+    body = (p(r("2.5.3. Орг")) + p(r("анизатор имеет право отказаться от исполнения Договора при условии соблюдения положений.")) +
+            p(r("2.6 Права и обязанности сторон определены здесь, а также Исполни")) +
+            p(r("тель вправе отказаться от исполнения договора при условии оплаты.")) +
+            p(r("2.7 Подрядчик вправе действовать на")) + p(r("основании доверенности, выданной Заказчиком в срок.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    glue = {d["index"]: bool(d.get("join_glue")) for d in document if d.get("join_next")}
+    assert glue == {0: True, 2: True, 4: False}
