@@ -2715,3 +2715,17 @@ select.form__input {
   color: var(--muted);
   font-size: 13px;
 }
+
+.doc__comment {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--tint);
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.doc__comment p {
+  margin: 4px 0;
+  white-space: pre-wrap;
+}

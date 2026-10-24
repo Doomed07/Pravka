@@ -380,3 +380,26 @@ def test_joined_paragraph_is_deleted_with_both_parts(tmp_path):
     assert accepted == ["1.1 Первый пункт.", "1.3 Последний пункт."]
     rejected = [t for _, t in view_paragraphs(read_docx(out), "rejected", set()) if t.strip()]
     assert rejected == ["1.1 Первый пункт.", "1.2 Срок оплаты в течение 5 (пяти)", "рабочих дней со дня получения акта.", "1.3 Последний пункт."]
+
+
+def test_comment_with_reasons_can_accompany_a_deleted_paragraph(tmp_path):
+    """Обоснование удаления: комментарий юриста (C<абзац>) — примечание Word от его имени к абзацу; абзац при этом удалён
+    нашей правкой, а текст комментария не попадает в текст договора."""
+    import zipfile
+    from pravki.intake import clause_changes
+    body = p(r("1.1 Первый пункт.")) + p(r("1.2 Лишний пункт, который мы удаляем.")) + p(r("1.3 Последний пункт."))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    unified = str(tmp_path / "u.docx")
+    annotate_docx(src, unified, [], [])  # как в сервисе: в единой версии есть часть примечаний
+    document = build_unified(None, read_docx(src), set(), [])
+    out = str(tmp_path / "a.docx")
+    choices = {"X001": {"choice": "reject"}, "C001": {"choice": "edit", "text": "Пункт дублирует 1.1, поэтому исключаем."},
+               "C099": {"choice": "edit", "text": "нет такого абзаца"}}
+    stats = build_answer(unified, out, [], choices, AUTHOR, document)
+    assert stats["delete"] == 1 and stats["comment"] == 1 and stats["без отметки"] == 1
+    z = zipfile.ZipFile(out)
+    comments = z.read("word/comments.xml").decode()
+    assert "Пункт дублирует 1.1, поэтому исключаем." in comments and AUTHOR in comments
+    accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip() and "Правки" not in t]
+    assert accepted == ["1.1 Первый пункт.", "1.3 Последний пункт."]
+    assert z.read("word/document.xml").decode().count("commentReference") >= 1

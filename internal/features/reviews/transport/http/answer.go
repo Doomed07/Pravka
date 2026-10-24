@@ -42,7 +42,7 @@ func (h *ReviewsHTTPHandler) Answer(rw http.ResponseWriter, r *http.Request) {
 	rw.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"pravki_answer_%d.docx\"; filename*=UTF-8''%s", id, url.PathEscape(name)))
 	rw.Header().Set("Cache-Control", "no-store")
 	// счётчики применённых решений; «без отметки» — решения по правкам, которых в рецензировании Word нет
-	for k, header := range map[string]string{"accept": "accept", "reject": "reject", "counter": "counter", "reply": "reply", "edit": "edit",
+	for k, header := range map[string]string{"accept": "accept", "reject": "reject", "counter": "counter", "reply": "reply", "edit": "edit", "comment": "comment",
 		"без отметки": "untracked"} {
 		if v, ok := res.Stats[k]; ok {
 			rw.Header().Set("X-Pravki-"+header, fmt.Sprint(v))

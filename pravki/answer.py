@@ -163,7 +163,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         rels_root = _read_part(zin, "word/_rels/document.xml.rels")
         raw = {n: zin.read(n) for n in names}
 
-    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "spaces": 0, "dots": 0, "delete": 0, "add": 0, "без отметки": 0, "наших примечаний убрано": 0}
+    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "spaces": 0, "dots": 0, "delete": 0, "add": 0, "comment": 0, "без отметки": 0, "наших примечаний убрано": 0}
     stats["наших примечаний убрано"] = _strip_annotations(doc_root, comments_root)
     by_id: dict[str, list] = {}
     max_id = 0
@@ -332,6 +332,17 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         writer = Writer(author, date, max_id)
         stats["add"] += insert_paragraphs_after(paras[idx], sel["text"], writer)
         max_id = writer.max_id
+
+    # комментарии юриста к абзацам (C<абзац>): примечание Word от его имени, в том числе к удалённому абзацу — обоснование
+    for key, sel in sorted(choices.items()):
+        if not (key.startswith("C") and key[1:].isdigit() and sel.get("choice") == EDIT and (sel.get("text") or "").strip()):
+            continue
+        idx = int(key[1:])
+        if comments_root is not None and 0 <= idx < len(paras):
+            max_cid = _add_comment(comments_root, paras[idx], sel["text"].strip(), author, date, max_cid)
+            stats["comment"] += 1
+        else:
+            stats["без отметки"] += 1
 
     def ser(root) -> bytes:
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
