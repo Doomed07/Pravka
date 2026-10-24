@@ -210,6 +210,7 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
         target["comments"].append({"author": cm.author, "date": cm.date, "text": cm.text, "ours": cm.author in ours,
                                    "anchor": cm.anchor})
     mark_broken_paragraphs(out)
+    mark_extra_spaces(out)
     return out
 
 
@@ -274,4 +275,21 @@ def mark_broken_paragraphs(out: list[dict]) -> int:
             if _mid_word(a, b, vocab):
                 p["join_glue"] = True  # слово разорвано границей абзаца: склеивать без пробела
             n += 1
+    return n
+
+
+_SPACES = re.compile(" {2,}")
+
+
+def mark_extra_spaces(out: list[dict]) -> int:
+    """Лишние пробелы внутри абзаца («пять  тысяч», «право.            отказаться»): extra_spaces — сколько таких мест.
+    Только абзацы без правок в тексте: в Word лишние пробелы убираются нашей правкой, на сайте место подсвечено."""
+    n = 0
+    for p in out:
+        if p["index"] < 0 or any(x["k"] != "equal" for x in p["segments"]):
+            continue
+        found = len(_SPACES.findall("".join(x["t"] for x in p["segments"]).strip()))
+        if found:
+            p["extra_spaces"] = found
+            n += found
     return n

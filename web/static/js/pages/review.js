@@ -447,8 +447,15 @@ function styled(s, inner) {
   return out;
 }
 
+// Лишние пробелы («пять  тысяч»): в Word их убирает наша правка, на сайте место подсвечено.
+function gaps(s) {
+  const parts = s.t.split(/( {2,})/);
+  if (parts.length === 1) return s.t;
+  return parts.map((x, i) => (i % 2 ? html`<mark class="doc__gap" title="Лишние пробелы убраны">${' '}</mark>` : x));
+}
+
 function segment(s) {
-  if (s.k === 'equal') return styled(s, s.t);
+  if (s.k === 'equal') return styled(s, gaps(s));
   if (s.k === 'fixed') return html`<mark class="doc__fixed" title="Склеено: предложение было разорвано границей абзаца в файле контрагента">${styled(s, s.t)}</mark>`;
   // ins/del — настоящие теги: экранные дикторы и копирование текста понимают правку
   const tag = s.k.endsWith('ins') ? 'ins' : 'del';
@@ -483,7 +490,7 @@ function freshNotes(changes, order, shown) {
 
 // Правка текста абзаца юристом: решение «edit» с номером P<абзац> (P012), в тексте — абзац целиком.
 const editKey = (index) => 'P' + String(index).padStart(3, '0');
-const plain = (para) => para.segments.map((s) => s.t).join('');
+const plain = (para) => para.segments.map((s) => s.t).join('').replace(/ {2,}/g, ' ');
 // Править можно абзац без отметок в рецензировании: в абзаце с правкой контрагента отвечают решением по правке.
 const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal' || (para.joined && s.k === 'fixed'));
 

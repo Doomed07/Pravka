@@ -2491,3 +2491,14 @@ select.form__input {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* Убранные лишние пробелы */
+.doc__gap {
+  display: inline-block;
+  width: 0.6em;
+  height: 1em;
+  vertical-align: text-bottom;
+  border-radius: 3px;
+  background: var(--chip);
+  white-space: pre;
+}

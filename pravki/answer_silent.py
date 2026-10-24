@@ -371,3 +371,22 @@ def apply_edit(p, new_text: str, w: Writer) -> bool:
                 return False
             w.insert_after(nodes[-1][0], ins, nodes[-1][0])
     return True
+
+
+def collapse_spaces(p, w: Writer) -> int:
+    """Лишние пробелы в абзаце: из каждой серии пробелов остаётся первый, остальные удаляются нашей правкой. Абзац с
+    правками в тексте не трогается. Возвращает число серий."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in p.iter()):
+        return 0
+    _explode(p)
+    full = "".join(t for _, _, t in _nodes(p))
+    spans = [(m.start() + 1, m.end()) for m in re.finditer(" {2,}", full.rstrip()) if m.start() > 0 or full[:m.start()].strip()]
+    done = 0
+    for a, b in reversed(spans):
+        _split_at(p, b)
+        _split_at(p, a)
+        runs = _unique(_runs_in(p, a, b))
+        if runs:
+            w.delete_runs(runs)
+            done += 1
+    return done

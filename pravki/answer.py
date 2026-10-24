@@ -22,8 +22,9 @@ from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
 from .answer_replies import EXT_PART, REL_NS, Replies, with_w14
-from .answer_silent import Writer, _explode, _nodes, _unique, apply_edit, apply_silent, paragraphs
+from .answer_silent import Writer, _explode, _nodes, _unique, apply_edit, apply_silent, collapse_spaces, paragraphs
 from .model import ANNOTATOR
+from .unified import mark_extra_spaces
 
 TRACKED = {q("ins"), q("del"), q("moveFrom"), q("moveTo")}
 INSERTS = {q("ins"), q("moveTo")}
@@ -162,7 +163,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         rels_root = _read_part(zin, "word/_rels/document.xml.rels")
         raw = {n: zin.read(n) for n in names}
 
-    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "без отметки": 0, "наших примечаний убрано": 0}
+    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "spaces": 0, "без отметки": 0, "наших примечаний убрано": 0}
     stats["наших примечаний убрано"] = _strip_annotations(doc_root, comments_root)
     by_id: dict[str, list] = {}
     max_id = 0
@@ -277,6 +278,20 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         writer.mark_paragraph(rest, "del")
         max_id = writer.max_id
         stats["join"] += 1
+
+    # лишние пробелы внутри абзаца: серия сокращается до одного пробела нашей правкой. Абзацы, которые юрист правил сам
+    # или которые склеены, пропускаются: там пробелы убирает их собственная правка.
+    mark_extra_spaces(document or [])  # пометки считаются заново: работает и для разборов, сделанных до этой правки
+    for para in document or []:
+        idx = para.get("index", -1)
+        if not para.get("extra_spaces") or idx in joins or idx - 1 in joins or not 0 <= idx < len(paras):
+            continue
+        if (choices.get(f"P{idx:03d}") or {}).get("choice") == EDIT:
+            continue
+        writer = Writer(author, date, max_id)
+        if collapse_spaces(paras[idx], writer):
+            max_id = writer.max_id
+            stats["spaces"] += 1
 
     def ser(root) -> bytes:
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)

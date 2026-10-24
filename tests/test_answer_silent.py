@@ -283,3 +283,22 @@ def test_word_broken_inside_is_glued_by_dictionary_when_the_contract_does_not_ha
     document = build_unified(None, read_docx(src), set(), [])
     glue = {d["index"]: bool(d.get("join_glue")) for d in document if d.get("join_next")}
     assert glue == {0: True, 2: True, 4: False}
+
+
+def test_extra_spaces_are_removed_by_our_tracked_deletion(tmp_path):
+    """«пять  тысяч», «право.            отказаться»: из серии пробелов остаётся один, лишние удаляются нашей правкой в
+    рецензировании. После «принять все» текст без двойных пробелов; прежний текст получается «отклонить наше»."""
+    body = (p(r("Стоимость пять  тысяч рублей, оплата в тече"), r("ние 10 дней.  Исполнитель имеет право.            отказаться.")) +
+            p(r("Обычный абзац без лишних пробелов.")) + p(r("Правим сами  здесь.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    assert [d["index"] for d in document if d.get("extra_spaces")] == [0, 2]
+    out = str(tmp_path / "a.docx")
+    stats = build_answer(src, out, [], {"P002": {"choice": "edit", "text": "Правим сами здесь."}}, AUTHOR, document)
+    assert stats["spaces"] == 1 and stats["edit"] == 1  # абзац 2 правит юрист: пробелы убирает его правка
+    doc = read_docx(out)
+    accepted = [t for _, t in view_paragraphs(doc, "accepted", set()) if t.strip()]
+    assert accepted[0] == "Стоимость пять тысяч рублей, оплата в течение 10 дней. Исполнитель имеет право. отказаться."
+    assert accepted[2] == "Правим сами здесь."
+    rejected = [t for _, t in view_paragraphs(doc, "rejected", set()) if t.strip()]
+    assert "право.            отказаться" in rejected[0] and "пять  тысяч" in rejected[0]
