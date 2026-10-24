@@ -21,19 +21,22 @@ type ContractReview struct {
 	UserID    int
 	CreatedAt time.Time
 
-	ProjectID    int // договор (проект), раундом которого стал разбор
-	ProjectName  string
-	Round        int  // номер раунда в проекте: порядок разборов по времени
-	HasDocx      bool // есть единая версия в Word: только если файл контрагента — .docx
-	TheirsName   string
-	BaseName     string
-	Playbook     string
-	PlaybookName string
-	OurRole      string
-	ContractType string // тип договора по плейбуку: supply, services…
-	Side         string
-	Counts       map[string]int
-	Warnings     []string
+	ProjectID        int // договор (проект), раундом которого стал разбор
+	ProjectName      string
+	CounterpartyID   int
+	CounterpartyName string
+	ProjectDir       string // только при создании нового договора: путь его папки на диске
+	Round            int    // номер раунда в проекте: порядок разборов по времени
+	HasDocx          bool   // есть единая версия в Word: только если файл контрагента — .docx
+	TheirsName       string
+	BaseName         string
+	Playbook         string
+	PlaybookName     string
+	OurRole          string
+	ContractType     string // тип договора по плейбуку: supply, services…
+	Side             string
+	Counts           map[string]int
+	Warnings         []string
 }
 
 // ReviewFiles — тяжёлые результаты разбора.
@@ -61,6 +64,11 @@ type ReviewRequest struct {
 	ConfirmRole string
 	ProjectID   int    // 0 — новый договор; иначе очередной раунд существующего
 	ProjectName string // название нового договора; пусто — имя файла контрагента
+
+	// Контрагент нового договора: CounterpartyID — существующий; иначе по названию (ищется или создаётся); пусто — «Без контрагента».
+	CounterpartyID   int
+	CounterpartyName string
+	CounterpartyINN  string
 }
 
 // Validate проверяет запрос до обращения к движку: дешёвые ошибки ловим сразу.

@@ -22,6 +22,7 @@ import (
 	auth_transport_http "github.com/Doomed07/Pravka/internal/features/auth/transport/http"
 	law_repository_postgres "github.com/Doomed07/Pravka/internal/features/law/repository/postgres"
 	law_service "github.com/Doomed07/Pravka/internal/features/law/service"
+	reviews_filestore "github.com/Doomed07/Pravka/internal/features/reviews/filestore"
 	reviews_repository_postgres "github.com/Doomed07/Pravka/internal/features/reviews/repository/postgres"
 	reviews_service "github.com/Doomed07/Pravka/internal/features/reviews/service"
 	reviews_transport_http "github.com/Doomed07/Pravka/internal/features/reviews/transport/http"
@@ -75,7 +76,8 @@ func main() {
 	logger.Debug("initializing feature", zap.String("feature", "Reviews"))
 	engineClient := engine.NewClient(engine.NewConfigMust())
 	reviewsRepository := reviews_repository_postgres.NewReviewsRepository(pool)
-	reviewsService := reviews_service.NewReviewsService(reviewsRepository, engineClient)
+	reviewsService := reviews_service.NewReviewsService(reviewsRepository, engineClient,
+		reviews_service.WithFiles(reviews_filestore.New(os.Getenv("CONTRACTS_DIR")))) // пусто — файлы на диск не кладём
 	reviewsTransportHTTP := reviews_transport_http.NewReviewsHTTPHandler(reviewsService)
 	go reviewsService.RunIndexer(ctx, logger) // векторы разборов для подсказок: в фоне
 

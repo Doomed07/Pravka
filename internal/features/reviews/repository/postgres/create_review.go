@@ -12,6 +12,14 @@ import (
 )
 
 func (r *ReviewsRepository) CreateReview(ctx context.Context, rev core_domain.ContractReview, files core_domain.ReviewFiles) (core_domain.ContractReview, error) {
+	// новый договор без контрагента — к «Без контрагента»: у договора контрагент есть всегда
+	if rev.ProjectID == 0 && rev.CounterpartyID == 0 {
+		cp, err := r.EnsureCounterparty(ctx, rev.UserID, 0, core_domain.NoCounterparty, "")
+		if err != nil {
+			return core_domain.ContractReview{}, err
+		}
+		rev.CounterpartyID = cp.ID
+	}
 	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
 	defer cancel()
 
@@ -41,7 +49,8 @@ func (r *ReviewsRepository) CreateReview(ctx context.Context, rev core_domain.Co
 	// Новый договор (ProjectID == 0) создаётся тем же запросом: нет разбора без проекта и проекта без разбора.
 	query := `
 	WITH new_project AS (
-	    INSERT INTO pravkiapp.projects (user_id, name) SELECT $1, coalesce(nullif(btrim($16::text), ''), 'Договор') WHERE $17::int = 0 RETURNING id
+	    INSERT INTO pravkiapp.projects (user_id, name, counterparty_id, dir)
+	    SELECT $1, coalesce(nullif(btrim($16::text), ''), 'Договор'), $18::int, $19::text WHERE $17::int = 0 RETURNING id
 	)
 	INSERT INTO pravkiapp.reviews (user_id, theirs_name, base_name, playbook, playbook_name, our_role, contract_type, side,
 	                               counts, warnings, report_html, report_xlsx, changes, document, unified_docx, project_id)
@@ -50,7 +59,7 @@ func (r *ReviewsRepository) CreateReview(ctx context.Context, rev core_domain.Co
 	RETURNING id;`
 	row := r.pool.QueryRow(ctx, query, rev.UserID, rev.TheirsName, rev.BaseName, rev.Playbook, rev.PlaybookName, rev.OurRole,
 		rev.ContractType, rev.Side, counts, warnings, string(files.ReportHTML), files.ReportXLSX, changes, document, unified,
-		rev.ProjectName, rev.ProjectID)
+		rev.ProjectName, rev.ProjectID, rev.CounterpartyID, rev.ProjectDir)
 	var id int
 	if err := row.Scan(&id); err != nil {
 		var ce *core_postgres_pool.ConstraintError

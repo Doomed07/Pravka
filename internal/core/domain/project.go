@@ -14,10 +14,13 @@ const MaxProjectName = 255
 
 // Project — договор, по которому идут переговоры. Его разборы — раунды: номер раунда — порядок разборов по времени.
 type Project struct {
-	ID        int
-	UserID    int
-	Name      string
-	CreatedAt time.Time
+	ID               int
+	UserID           int
+	Name             string
+	CreatedAt        time.Time
+	CounterpartyID   int
+	CounterpartyName string
+	Dir              string // путь папки договора на диске («Контрагент/Договор»); пусто — файлы не сохраняются
 }
 
 // ProjectSummary — договор в списке: сколько раундов и за какую роль и по какому плейбуку разбирали последний.
@@ -32,13 +35,16 @@ type ProjectSummary struct {
 	ContractType string
 }
 
-// ProjectName — название нового договора: введённое юристом или, если пусто, имя файла контрагента без «.docx».
+// ProjectName — название нового договора: введённое юристом или, если пусто, имя файла контрагента без «.docx», «.odt» или «.pdf».
 func ProjectName(entered, theirsFile string) (string, error) {
 	name := strings.Join(strings.Fields(entered), " ")
 	if name == "" {
 		name = strings.Join(strings.Fields(theirsFile), " ")
-		if len(name) >= 5 && strings.EqualFold(name[len(name)-5:], ".docx") {
-			name = strings.TrimSpace(name[:len(name)-5])
+		for _, ext := range []string{".docx", ".odt", ".pdf"} {
+			if len(name) >= len(ext) && strings.EqualFold(name[len(name)-len(ext):], ext) {
+				name = strings.TrimSpace(name[:len(name)-len(ext)])
+				break
+			}
 		}
 	}
 	if name == "" {

@@ -10,6 +10,9 @@
   GET  /playbooks  — [{"key", "name", "role"}]
   POST /review     — multipart: theirs (docx), base (docx, необязательно), playbook, our_authors, company,
                      confirm_role. 200 — разбор; 422 — сторона договора не подтверждена; 400 — файл не разобран.
+  POST /parties    — multipart: theirs (docx/odt/pdf), company. 200 — {"parties": [{"role","name","inn"}],
+                     "counterparty": {"name","inn","role"} | null}: стороны из преамбулы и контрагент (сторона, не совпавшая
+                     с вашей компанией). Быстро: ни плейбука, ни модели.
   POST /answer     — multipart: unified (docx единой версии), changes (JSON), choices (JSON), author,
                      document (JSON единой версии, необязательно: нужен, чтобы вернуть удалённый без отметки абзац).
                      200 — ответ контрагенту в Word (base64) по решениям юриста.
@@ -39,8 +42,8 @@ from .annotate import annotate_docx
 from .answer import build_answer
 from .docx_reader import DocxError
 from .llm import Explainer, LLMError, OpenAICompatClient, is_local
-from .parties import PartiesError, RoleCheckError, SideConfig, profile_from_args
-from .readers import sniff_format
+from .parties import (PartiesError, RoleCheckError, SideConfig, detect_our_party, parties_of, profile_from_args)
+from .readers import read_document, sniff_format
 from .pipeline import DISCLAIMER, review_files
 from .playbook import PlaybookError, load_playbook
 from .report import render_html, render_xlsx
@@ -244,6 +247,41 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
     }
 
 
+def company_profile(company: str):
+    """Профиль нашей компании из строки «ИНН или наименование» (как в форме разбора)."""
+    inns = re.findall(r"\b\d{10}(?:\d{2})?\b", company)
+    names = [] if inns else ([company] if company else [])
+    return profile_from_args(names, inns)
+
+
+def _pretty(name: str) -> str:
+    """Разбор приводит кавычки к прямым; в названии контрагента возвращаем «ёлочки»."""
+    return re.sub(r'"([^"]+)"', r"«\1»", name)
+
+
+def detect_parties(fields: dict, files: dict) -> tuple[int, dict]:
+    """Стороны договора и контрагент по преамбуле. Контрагент — сторона, не совпавшая с нашей компанией;
+    нашу сторону определить не удалось (нет профиля, не найдена, найдена дважды) — контрагента нет (None),
+    юрист выбирает или вводит его сам."""
+    if "theirs" not in files:
+        return 400, {"error": "bad_request", "message": "Не передан файл договора (theirs)."}
+    with tempfile.TemporaryDirectory(prefix="pravki-") as d:
+        path = os.path.join(d, "theirs.docx")
+        with open(path, "wb") as f:
+            f.write(files["theirs"])
+        try:
+            doc = read_document(path)
+            parties = parties_of(doc, "rejected")
+        except (DocxError, PartiesError) as ex:
+            return 400, {"error": "bad_file", "message": str(ex)}
+    ours, _, _ = detect_our_party(parties, company_profile(fields.get("company", "")))
+    other = [p for p in parties if p is not ours]
+    counterparty = None
+    if ours is not None and len(other) == 1:
+        counterparty = {"name": _pretty(other[0].name), "inn": other[0].inn, "role": other[0].role}
+    return 200, {"parties": [{"role": p.role, "name": _pretty(p.name), "inn": p.inn} for p in parties], "counterparty": counterparty}
+
+
 def answer(fields: dict, files: dict) -> tuple[int, dict]:
     """Ответ контрагенту: единая версия (unified) + правки разбора (changes, JSON) + выбор юриста (choices, JSON)
     + автор наших правок (author). 200 — {"answer_docx": base64, "stats": {...}}."""
@@ -312,7 +350,7 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < length <= 1024 * 1024:
                 return self._json(413, {"error": "too_large", "message": "Запрос пустой или больше 1 МБ."})
             return self._json(*embed(self.rfile.read(length)))
-        if path not in ("/review", "/answer"):
+        if path not in ("/review", "/answer", "/parties"):
             return self._json(404, {"error": "not_found", "message": "Нет такого адреса."})
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > MAX_UPLOAD:
@@ -320,7 +358,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         try:
             fields, files = parse_multipart(self.headers.get("Content-Type", ""), body)
-            status, data = review(fields, files) if path == "/review" else answer(fields, files)
+            handler = {"/review": review, "/answer": answer, "/parties": detect_parties}[path]
+            status, data = handler(fields, files)
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             status, data = 500, {"error": "internal", "message": "Внутренняя ошибка движка."}

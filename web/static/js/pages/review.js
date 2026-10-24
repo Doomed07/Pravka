@@ -573,7 +573,7 @@ function head(r, hasDocx) {
   return html`
     <header class="rv-head">
       <div>
-        <p class="eyebrow">${r.project_name ? `${r.project_name} · раунд ${r.round}` : 'Единая версия договора'}</p>
+        <p class="eyebrow">${r.project_name ? html`<a href="/counterparties/${r.counterparty_id}">${r.counterparty_name}</a> › <a href="/projects/${r.project_id}">${r.project_name}</a> · раунд ${r.round}` : 'Единая версия договора'}</p>
         <h1 class="rv-head__title">${r.theirs_name}</h1>
         <p class="rv-head__meta">Наша редакция: ${r.base_name || 'не загружена'} · Плейбук: ${r.playbook_name || 'без плейбука'}${r.side ? html` · ${r.side}` : ''}</p>
       </div>

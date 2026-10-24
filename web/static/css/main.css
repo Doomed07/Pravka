@@ -2264,3 +2264,57 @@ select.form__input {
   background-size: 6px 6px, 6px 6px;
   background-repeat: no-repeat;
 }
+
+/* ---------- Контрагенты и первая версия договора ---------- */
+
+.drop--big {
+  min-height: 220px;
+  border-width: 2px;
+}
+
+.drop--big .drop__icon {
+  width: 60px;
+  height: 60px;
+  font-size: 30px;
+}
+
+.drop--big .drop__title {
+  font-size: 20px;
+}
+
+.drop--big .drop__file {
+  font-size: 15px;
+}
+
+.confirm {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: rise 0.45s var(--ease) backwards;
+}
+
+.confirm[hidden],
+.form__field[hidden] {
+  display: none;
+}
+
+.confirm__title {
+  font: 700 18px/1.3 var(--font-display);
+}
+
+.confirm .more {
+  background: var(--paper);
+}
+
+.eyebrow a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.eyebrow a:hover {
+  text-decoration: underline;
+}

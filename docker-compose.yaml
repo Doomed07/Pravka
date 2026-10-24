@@ -24,8 +24,10 @@ services:
       - ENGINE_URL=http://engine:8000
       - ENGINE_TOKEN=${ENGINE_TOKEN}
       - ENGINE_TIMEOUT=${ENGINE_TIMEOUT}
+      - CONTRACTS_DIR=/app/data/contracts  # папки «Контрагент / Договор / Раунд N» с файлами; на диске — ./data/contracts
     volumes:
       - ./out/logs:/app/out/logs
+      - ./data/contracts:/app/data/contracts
     ports:
       - "${APP_PORT:-127.0.0.1:8080}:8080"
     restart: unless-stopped

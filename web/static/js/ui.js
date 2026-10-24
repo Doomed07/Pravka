@@ -44,7 +44,7 @@ export const $ = (selector) => document.querySelector(selector);
 // ---------- Шапка и подвал ----------
 
 const NAV = [
-  { key: 'home', href: '/', label: 'Разборы' },
+  { key: 'home', href: '/', label: 'Контрагенты' },
   { key: 'about', href: '/about', label: 'О сервисе' },
 ];
 
@@ -73,7 +73,7 @@ function footer() {
     <footer class="site-footer">
       <div class="container site-footer__inner">
         <nav class="footer-nav" aria-label="Ссылки в подвале">
-          <a href="/">Разборы</a>
+          <a href="/">Контрагенты</a>
           <a href="/about">О сервисе</a>
         </nav>
         <p>Правки — разбор правок контрагента. Решения принимает плейбук, сомнения — юрист.</p>

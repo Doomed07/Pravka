@@ -12,7 +12,7 @@ import (
 
 func scanProjectSummary(row interface{ Scan(dest ...any) error }, m *ProjectSummaryModel) error {
 	return row.Scan(&m.ID, &m.UserID, &m.Name, &m.CreatedAt, &m.Rounds, &m.LastReviewID, &m.LastAt, &m.Playbook,
-		&m.PlaybookName, &m.OurRole, &m.ContractType)
+		&m.PlaybookName, &m.OurRole, &m.ContractType, &m.CounterpartyID, &m.CounterpartyName, &m.Dir)
 }
 
 // GetProject — договор пользователя. Чужой договор неотличим от несуществующего (404).

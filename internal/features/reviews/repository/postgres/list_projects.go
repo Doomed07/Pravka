@@ -12,8 +12,9 @@ const projectSummaryQuery = `
 SELECT p.id, p.user_id, p.name, p.created_at,
        (SELECT count(*) FROM pravkiapp.reviews r WHERE r.project_id = p.id),
        coalesce(l.id, 0), coalesce(l.created_at, p.created_at), coalesce(l.playbook, ''), coalesce(l.playbook_name, ''),
-       coalesce(l.our_role, ''), coalesce(l.contract_type, '')
+       coalesce(l.our_role, ''), coalesce(l.contract_type, ''), p.counterparty_id, c.name, p.dir
 FROM pravkiapp.projects p
+JOIN pravkiapp.counterparties c ON c.id = p.counterparty_id
 LEFT JOIN LATERAL (SELECT id, created_at, playbook, playbook_name, our_role, contract_type FROM pravkiapp.reviews r
                    WHERE r.project_id = p.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1) l ON true
 WHERE p.user_id = $1`

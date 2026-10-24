@@ -611,3 +611,138 @@ func TestReviewsRepository_Projects(t *testing.T) {
 		t.Errorf("разбор удалённого договора остался: %v", err)
 	}
 }
+
+func TestReviewsRepository_Counterparties(t *testing.T) {
+	if os.Getenv("PRAVKI_TEST_DB") == "" {
+		t.Skip("PRAVKI_TEST_DB не задан: нужна настоящая PostgreSQL")
+	}
+	ctx := context.Background()
+	pool, err := core_postgres_pgx.NewConnPool(core_postgres_pgx.NewConfigMust(), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	var u1, u2 int
+	for i, name := range []string{"repo_cp_a", "repo_cp_b"} {
+		_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE username = $1`, name)
+		var id int
+		if err := pool.QueryRow(ctx, `INSERT INTO pravkiapp.users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
+			name, name+"@example.com", "$2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234").Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			u1 = id
+		} else {
+			u2 = id
+		}
+	}
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE id IN ($1, $2)`, u1, u2) }()
+	repo := NewReviewsRepository(pool)
+	files := core_domain.ReviewFiles{ReportHTML: []byte("x"), ReportXLSX: []byte("PK"), Changes: []byte("[]")}
+
+	// контрагент находится по названию без учёта регистра, ИНН дописывается один раз
+	a, err := repo.EnsureCounterparty(ctx, u1, 0, "ООО «Ромашка»", "")
+	if err != nil || a.ID == 0 || a.Name != "ООО «Ромашка»" {
+		t.Fatalf("создан: %+v, %v", a, err)
+	}
+	again, err := repo.EnsureCounterparty(ctx, u1, 0, "ооо «ромашка»", "7702345678")
+	if err != nil || again.ID != a.ID || again.INN != "7702345678" || again.Name != "ООО «Ромашка»" {
+		t.Fatalf("тот же контрагент: %+v, %v", again, err)
+	}
+	if third, err := repo.EnsureCounterparty(ctx, u1, 0, "ООО «Ромашка»", "7700000000"); err != nil || third.INN != "7702345678" {
+		t.Fatalf("ИНН не перезаписывается: %+v, %v", third, err)
+	}
+	// по номеру — только свой
+	if _, err := repo.EnsureCounterparty(ctx, u2, a.ID, "", ""); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("чужой контрагент по номеру: %v", err)
+	}
+	// у другого юриста то же название — отдельный контрагент
+	other, err := repo.EnsureCounterparty(ctx, u2, 0, "ООО «Ромашка»", "")
+	if err != nil || other.ID == a.ID {
+		t.Fatalf("контрагент другого юриста: %+v, %v", other, err)
+	}
+
+	// папка: пустая, затем назначается; чужая занятая папка даёт суффикс
+	if a.Dir != "" {
+		t.Fatalf("папка до назначения: %q", a.Dir)
+	}
+	dir, err := repo.AssignCounterpartyDir(ctx, u1, a.ID, "ООО «Ромашка» tst")
+	if err != nil || dir != "ООО «Ромашка» tst" {
+		t.Fatalf("папка: %q, %v", dir, err)
+	}
+	if same, _ := repo.AssignCounterpartyDir(ctx, u1, a.ID, "другое"); same != dir {
+		t.Errorf("папка не меняется: %q", same)
+	}
+	if dir2, err := repo.AssignCounterpartyDir(ctx, u2, other.ID, "ооо «ромашка» TST"); err != nil || dir2 != "ооо «ромашка» TST 2" {
+		t.Errorf("папка с чужой тёзкой (без учёта регистра): %q, %v", dir2, err)
+	}
+
+	// договор под контрагентом, раунды считаются по контрагенту
+	r1, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "v1.docx", ProjectName: "Поставка",
+		CounterpartyID: a.ID, ProjectDir: dir + "/Поставка"}, files)
+	if err != nil || r1.CounterpartyID != a.ID || r1.CounterpartyName != "ООО «Ромашка»" {
+		t.Fatalf("первый раунд: %+v, %v", r1, err)
+	}
+	if _, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "v2.docx", ProjectID: r1.ProjectID}, files); err != nil {
+		t.Fatal(err)
+	}
+	p, err := repo.GetProject(ctx, u1, r1.ProjectID)
+	if err != nil || p.CounterpartyID != a.ID || p.CounterpartyName != "ООО «Ромашка»" || p.Dir != dir+"/Поставка" || p.Rounds != 2 {
+		t.Fatalf("договор: %+v, %v", p, err)
+	}
+	if taken, _ := repo.ProjectDirTaken(ctx, strings.ToUpper(dir+"/Поставка")); !taken {
+		t.Error("папка договора должна считаться занятой без учёта регистра")
+	}
+	cp, err := repo.GetCounterparty(ctx, u1, a.ID)
+	if err != nil || cp.Contracts != 1 || cp.Rounds != 2 || cp.LastAt.IsZero() {
+		t.Fatalf("итоги контрагента: %+v, %v", cp, err)
+	}
+	if _, err := repo.GetCounterparty(ctx, u2, a.ID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("чужой контрагент виден: %v", err)
+	}
+	projects, err := repo.ListCounterpartyProjects(ctx, u1, a.ID)
+	if err != nil || len(projects) != 1 || projects[0].ID != r1.ProjectID {
+		t.Fatalf("договоры контрагента: %+v, %v", projects, err)
+	}
+
+	// без контрагента — «Без контрагента»
+	bare, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "z.docx"}, files)
+	if err != nil || bare.CounterpartyName != core_domain.NoCounterparty {
+		t.Fatalf("без контрагента: %+v, %v", bare, err)
+	}
+	list, err := repo.ListCounterparties(ctx, u1, 10)
+	if err != nil || len(list) != 2 || list[0].ID != cp.ID && list[0].Name != core_domain.NoCounterparty {
+		t.Fatalf("список: %+v, %v", list, err)
+	}
+	if none, _ := repo.ListCounterparties(ctx, u2, 10); len(none) != 1 {
+		t.Errorf("контрагенты другого юриста: %+v", none)
+	}
+
+	// переименование: занятое название — конфликт, чужой — 404; папка не меняется
+	if err := repo.RenameCounterparty(ctx, u1, a.ID, core_domain.NoCounterparty, ""); !errors.Is(err, core_errors.ErrConflict) {
+		t.Errorf("занятое название: %v", err)
+	}
+	if err := repo.RenameCounterparty(ctx, u2, a.ID, "Чужое", ""); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("чужой контрагент: %v", err)
+	}
+	if err := repo.RenameCounterparty(ctx, u1, a.ID, "ООО «Ромашка-2»", "7702345678"); err != nil {
+		t.Fatal(err)
+	}
+	if renamed, _ := repo.GetCounterparty(ctx, u1, a.ID); renamed.Name != "ООО «Ромашка-2»" || renamed.Dir != dir {
+		t.Errorf("после переименования: %+v", renamed)
+	}
+
+	// перенос договора: оба свои; папка договора прежняя
+	if err := repo.MoveProject(ctx, u1, r1.ProjectID, bare.CounterpartyID); err != nil {
+		t.Fatal(err)
+	}
+	if moved, _ := repo.GetProject(ctx, u1, r1.ProjectID); moved.CounterpartyID != bare.CounterpartyID || moved.Dir != dir+"/Поставка" {
+		t.Errorf("после переноса: %+v", moved)
+	}
+	if err := repo.MoveProject(ctx, u1, r1.ProjectID, other.ID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("перенос к чужому контрагенту: %v", err)
+	}
+	if err := repo.MoveProject(ctx, u2, r1.ProjectID, other.ID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("перенос чужого договора: %v", err)
+	}
+}

@@ -46,6 +46,11 @@ func Routes() []core_http_server.Route {
 		},
 		{
 			Method:  http.MethodGet,
+			Path:    "/counterparties/{id}",
+			Handler: page("counterparty.html", http.StatusOK),
+		},
+		{
+			Method:  http.MethodGet,
 			Path:    "/signup",
 			Handler: page("signup.html", http.StatusOK),
 		},
