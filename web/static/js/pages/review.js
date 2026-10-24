@@ -57,7 +57,7 @@ function list(changes, order) {
   return html`
     <nav class="rv-list" aria-label="Правки по порядку">
       ${changes.map((ch) => html`
-        <button class="rv-list__item${isSilent(ch) ? ' rv-list__item--silent' : ''}" type="button" data-change="${ch.id}">
+        <button class="rv-list__item rv-list__item--${verdict(ch).mod}${isSilent(ch) ? ' rv-list__item--silent' : ''}" type="button" data-change="${ch.id}">
           <span class="rv-list__num">${num(order.get(ch.id))}</span>
           <span class="rv-list__title">${changeTitle(ch)}</span>
           <span class="rv-list__level">${verdict(ch).label}${isSilent(ch) ? silentLabel(ch) : ''}</span>
@@ -106,12 +106,13 @@ function roundCounts(t) {
 
 function roundView(sum) {
   if (!sum || !sum.topics.length) return '';
+  const hot = sum.topics.reduce((n, t) => n + (t.verdicts.lawyer || 0) + (t.verdicts.reject || 0), 0);
   return html`
-    <section class="round" aria-labelledby="round-title">
-      <div class="round__head">
+    <details class="round round--fold" aria-labelledby="round-title">
+      <summary class="round__head">
         <h2 class="round__title" id="round-title">Сводка раунда</h2>
-        <p class="round__meta">Тем: ${sum.topics.length}${sum.technical ? html` · технических правок: ${sum.technical}` : ''}</p>
-      </div>
+        <p class="round__meta">Тем: ${sum.topics.length}${hot ? html` · требуют внимания: ${hot}` : ''}${sum.technical ? html` · технических правок: ${sum.technical}` : ''}</p>
+      </summary>
       ${sum.topics.map((t) => html`
         <details class="round__topic">
           <summary class="round__summary">
@@ -127,7 +128,7 @@ function roundView(sum) {
               </button></li>`)}
           </ul>
         </details>`)}
-    </section>`;
+    </details>`;
 }
 
 // ---------- Примечание к правке ----------
@@ -375,7 +376,7 @@ function note(ch, order) {
       : '';
   const carried = (ch.flags || []).includes('из прошлого раунда');
   return html`
-    <article class="note${isSilent(ch) ? ' note--silent' : ''}" id="c-${ch.id}" data-change="${ch.id}">
+    <article class="note note--${v.mod}${isSilent(ch) ? ' note--silent' : ''}" id="c-${ch.id}" data-change="${ch.id}">
       ${noteBy(ch)}
       <div class="note__head">
         <span class="note__id">${num(order.get(ch.id))} · ${changeTitle(ch)}</span>
@@ -616,7 +617,12 @@ function noWordNote() {
 function answerPanel(changes) {
   const [done, total] = decidedCount(changes);
   return html`
-    <section class="answer" aria-labelledby="answer-title">
+    <button class="fab" type="button" id="answer-open" aria-controls="answer-drawer" aria-expanded="false">
+      Ответ контрагенту · <span id="fab-count">${done} из ${total}</span>
+    </button>
+    <div class="scrim" id="answer-scrim" hidden></div>
+    <section class="answer drawer" id="answer-drawer" aria-labelledby="answer-title" aria-hidden="true">
+      <button class="drawer__close" type="button" id="answer-close" aria-label="Закрыть">×</button>
       <h2 class="answer__title" id="answer-title">Ответ контрагенту</h2>
       <p class="answer__progress" id="answer-progress">Решено ${done} из ${total}</p>
       <label class="form__label" for="answer-author">Автор наших правок в Word</label>
@@ -635,7 +641,7 @@ function unifiedView(r, doc, changes, sum) {
     ${roundView(sum)}
     <div class="rv">
       <aside class="rv-side">
-        ${r.has_docx ? answerPanel(changes) : noWordNote()}
+        ${r.has_docx ? '' : noWordNote()}
         ${summary(changes)}
         ${changes.length ? list(changes, order) : html`<p class="empty-state">Правок не найдено.</p>`}
         <p class="legend">
@@ -648,7 +654,8 @@ function unifiedView(r, doc, changes, sum) {
         ${warnings.length ? html`<div class="alert"><strong>Обратите внимание</strong><ul class="alert__list">${warnings.map((w) => html`<li>${w}</li>`)}</ul></div>` : ''}
         ${documentView(doc, changes, order)}
       </div>
-    </div>`;
+    </div>
+    ${r.has_docx ? answerPanel(changes) : ''}`;
 }
 
 const TILES = [
@@ -701,11 +708,34 @@ async function saveChoice(id, box, choice, text) {
   }
 }
 
+// Панель «Ответ контрагенту» выезжает справа: по кнопке внизу, закрывается крестиком, Esc или щелчком вне панели.
+function wireDrawer() {
+  const open = $('#answer-open');
+  const drawer = $('#answer-drawer');
+  const scrim = $('#answer-scrim');
+  if (!open || !drawer) return;
+  const set = (on) => {
+    drawer.classList.toggle('is-open', on);
+    drawer.setAttribute('aria-hidden', String(!on));
+    open.setAttribute('aria-expanded', String(on));
+    scrim.hidden = !on;
+    if (on) $('#answer-author').focus();
+    else open.focus();
+  };
+  open.addEventListener('click', () => set(true));
+  $('#answer-close').addEventListener('click', () => set(false));
+  scrim.addEventListener('click', () => set(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && drawer.classList.contains('is-open')) set(false);
+  });
+}
+
 function wireDecisions(id, changes) {
   const progress = $('#answer-progress');
   const refresh = () => {
     const [done, total] = decidedCount(changes);
     setStatus(progress, `Решено ${done} из ${total}`);
+    setStatus($('#fab-count'), `${done} из ${total}`);
   };
   document.querySelectorAll('.decide').forEach((box) => {
     const text = box.querySelector('.decide__text');
@@ -736,6 +766,7 @@ function wireDecisions(id, changes) {
 
   wireUse(id, refresh);
 
+  wireDrawer();
   const build = $('#answer-build');
   const author = $('#answer-author');
   const status = $('#answer-status');

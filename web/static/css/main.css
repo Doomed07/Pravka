@@ -1839,7 +1839,7 @@ textarea:focus {
 #app > *,
 .page > *,
 .table tbody tr {
-  animation: rise 0.55s var(--ease) both;
+  animation: rise 0.55s var(--ease) backwards;
 }
 
 .page > :nth-child(2) { animation-delay: 0.05s; }
@@ -2034,9 +2034,211 @@ textarea:focus {
 }
 
 .cards .card {
-  animation: rise 0.5s var(--ease) both;
+  animation: rise 0.5s var(--ease) backwards;
 }
 
 .cards .card:nth-child(2) { animation-delay: 0.04s; }
 .cards .card:nth-child(3) { animation-delay: 0.08s; }
 .cards .card:nth-child(n+4) { animation-delay: 0.12s; }
+
+/* ---------- Страница разбора: карточки, выезжающая панель ответа ---------- */
+
+.round--fold {
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.round--fold > .round__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 14px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.round--fold > .round__head::-webkit-details-marker {
+  display: none;
+}
+
+.round--fold > .round__head::after {
+  content: "›";
+  order: 3;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 22px;
+  transition: transform 0.25s var(--ease);
+}
+
+.round--fold[open] > .round__head::after {
+  transform: rotate(90deg);
+}
+
+.round--fold > .round__topic {
+  margin: 0 18px;
+}
+
+.round--fold[open] {
+  padding-bottom: 12px;
+}
+
+.round-bar {
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.rv-sum {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 4px 14px;
+}
+
+.rv-sum__row:last-child {
+  border-bottom: 0;
+}
+
+/* список правок слева: цветная полоска по выводу плейбука */
+.rv-list__item {
+  border-radius: var(--radius-s);
+  border-left: 4px solid var(--line);
+  background: var(--surface);
+  transition: transform 0.2s var(--ease), border-color 0.2s, background-color 0.2s;
+}
+
+.rv-list__item:hover {
+  transform: translateX(3px);
+}
+
+.rv-list__item--reject { border-left-color: var(--accent-ink); }
+.rv-list__item--lawyer { border-left-color: var(--accent); }
+.rv-list__item--accept,
+.rv-list__item--agreed { border-left-color: var(--ok); }
+.rv-list__item--fallback { border-left-color: var(--muted); }
+
+/* карточки правок на полях: полоска слева и мягкие углы */
+.note {
+  padding: 14px 16px;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  transition: box-shadow 0.25s, border-color 0.2s;
+}
+
+.note--reject { border-left-color: var(--accent-ink); }
+.note--lawyer { border-left-color: var(--accent); }
+.note--accept,
+.note--agreed { border-left-color: var(--ok); }
+.note--fallback { border-left-color: var(--muted); }
+
+.note--silent {
+  border-top-color: var(--line);
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.note.is-current {
+  box-shadow: var(--shadow);
+  border-color: var(--accent);
+}
+
+.rv-list__item.is-current {
+  transform: translateX(3px);
+}
+
+/* кнопка «Ответ контрагенту» и выезжающая панель */
+.fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  padding: 14px 22px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: 800 15px/1.2 var(--font-sans);
+  box-shadow: 0 8px 24px rgba(228, 87, 46, 0.4);
+  cursor: pointer;
+  transition: transform 0.3s var(--spring), box-shadow 0.3s;
+}
+
+.fab:hover {
+  transform: translateY(-2px) scale(1.03);
+}
+
+.fab:active {
+  transform: scale(0.95);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: fade 0.25s var(--ease) both;
+}
+
+.scrim[hidden] {
+  display: none;
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.drawer {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 50;
+  align-content: start;
+  gap: 12px;
+  width: min(380px, calc(100vw - 24px));
+  padding: 24px 22px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--glass);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  box-shadow: var(--shadow);
+  transform: translateX(calc(100% + 24px));
+  visibility: hidden;
+  transition: transform 0.45s var(--ease), visibility 0s 0.45s;
+}
+
+.drawer.is-open {
+  transform: none;
+  visibility: visible;
+  transition: transform 0.45s var(--ease);
+}
+
+.drawer__close {
+  justify-self: end;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--line-soft);
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.3s var(--spring);
+}
+
+.drawer__close:hover {
+  transform: rotate(90deg);
+}
