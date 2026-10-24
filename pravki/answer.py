@@ -239,6 +239,8 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         if not (key.startswith("P") and sel.get("choice") == EDIT):
             continue
         idx = int(key[1:]) if key[1:].isdigit() else -1
+        if idx in joins:
+            continue  # склеенный абзац правится вместе со второй частью (ниже)
         writer = Writer(author, date, max_id)
         if 0 <= idx < len(paras) and (sel.get("text") or "").strip() and apply_edit(paras[idx], sel["text"], writer):
             stats["edit"] += 1
@@ -259,8 +261,17 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         if not last or not runs or not tail.strip():
             stats["без отметки"] += 1
             continue
-        body = "".join(t for _, _, t in last)
-        writer.insert_after(last[-1][0], ("" if body.endswith(" ") else " ") + tail.strip(), last[-1][0])
+        mine = choices.get(f"P{idx:03d}") or {}
+        if mine.get("choice") == EDIT and (mine.get("text") or "").strip():
+            # юрист правил склеенный абзац: новый текст целиком сравнивается с первой частью, всё, чего в ней нет
+            # (вторая часть с правками), вставляется в её конец; сама вторая часть удаляется
+            if not apply_edit(head, mine["text"], writer):
+                stats["без отметки"] += 1
+                continue
+            stats["edit"] += 1
+        else:
+            body = "".join(t for _, _, t in last)
+            writer.insert_after(last[-1][0], ("" if body.endswith(" ") else " ") + tail.strip(), last[-1][0])
         writer.delete_runs(runs)
         writer.mark_paragraph(rest, "del")
         max_id = writer.max_id

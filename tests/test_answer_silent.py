@@ -231,3 +231,26 @@ def test_join_keeps_numbering_and_format_of_the_first_paragraph(tmp_path):
     assert paras[1].find("w:pPr/w:rPr/w:del", ns) is not None  # второй абзац удаляется целиком нашей правкой
     accepted = [normalize(t) for _, t in view_paragraphs(read_docx(out), "accepted", set()) if normalize(t)]
     assert accepted[0] == "В течение 5 (пяти) рабочих дней со дня получения акта." and accepted[1] == "Следующий пункт."
+
+
+def test_edit_of_a_joined_paragraph_changes_both_parts_and_keeps_numbering(tmp_path):
+    """Юрист правит склеенный абзац целиком: новый текст ложится в первую часть (с её нумерацией), вторая удаляется."""
+    import zipfile
+    from lxml import etree
+    num = '<w:numPr><w:ilvl w:val="1"/><w:numId w:val="7"/></w:numPr>'
+    body = p(r("В течение 5 (пяти)"), ppr=num) + p(r("рабочих дней со дня получения акта."), ppr='<w:jc w:val="right"/>') + p(r("Следующий пункт."))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    new = "В течение 7 (семи) рабочих дней со дня получения акта, но не позднее срока оплаты."
+    out = str(tmp_path / "a.docx")
+    stats = build_answer(src, out, [], {"P000": {"choice": "edit", "text": new}}, AUTHOR, document)
+    assert stats["edit"] == 1 and stats["join"] == 1 and stats["без отметки"] == 0
+    accepted = [normalize(t) for _, t in view_paragraphs(read_docx(out), "accepted", set()) if normalize(t)]
+    assert accepted == [normalize(new), "Следующий пункт."]
+    root = etree.fromstring(zipfile.ZipFile(out).read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paras = root.findall(".//w:p", ns)
+    assert paras[0].find("w:pPr/w:numPr", ns) is not None and paras[1].find("w:pPr/w:rPr/w:del", ns) is not None
+    # а если склейку отклонили, правка относится только к первой части и вторая остаётся на месте
+    stats2 = build_answer(src, str(tmp_path / "b.docx"), [], {"J000": {"choice": "reject"}}, AUTHOR, document)
+    assert stats2["join"] == 0

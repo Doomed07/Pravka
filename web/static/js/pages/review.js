@@ -485,7 +485,7 @@ function freshNotes(changes, order, shown) {
 const editKey = (index) => 'P' + String(index).padStart(3, '0');
 const plain = (para) => para.segments.map((s) => s.t).join('');
 // Править можно абзац без отметок в рецензировании: в абзаце с правкой контрагента отвечают решением по правке.
-const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal');
+const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal' || (para.joined && s.k === 'fixed'));
 
 // Предложение, разорванное границей абзаца в файле контрагента: движок помечает первый абзац (join_next), сайт показывает
 // склеенный текст с подсветкой. Решение «не склеивать» — choice reject у номера J<абзац>; в Word склейка — наша правка.
@@ -952,6 +952,8 @@ function wireJoin(id) {
       e.stopPropagation();
       b.disabled = true;
       try {
+        const mine = b.dataset.join.replace('J', 'P'); // правка склеенного текста относится к склейке: при расклейке снимается
+        if (b.dataset.on && CHOICES.has(mine)) await reviews.saveChoice(id, mine, '', '');
         await reviews.saveChoice(id, b.dataset.join, b.dataset.on ? 'reject' : '', '');
         location.reload();
       } catch {
