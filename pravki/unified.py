@@ -211,6 +211,7 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
                                    "anchor": cm.anchor})
     mark_broken_paragraphs(out)
     mark_extra_spaces(out)
+    mark_stray_dots(out)
     return out
 
 
@@ -292,4 +293,31 @@ def mark_extra_spaces(out: list[dict]) -> int:
         if found:
             p["extra_spaces"] = found
             n += found
+    return n
+
+
+# Сокращения, после которых точка и строчная буква — норма («ст. 5», «руб. и», «т. е.»)
+_ABBR = {"ст", "п", "пп", "подп", "ч", "гл", "разд", "рис", "табл", "стр", "см", "напр", "руб", "коп", "тыс", "млн", "млрд",
+         "трлн", "гг", "им", "ул", "пр", "обл", "тел", "ред", "прим", "наим", "лит", "экз", "шт", "мин", "сек", "кв", "куб",
+         "др", "пр", "прочее", "проч", "общ", "соотв", "уч", "изд", "утв", "авг", "сент", "окт", "ноя", "дек", "янв", "февр"}
+_DOT = re.compile(r"(?<![\w.])([^\W\d_]{3,})\.[ \t]+(?=[а-яё]{2,}(?!\)))")
+
+
+def find_stray_dots(text: str) -> list[int]:
+    """Точка посреди предложения: слово из 3+ букв, точка, пробелы и слово со строчной буквы («право.   отказаться»).
+    Номера пунктов, сокращения (_ABBR), инициалы и «а)» не считаются. Возвращает позиции точек в тексте."""
+    return [m.end(1) for m in _DOT.finditer(text) if m.group(1).lower() not in _ABBR]
+
+
+def mark_stray_dots(out: list[dict]) -> int:
+    """Точки внутри предложения: stray_dots — позиции таких точек в абзаце без правок в тексте. Позиции программа ищет заново
+    (`find_stray_dots`), а на сайте и в Word место подсвечивается и исправляется нашей правкой, которую можно отклонить."""
+    n = 0
+    for p in out:
+        if p["index"] < 0 or any(x["k"] != "equal" for x in p["segments"]):
+            continue
+        found = find_stray_dots("".join(x["t"] for x in p["segments"]))
+        if found:
+            p["stray_dots"] = found  # позиции точек в тексте абзаца: по ним сайт подсвечивает место
+            n += len(found)
     return n

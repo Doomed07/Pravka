@@ -2502,3 +2502,12 @@ select.form__input {
   background: var(--chip);
   white-space: pre;
 }
+
+/* Точка посреди предложения */
+.doc__dot {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--silent-bg);
+  color: var(--silent-ink);
+  text-decoration: line-through;
+}

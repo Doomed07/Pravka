@@ -456,6 +456,7 @@ function gaps(s) {
 
 function segment(s) {
   if (s.k === 'equal') return styled(s, gaps(s));
+  if (s.k === 'dot') return html`<mark class="doc__dot" title="Точка внутри предложения: возможно опечатка, в Word она убирается нашей правкой">.</mark>`;
   if (s.k === 'fixed') return html`<mark class="doc__fixed" title="Склеено: предложение было разорвано границей абзаца в файле контрагента">${styled(s, s.t)}</mark>`;
   // ins/del — настоящие теги: экранные дикторы и копирование текста понимают правку
   const tag = s.k.endsWith('ins') ? 'ins' : 'del';
@@ -492,7 +493,7 @@ function freshNotes(changes, order, shown) {
 const editKey = (index) => 'P' + String(index).padStart(3, '0');
 const plain = (para) => para.segments.map((s) => s.t).join('').replace(/ {2,}/g, ' ');
 // Править можно абзац без отметок в рецензировании: в абзаце с правкой контрагента отвечают решением по правке.
-const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal' || (para.joined && s.k === 'fixed'));
+const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal' || s.k === 'dot' || (para.joined && s.k === 'fixed'));
 
 // Предложение, разорванное границей абзаца в файле контрагента: движок помечает первый абзац (join_next), сайт показывает
 // склеенный текст с подсветкой. Решение «не склеивать» — choice reject у номера J<абзац>; в Word склейка — наша правка.
@@ -510,6 +511,42 @@ function joinBroken(doc) {
     } else out.push(p);
   }
   return out;
+}
+
+// Точка посреди предложения («право.   отказаться»): движок отдаёт позиции точек (stray_dots), сайт их подсвечивает, а в
+// Word точка убирается нашей правкой. Решение «не исправлять» — choice reject у D<абзац>.
+const dotKey = (index) => 'D' + String(index).padStart(3, '0');
+
+function markDots(doc) {
+  return doc.map((p) => {
+    if (!p.stray_dots || !p.stray_dots.length || CHOICES.get(dotKey(p.index))?.choice === 'reject') return p;
+    if (p.segments.some((s) => s.k !== 'equal')) return p;
+    const marks = new Set(p.stray_dots);
+    const segments = [];
+    let at = 0;
+    for (const s of p.segments) {
+      let from = 0;
+      for (let i = 0; i < s.t.length; i++) {
+        if (!marks.has(at + i)) continue;
+        if (i > from) segments.push({ ...s, t: s.t.slice(from, i) });
+        segments.push({ k: 'dot', t: '.' });
+        from = i + 1;
+      }
+      if (from < s.t.length) segments.push({ ...s, t: s.t.slice(from) });
+      at += s.t.length;
+    }
+    return { ...p, segments, dotted: true };
+  });
+}
+
+function dotBar(para) {
+  if (para.dotted) {
+    return html`<span class="doc__fixnote">точка внутри предложения: в Word убрана <button class="doc__unjoin" type="button" data-dot="${dotKey(para.index)}" data-on="1">Не исправлять</button></span>`;
+  }
+  if (para.stray_dots && para.stray_dots.length) {
+    return html`<span class="doc__fixnote">точка внутри предложения <button class="doc__unjoin" type="button" data-dot="${dotKey(para.index)}">Исправить</button></span>`;
+  }
+  return '';
 }
 
 function joinBar(para) {
@@ -542,7 +579,7 @@ function row(para, i, total, byID, order, shown) {
     <div class="doc__row">
       <div class="doc__num${first && verdict(first).mod === 'reject' ? ' doc__num--hot' : ''}">${first ? num(order.get(first.id)) : ''}</div>
       <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${edit}${look.style ? html` style="${look.style}"` : ''}>
-        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${joinBar(para)}${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}
+        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${joinBar(para)}${dotBar(para)}${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}
         ${para.index < 0 ? html` <span class="tag tag--silent">абзац удалён без отметки</span>` : ''}
         ${partyComments(para.comments)}
       </div>
@@ -600,7 +637,7 @@ function blocks(doc) {
 }
 
 function documentView(doc, changes, order) {
-  doc = joinBroken(doc);
+  doc = markDots(joinBroken(doc));
   const byID = new Map(changes.map((c) => [c.id, c]));
   const placed = new Set(doc.flatMap((p) => p.changes));
   const orphans = changes.filter((c) => !placed.has(c.id));
@@ -971,6 +1008,22 @@ function wireJoin(id) {
   });
 }
 
+function wireDots(id) {
+  document.querySelectorAll('[data-dot]').forEach((b) => {
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      try {
+        await reviews.saveChoice(id, b.dataset.dot, b.dataset.on ? 'reject' : '', '');
+        location.reload();
+      } catch {
+        b.disabled = false;
+        b.textContent = 'Не удалось, ещё раз?';
+      }
+    });
+  });
+}
+
 function wireNotesLayout() {
   const doc = document.querySelector('.doc');
   if (!doc) return;
@@ -1049,6 +1102,7 @@ async function load() {
   if (doc && doc.length) {
     wireEditing(id);
     wireJoin(id);
+    wireDots(id);
     wireNotesLayout();
     wireDecisions(id, changes || []);
     loadWordings(id);

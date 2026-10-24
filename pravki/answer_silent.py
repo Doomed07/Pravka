@@ -390,3 +390,19 @@ def collapse_spaces(p, w: Writer) -> int:
             w.delete_runs(runs)
             done += 1
     return done
+
+
+def remove_dots(p, w: Writer) -> int:
+    """Точка посреди предложения (`unified.find_stray_dots`) удаляется нашей правкой в рецензировании."""
+    from .unified import find_stray_dots
+    _explode(p)
+    full = "".join(t for _, _, t in _nodes(p))
+    done = 0
+    for a in reversed(find_stray_dots(full)):
+        _split_at(p, a + 1)
+        _split_at(p, a)
+        runs = _unique(_runs_in(p, a, a + 1))
+        if runs:
+            w.delete_runs(runs)
+            done += 1
+    return done
