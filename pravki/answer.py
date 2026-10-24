@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import re
 import zipfile
 from datetime import datetime, timezone
 
@@ -338,8 +339,16 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         if not (key.startswith("C") and key[1:].isdigit() and sel.get("choice") == EDIT and (sel.get("text") or "").strip()):
             continue
         idx = int(key[1:])
+        text = sel["text"].strip()
+        if idx in removed and 0 <= idx < len(paras):
+            # примечание к удалённому абзацу Word может не показать (текст зачёркнут, знак абзаца удалён): крепим его к
+            # ближайшему оставшемуся абзацу, а в тексте называем, о каком пункте речь
+            quote = " ".join(re.sub(r"\s+", " ", "".join(t.text or "" for t in paras[idx].iter(q("t"), q("delText")))).split())
+            text = f"К удалённому пункту «{quote[:80]}{'…' if len(quote) > 80 else ''}»: {text}"
+            keep = [i for i in range(idx + 1, len(paras)) if i not in removed] or [i for i in range(idx - 1, -1, -1) if i not in removed]
+            idx = keep[0] if keep else idx
         if comments_root is not None and 0 <= idx < len(paras):
-            max_cid = _add_comment(comments_root, paras[idx], sel["text"].strip(), author, date, max_cid)
+            max_cid = _add_comment(comments_root, paras[idx], text, author, date, max_cid)
             stats["comment"] += 1
         else:
             stats["без отметки"] += 1

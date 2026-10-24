@@ -386,7 +386,7 @@ def test_comment_with_reasons_can_accompany_a_deleted_paragraph(tmp_path):
     """Обоснование удаления: комментарий юриста (C<абзац>) — примечание Word от его имени к абзацу; абзац при этом удалён
     нашей правкой, а текст комментария не попадает в текст договора."""
     import zipfile
-    from pravki.intake import clause_changes
+    from lxml import etree
     body = p(r("1.1 Первый пункт.")) + p(r("1.2 Лишний пункт, который мы удаляем.")) + p(r("1.3 Последний пункт."))
     src = str(make_docx(tmp_path / "t.docx", body))
     unified = str(tmp_path / "u.docx")
@@ -400,6 +400,11 @@ def test_comment_with_reasons_can_accompany_a_deleted_paragraph(tmp_path):
     z = zipfile.ZipFile(out)
     comments = z.read("word/comments.xml").decode()
     assert "Пункт дублирует 1.1, поэтому исключаем." in comments and AUTHOR in comments
+    assert "К удалённому пункту «1.2 Лишний пункт, который мы удаляем.»" in comments  # понятно, о чём речь
+    root = etree.fromstring(z.read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    anchored = [x for x in root.findall(".//w:p", ns) if x.find("w:commentRangeStart", ns) is not None]
+    assert len(anchored) == 1 and anchored[0].find("w:pPr/w:rPr/w:del", ns) is None  # примечание на оставшемся абзаце, виден всегда
     accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip() and "Правки" not in t]
     assert accepted == ["1.1 Первый пункт.", "1.3 Последний пункт."]
     assert z.read("word/document.xml").decode().count("commentReference") >= 1
