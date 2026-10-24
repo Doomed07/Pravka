@@ -604,7 +604,7 @@ function row(para, i, total, byID, order, shown) {
     <div class="doc__row">
       <div class="doc__num${first && verdict(first).mod === 'reject' ? ' doc__num--hot' : ''}">${first ? num(order.get(first.id)) : ''}</div>
       <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${edit}${para.joined ? html` data-joined="1"` : ''}${look.style ? html` style="${look.style}"` : ''}>
-        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${joinBar(para)}${dotBar(para)}${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}${gone ? html`<span class="doc__fixnote">абзац удалён вами, в Word — удаление в рецензировании <button class="doc__unjoin" type="button" data-restore="${delKey(para.index)}">Вернуть</button></span>` : ''}${addedBlock(para)}
+        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${gone ? '' : joinBar(para)}${gone ? '' : dotBar(para)}${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}${gone ? html`<span class="doc__fixnote">абзац удалён вами, в Word — удаление в рецензировании <button class="doc__unjoin" type="button" data-restore="${delKey(para.index)}">Вернуть</button></span>` : ''}${addedBlock(para)}
         ${para.index < 0 ? html` <span class="tag tag--silent">абзац удалён без отметки</span>` : ''}
         ${partyComments(para.comments)}
       </div>
@@ -1008,7 +1008,7 @@ function wireEditing(id) {
         <button class="button button--cta button--small" type="button" data-act="save">Сохранить</button>
         <button class="button button--ghost button--small" type="button" data-act="cancel">Отмена</button>
         ${saved ? html`<button class="button button--ghost button--small" type="button" data-act="reset">Вернуть исходный</button>` : ''}
-        ${box.dataset.joined ? '' : html`<button class="button button--ghost button--small" type="button" data-act="delete">Удалить абзац</button>`}
+        <button class="button button--ghost button--small" type="button" data-act="delete">Удалить абзац</button>
         <button class="button button--ghost button--small" type="button" data-act="add">Добавить абзац после</button>
         <span class="doc__editstatus" role="status"></span>
       </div>`);

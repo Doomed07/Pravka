@@ -364,3 +364,19 @@ def test_paragraph_deleted_and_added_on_the_site_become_tracked_changes(tmp_path
     assert len(new) == 2 and all(x.find("w:pPr/w:numPr", ns) is not None for x in new)
     rejected = [t for _, t in view_paragraphs(read_docx(out), "rejected", set()) if t.strip()]
     assert "1.2 Лишний пункт, который удаляем." in " ".join(rejected) and "Новый пункт один." not in rejected
+
+
+def test_joined_paragraph_is_deleted_with_both_parts(tmp_path):
+    """Склеенный абзац (две части) удаляется целиком: обе части зачёркнуты нашей правкой, склейка не делается."""
+    body = (p(r("1.1 Первый пункт.")) + p(r("1.2 Срок оплаты в течение 5 (пяти)")) + p(r("рабочих дней со дня получения акта.")) +
+            p(r("1.3 Последний пункт.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    assert document[1].get("join_next")
+    out = str(tmp_path / "a.docx")
+    stats = build_answer(src, out, [], {"X001": {"choice": "reject"}}, AUTHOR, document)
+    assert stats["delete"] == 2 and stats["join"] == 0 and stats["без отметки"] == 0
+    accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip()]
+    assert accepted == ["1.1 Первый пункт.", "1.3 Последний пункт."]
+    rejected = [t for _, t in view_paragraphs(read_docx(out), "rejected", set()) if t.strip()]
+    assert rejected == ["1.1 Первый пункт.", "1.2 Срок оплаты в течение 5 (пяти)", "рабочих дней со дня получения акта.", "1.3 Последний пункт."]

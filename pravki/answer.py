@@ -183,9 +183,11 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
     joins = {d["index"] for d in document or [] if d.get("join_next") and 0 <= d["index"] + 1 < len(paras)
              and (choices.get(f"J{d['index']:03d}") or {}).get("choice") != "reject"}
 
-    # абзацы, удалённые юристом на сайте (X<абзац>, reject): другие правки в них не делаются; склеенные не удаляются
-    removed = {i for i in range(len(paras)) if (choices.get(f"X{i:03d}") or {}).get("choice") == "reject"
-               and i not in joins and i - 1 not in joins}
+    # абзацы, удалённые юристом на сайте (X<абзац>, reject): другие правки в них не делаются. Склеенный абзац удаляется
+    # обеими частями, склейка в этом случае не нужна
+    gone = {i for i in range(len(paras)) if (choices.get(f"X{i:03d}") or {}).get("choice") == "reject"}
+    removed = gone | {i + 1 for i in gone if i in joins}
+    joins -= gone
 
     for ch in changes:
         sel = choices.get(ch.get("id", "")) or {}
