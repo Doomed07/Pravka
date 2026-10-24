@@ -2335,3 +2335,20 @@ select.form__input {
 .chips[hidden] {
   display: none;
 }
+
+/* Абзац не растягивается вслед за высокой карточкой на полях: подсветка и полоса правки — только по тексту абзаца */
+.doc {
+  background: var(--paper);
+}
+
+.doc__text {
+  align-self: start;
+  min-height: 0;
+}
+
+/* Длинные подсказки в карточке (прошлые формулировки, ГК, решения) прокручиваются внутри карточки, а не раздвигают договор */
+.note .past__list,
+.note .law__list {
+  max-height: 180px;
+  overflow-y: auto;
+}
