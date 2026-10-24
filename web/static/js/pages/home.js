@@ -187,9 +187,15 @@ function wireLists() {
   }
   const all = $('#show-all');
   if (all) {
+    const total = all.textContent.match(/\((\d+)\)/)?.[1];
+    let open = false;
+    all.setAttribute('aria-expanded', 'false');
     all.addEventListener('click', () => {
-      document.querySelectorAll('.is-extra').forEach((row) => { row.hidden = false; });
-      all.hidden = true;
+      open = !open;
+      document.querySelectorAll('.is-extra').forEach((row) => { row.hidden = !open; });
+      all.textContent = open ? 'Скрыть' : `Показать все (${total})`;
+      all.setAttribute('aria-expanded', String(open));
+      if (!open) all.closest('p').previousElementSibling.scrollIntoView({ block: 'nearest' }); // не оставаться внизу пустого места
     });
   }
 }
