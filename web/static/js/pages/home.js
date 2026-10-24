@@ -53,6 +53,7 @@ function uploadView(playbooks, memo) {
         <input id="f-theirs" name="theirs" type="file" accept=".docx,.odt,.pdf" required>
       </label>
       <p class="form__hint" id="detect-status" role="status" hidden></p>
+      <p class="chips" id="detect-parties" hidden></p>
       <section class="confirm" id="confirm" aria-labelledby="confirm-title" hidden>
         <h2 class="confirm__title" id="confirm-title">Проверьте данные</h2>
         <div class="form__row">
@@ -87,7 +88,7 @@ function uploadView(playbooks, memo) {
           <div class="form__row">
             <div class="form__field">
               <label class="form__label" for="f-company">ИНН или наименование вашей компании</label>
-              <input class="form__input" id="f-company" name="company" type="text" maxlength="500" value="${memo.company || ''}" placeholder="по ним программа находит вашу сторону и контрагента">
+              <input class="form__input" id="f-company" name="company" type="text" maxlength="500" value="${memo.company || ''}" placeholder="ИНН и/или название, например: 7701234567, ООО «Ромашка»">
             </div>
             <div class="form__field">
               <label class="form__label" for="f-authors">Авторы ваших правок в Word</label>
@@ -215,18 +216,50 @@ function wireForm(cps) {
   };
   cpSelect.addEventListener('change', syncCounterparty);
 
-  // контрагент найден по преамбуле: берём существующего с тем же названием или предлагаем нового
-  const fill = (found) => {
-    const cp = found && found.counterparty;
-    const same = cp && cps.find((c) => c.name.toLowerCase() === cp.name.toLowerCase());
-    cpSelect.value = same ? String(same.id) : preset && cps.some((c) => c.id === preset) && !cp ? String(preset) : '';
-    $('#f-cp-name').value = cp && !same ? cp.name : '';
-    $('#f-cp-inn').value = cp && !same ? cp.inn : '';
+  // найденное по договору: контрагент, наша компания, название договора и плейбук. Пользователь может всё поправить.
+  const partyLine = (p) => [p.inn, p.name].filter(Boolean).join(', ');
+  const setCounterparty = (cp) => {
+    const same = cps.find((c) => c.name.toLowerCase() === cp.name.toLowerCase());
+    cpSelect.value = same ? String(same.id) : '';
+    $('#f-cp-name').value = same ? '' : cp.name;
+    $('#f-cp-inn').value = same ? '' : cp.inn;
     syncCounterparty();
+  };
+  const fill = (found) => {
+    const chips = $('#detect-parties');
+    chips.hidden = true;
+    chips.textContent = '';
+    cpSelect.value = preset && cps.some((c) => c.id === preset) ? String(preset) : '';
+    $('#f-cp-name').value = '';
+    $('#f-cp-inn').value = '';
+    const cp = found && found.counterparty;
+    if (found && found.title && !$('#f-project-name').dataset.touched) $('#f-project-name').value = found.title;
+    if (found && found.playbook && [...$('#f-playbook').options].some((o) => o.value === found.playbook)) {
+      $('#f-playbook').value = found.playbook;
+    }
+    if (found && found.ours && !$('#f-company').value.trim()) $('#f-company').value = partyLine(found.ours);
+    const how = found && found.source === 'model' ? ' (стороны нашла локальная модель, названия проверены по тексту договора)' : '';
     if (cp) {
-      status.textContent = `Контрагент определён по договору: ${cp.name}${cp.role ? ` (${cp.role})` : ''}. Проверьте и при необходимости поправьте.`;
+      setCounterparty(cp);
+      status.textContent = `Контрагент определён по договору: ${cp.name}${cp.role ? ` (${cp.role})` : ''}${how}. Проверьте и при необходимости поправьте.`;
     } else if (found && found.parties.length) {
-      status.textContent = 'Стороны найдены, но какая из них ваша — не определено (укажите вашу компанию в «Дополнительно»). Выберите или введите контрагента.';
+      status.textContent = `Стороны найдены${how}, но какая из них ваша — не определено. Укажите контрагента кнопкой — вторая сторона станет «вашей компанией»:`;
+      found.parties.forEach((party) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'button button--ghost button--small';
+        button.textContent = `${party.name}${party.role ? ` — ${party.role}` : ''}`;
+        button.addEventListener('click', () => {
+          setCounterparty(party);
+          const mine = found.parties.find((x) => x !== party);
+          const fillCompany = mine && !$('#f-company').value.trim();
+          if (fillCompany) $('#f-company').value = partyLine(mine);
+          status.textContent = `Контрагент: ${party.name}.${fillCompany ? ' Ваша компания подставлена в «Дополнительно».' : ''}`;
+          chips.hidden = true;
+        });
+        chips.append(button);
+      });
+      chips.hidden = false;
     } else {
       status.textContent = 'Стороны в начале договора не найдены. Выберите или введите контрагента.';
     }
@@ -260,6 +293,7 @@ function wireForm(cps) {
     confirmBox.hidden = false;
   };
   wireDrops(detect);
+  $('#f-project-name').addEventListener('input', () => { $('#f-project-name').dataset.touched = '1'; });
   $('#f-company').addEventListener('change', () => {
     if ($('#f-theirs').files[0]) detect();
   });
@@ -283,8 +317,7 @@ function wireForm(cps) {
       memoSave({ our_authors: $('#f-authors').value, company: $('#f-company').value, playbook: select.value, confirm });
       const fd = new FormData();
       fd.append('theirs', theirs);
-      // PDF разбирается сравнением с нашей версией: у первой версии её нет, поэтому она же служит точкой отсчёта
-      if (/\.pdf$/i.test(theirs.name)) fd.append('base', theirs);
+      fd.append('first_version', '1'); // правок в ней нет: положения проверяются по плейбуку (для PDF наша версия не нужна)
       fd.append('playbook', select.value);
       if (cpSelect.value) fd.append('counterparty_id', cpSelect.value);
       else {

@@ -9,10 +9,11 @@
   GET  /health     — {"ok": true, "llm": bool}
   GET  /playbooks  — [{"key", "name", "role"}]
   POST /review     — multipart: theirs (docx), base (docx, необязательно), playbook, our_authors, company,
-                     confirm_role. 200 — разбор; 422 — сторона договора не подтверждена; 400 — файл не разобран.
+                     confirm_role, first_version ("1": первая версия без правок — положения проверяются по плейбуку). 200 — разбор; 422 — сторона договора не подтверждена; 400 — файл не разобран.
   POST /parties    — multipart: theirs (docx/odt/pdf), company. 200 — {"parties": [{"role","name","inn"}],
-                     "counterparty": {"name","inn","role"} | null}: стороны из преамбулы и контрагент (сторона, не совпавшая
-                     с вашей компанией). Быстро: ни плейбука, ни модели.
+                     "counterparty","ours": {"role","name","inn"} | null, "title", "contract_type", "playbook", "source"}:
+                     стороны, контрагент (сторона, не совпавшая с вашей компанией), название и плейбук по типу договора.
+                     Модель подключается, только если по образцам стороны не найдены.
   POST /answer     — multipart: unified (docx единой версии), changes (JSON), choices (JSON), author,
                      document (JSON единой версии, необязательно: нужен, чтобы вернуть удалённый без отметки абзац).
                      200 — ответ контрагенту в Word (base64) по решениям юриста.
@@ -42,7 +43,8 @@ from .annotate import annotate_docx
 from .answer import build_answer
 from .docx_reader import DocxError
 from .llm import Explainer, LLMError, OpenAICompatClient, is_local
-from .parties import (PartiesError, RoleCheckError, SideConfig, detect_our_party, parties_of, profile_from_args)
+from .intake import detect_intake
+from .parties import PartiesError, RoleCheckError, SideConfig, canon_role, profile_from_args
 from .readers import read_document, sniff_format
 from .pipeline import DISCLAIMER, review_files
 from .playbook import PlaybookError, load_playbook
@@ -80,7 +82,7 @@ def list_playbooks(root: str | None = None) -> list[dict]:
             except (OSError, yaml.YAMLError):
                 continue
             group.append((_focus_rank(data), {"key": f"{sub}/{fn}" if sub else fn, "name": str(data.get("name", fn)) + label,
-                                              "role": str(data.get("our_role", "")), "path": path}))
+                                              "role": str(data.get("our_role", "")), "contract_type": str(data.get("contract_type", "")), "path": path}))
         out.extend(item for _, item in sorted(group, key=lambda g: g[0]))  # sorted устойчив: внутри типа — по имени файла
     return out
 
@@ -160,11 +162,17 @@ def embed(body: bytes) -> tuple[int, dict]:
     return 200, {"model": embed_model(), "vectors": vectors}
 
 
-def make_explainer():
+def make_explainer_client():
+    """Клиент локальной модели для пояснений и приёма договора; None — модель не настроена."""
     url = os.environ.get("PRAVKI_LLM_URL", "").strip()
     if not url:
         return None
-    return Explainer(OpenAICompatClient(url, os.environ.get("PRAVKI_LLM_MODEL", "local"), allow_remote=_model_url_allowed(url)))
+    return OpenAICompatClient(url, os.environ.get("PRAVKI_LLM_MODEL", "local"), allow_remote=_model_url_allowed(url))
+
+
+def make_explainer():
+    client = make_explainer_client()
+    return Explainer(client) if client is not None else None
 
 
 def parse_multipart(ctype: str, body: bytes) -> tuple[dict, dict]:
@@ -191,8 +199,7 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
         return 400, {"error": "bad_request", "message": "Не передан файл версии контрагента (theirs)."}
     authors = [a.strip() for a in re.split(r"[,;\n]", fields.get("our_authors", "")) if a.strip()]
     company = fields.get("company", "")
-    inns = re.findall(r"\b\d{10}(?:\d{2})?\b", company)
-    names = [] if inns else ([company] if company else [])
+    profile = company_profile(company)
     pb = None
     key = fields.get("playbook", "")
     if key:
@@ -212,8 +219,9 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
                 f.write(files["base"])
         try:
             source_format = sniff_format(theirs)  # docx, odt или pdf: по содержимому, имя файла движку не передаётся
-            side = SideConfig(profile=profile_from_args(names, inns), confirm_role=confirm)
-            rv = review_files(theirs, base, pb, our_authors=authors, explainer=make_explainer(), side=side)
+            side = SideConfig(profile=profile, confirm_role=confirm)
+            rv = review_files(theirs, base, pb, our_authors=authors, explainer=make_explainer(), side=side,
+                              first_version=fields.get("first_version") == "1")
         except RoleCheckError as ex:
             return 422, {"error": "role_not_confirmed", "message": str(ex), "role": pb.our_role if pb else ""}
         except (DocxError, PlaybookError, PartiesError) as ex:
@@ -248,10 +256,14 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
 
 
 def company_profile(company: str):
-    """Профиль нашей компании из строки «ИНН или наименование» (как в форме разбора)."""
-    inns = re.findall(r"\b\d{10}(?:\d{2})?\b", company)
-    names = [] if inns else ([company] if company else [])
-    return profile_from_args(names, inns)
+    """Профиль нашей компании из строки «ИНН и/или наименование»: «7701234567», «ООО «Ромашка»» или «7701234567, ООО «Ромашка»».
+    ИНН — любые 10 или 12 цифр подряд; всё остальное, что похоже на название, — наименование."""
+    inns = re.findall(r"(?<!\d)(?:\d{12}|\d{10})(?!\d)", company)
+    rest = company
+    for inn in inns:
+        rest = rest.replace(inn, " ")
+    name = re.sub(r"\s+", " ", re.sub(r"\bИНН\b[:№]?", " ", rest, flags=re.IGNORECASE)).strip(" ,;:\n")
+    return profile_from_args([name] if re.search(r"[A-Za-zА-Яа-яЁё]{2}", name) else [], inns)
 
 
 def _pretty(name: str) -> str:
@@ -259,10 +271,26 @@ def _pretty(name: str) -> str:
     return re.sub(r'"([^"]+)"', r"«\1»", name)
 
 
-def detect_parties(fields: dict, files: dict) -> tuple[int, dict]:
-    """Стороны договора и контрагент по преамбуле. Контрагент — сторона, не совпавшая с нашей компанией;
-    нашу сторону определить не удалось (нет профиля, не найдена, найдена дважды) — контрагента нет (None),
-    юрист выбирает или вводит его сам."""
+def _party_dict(p) -> dict | None:
+    return None if p is None else {"role": p.role, "name": _pretty(p.name), "inn": p.inn}
+
+
+def suggest_playbook(contract_type: str, our_role: str, root: str | None = None) -> str:
+    """Ключ плейбука по типу договора и нашей роли (роли «Исполнитель»/«Подрядчик» — одна сторона); пусто — не уверены."""
+    if not contract_type or not our_role:
+        return ""
+    hits = [p["key"] for p in list_playbooks(root)
+            if p["contract_type"] == contract_type and canon_role(p["role"]) == canon_role(our_role)]
+    return hits[0] if hits else ""  # личные плейбуки (private/) идут в списке раньше учебных
+
+
+def detect_parties(fields: dict, files: dict, playbooks_root: str | None = None) -> tuple[int, dict]:
+    """Первая версия договора: стороны, контрагент, наша сторона, название, тип и подходящий плейбук.
+
+    Контрагент — сторона, не совпавшая с нашей компанией; нашу определить не удалось (нет профиля, не найдена, найдена
+    дважды) — контрагента нет (None), юрист выбирает или вводит его сам. Если стороны не найдены по образцам преамбулы,
+    их ищет модель (если подключена), но принимается только то, что дословно есть в тексте (source = "model").
+    """
     if "theirs" not in files:
         return 400, {"error": "bad_request", "message": "Не передан файл договора (theirs)."}
     with tempfile.TemporaryDirectory(prefix="pravki-") as d:
@@ -270,16 +298,19 @@ def detect_parties(fields: dict, files: dict) -> tuple[int, dict]:
         with open(path, "wb") as f:
             f.write(files["theirs"])
         try:
-            doc = read_document(path)
-            parties = parties_of(doc, "rejected")
+            found = detect_intake(read_document(path), company_profile(fields.get("company", "")), make_explainer_client())
         except (DocxError, PartiesError) as ex:
             return 400, {"error": "bad_file", "message": str(ex)}
-    ours, _, _ = detect_our_party(parties, company_profile(fields.get("company", "")))
-    other = [p for p in parties if p is not ours]
-    counterparty = None
-    if ours is not None and len(other) == 1:
-        counterparty = {"name": _pretty(other[0].name), "inn": other[0].inn, "role": other[0].role}
-    return 200, {"parties": [{"role": p.role, "name": _pretty(p.name), "inn": p.inn} for p in parties], "counterparty": counterparty}
+    ours = found["ours"]
+    return 200, {
+        "parties": [_party_dict(p) for p in found["parties"]],
+        "counterparty": _party_dict(found["counterparty"]),
+        "ours": _party_dict(ours),
+        "title": found["title"],
+        "contract_type": found["contract_type"],
+        "playbook": suggest_playbook(found["contract_type"], ours.role if ours else "", playbooks_root),
+        "source": found["source"],
+    }
 
 
 def answer(fields: dict, files: dict) -> tuple[int, dict]:
@@ -336,7 +367,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health":
             return self._json(200, {"ok": True, "llm": bool(os.environ.get("PRAVKI_LLM_URL"))})
         if path == "/playbooks":
-            return self._json(200, [{k: p[k] for k in ("key", "name", "role")} for p in list_playbooks()])
+            return self._json(200, [{k: p[k] for k in ("key", "name", "role", "contract_type")} for p in list_playbooks()])
         if path == "/law":
             return self._json(*law_page(urlparse(self.path).query))
         return self._json(404, {"error": "not_found", "message": "Нет такого адреса."})

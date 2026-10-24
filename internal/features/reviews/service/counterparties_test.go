@@ -165,3 +165,15 @@ func TestDetectParties_ValidatesFileBeforeEngine(t *testing.T) {
 		t.Errorf("не договор: err = %v", err)
 	}
 }
+
+func TestCreate_FirstVersionOnlyForNewContract(t *testing.T) {
+	repo := &fakeRepo{project: core_domain.ProjectSummary{Project: core_domain.Project{ID: 3, UserID: 7}, Rounds: 1}}
+	eng := &fakeEngine{}
+	s := NewReviewsService(repo, eng)
+	if _, err := s.Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, FirstVersion: true}); err != nil || !eng.got.FirstVersion {
+		t.Fatalf("новый договор: первая версия передаётся движку: %v, %+v", err, eng.got)
+	}
+	if _, err := s.Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, FirstVersion: true, ProjectID: 3}); err != nil || eng.got.FirstVersion {
+		t.Fatalf("очередной раунд не может быть первой версией: %v, %+v", err, eng.got)
+	}
+}

@@ -26,6 +26,7 @@ func (s *ReviewsService) Create(ctx context.Context, userID int, req core_domain
 		core_metrics.ReviewsFailed.WithLabelValues("invalid").Inc()
 		return core_domain.ContractReview{}, err
 	}
+	req.FirstVersion = req.FirstVersion && req.ProjectID == 0 // «первая версия» бывает только у нового договора
 	// очередной раунд существующего договора или новый договор: название и права проверяем до долгого разбора
 	var project *core_domain.ProjectSummary
 	projectName, cpName, cpINN := "", "", ""

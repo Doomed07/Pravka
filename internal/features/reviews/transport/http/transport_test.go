@@ -457,6 +457,18 @@ func TestCreate_CounterpartyFields(t *testing.T) {
 	}
 }
 
+func TestCreate_FirstVersionField(t *testing.T) {
+	svc := &fakeService{}
+	router(svc, 1).ServeHTTP(httptest.NewRecorder(), upload(t, map[string]string{"first_version": "1"}, true))
+	if !svc.got.FirstVersion {
+		t.Errorf("first_version=1 не дошёл до сервиса: %+v", svc.got)
+	}
+	router(svc, 1).ServeHTTP(httptest.NewRecorder(), upload(t, map[string]string{"first_version": "yes"}, true))
+	if svc.got.FirstVersion {
+		t.Errorf("только «1» включает первую версию: %+v", svc.got)
+	}
+}
+
 func TestCounterparties(t *testing.T) {
 	get := func(user int, path string) (int, string) {
 		rec := httptest.NewRecorder()

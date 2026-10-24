@@ -131,3 +131,38 @@ func TestAnswer_SendsFormAndDecodesFile(t *testing.T) {
 		t.Fatalf("engine got %+v", got)
 	}
 }
+
+func TestFirstVersionFieldAndParties(t *testing.T) {
+	var gotFirst, gotCompany string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseMultipartForm(1 << 20)
+		switch r.URL.Path {
+		case "/review":
+			gotFirst = r.FormValue("first_version")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"counts":{},"unified_docx":"","report_xlsx":""}`))
+		case "/parties":
+			gotCompany = r.FormValue("company")
+			_, _ = w.Write([]byte(`{"parties":[{"role":"Исполнитель","name":"Альфа","inn":"7701234567"},{"role":"Заказчик","name":"Бета","inn":""}],
+				"counterparty":{"role":"Заказчик","name":"Бета","inn":""},"ours":{"role":"Исполнитель","name":"Альфа","inn":"7701234567"},
+				"title":"Договор оказания услуг № 1","contract_type":"services","playbook":"services_example.yaml","source":"model"}`))
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(Config{URL: srv.URL, Timeout: time.Second})
+	file := core_domain.UploadedFile{Name: "a.docx", Data: []byte("PKdocx")}
+	if _, _, err := c.Review(context.Background(), core_domain.ReviewRequest{Theirs: file, FirstVersion: true}); err != nil || gotFirst != "1" {
+		t.Fatalf("first_version = %q, err %v", gotFirst, err)
+	}
+	if _, _, err := c.Review(context.Background(), core_domain.ReviewRequest{Theirs: file}); err != nil || gotFirst != "" {
+		t.Fatalf("без признака first_version = %q, err %v", gotFirst, err)
+	}
+	got, err := c.Parties(context.Background(), file, "7701234567")
+	if err != nil || gotCompany != "7701234567" {
+		t.Fatalf("parties: %v (company %q)", err, gotCompany)
+	}
+	if got.Counterparty == nil || got.Counterparty.Name != "Бета" || got.Ours == nil || got.Ours.INN != "7701234567" ||
+		got.Title != "Договор оказания услуг № 1" || got.ContractType != "services" || got.Playbook != "services_example.yaml" || got.Source != "model" {
+		t.Errorf("parties = %+v", got)
+	}
+}

@@ -69,6 +69,10 @@ type ReviewRequest struct {
 	CounterpartyID   int
 	CounterpartyName string
 	CounterpartyINN  string
+
+	// FirstVersion — первая версия нового договора, как прислал контрагент: правок в ней нет, поэтому положения
+	// проверяются по плейбуку. Только для нового договора (ProjectID == 0).
+	FirstVersion bool
 }
 
 // Validate проверяет запрос до обращения к движку: дешёвые ошибки ловим сразу.

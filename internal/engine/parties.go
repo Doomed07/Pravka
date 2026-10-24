@@ -55,6 +55,11 @@ func (c *Client) Parties(ctx context.Context, theirs core_domain.UploadedFile, c
 	var raw struct {
 		Parties      []struct{ Role, Name, INN string } `json:"parties"`
 		Counterparty *struct{ Role, Name, INN string }  `json:"counterparty"`
+		Ours         *struct{ Role, Name, INN string }  `json:"ours"`
+		Title        string                             `json:"title"`
+		ContractType string                             `json:"contract_type"`
+		Playbook     string                             `json:"playbook"`
+		Source       string                             `json:"source"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return core_domain.DetectedParties{}, fmt.Errorf("движок: разбор ответа: %w", err)
@@ -66,5 +71,9 @@ func (c *Client) Parties(ctx context.Context, theirs core_domain.UploadedFile, c
 	if raw.Counterparty != nil {
 		out.Counterparty = &core_domain.DetectedParty{Role: raw.Counterparty.Role, Name: raw.Counterparty.Name, INN: raw.Counterparty.INN}
 	}
+	if raw.Ours != nil {
+		out.Ours = &core_domain.DetectedParty{Role: raw.Ours.Role, Name: raw.Ours.Name, INN: raw.Ours.INN}
+	}
+	out.Title, out.ContractType, out.Playbook, out.Source = raw.Title, raw.ContractType, raw.Playbook, raw.Source
 	return out, nil
 }

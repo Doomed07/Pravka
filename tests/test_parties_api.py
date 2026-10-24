@@ -36,7 +36,8 @@ def test_our_company_not_in_preamble_means_no_counterparty(tmp_path):
 
 def test_contract_without_preamble_has_no_parties(tmp_path):
     status, data = engine_api.detect_parties({"company": "7701234567"}, {"theirs": _docx(tmp_path, "Просто текст без сторон.")})
-    assert status == 200 and data == {"parties": [], "counterparty": None}
+    assert status == 200 and data["parties"] == [] and data["counterparty"] is None and data["ours"] is None
+    assert data["title"] == "Договор № 1"
 
 
 def test_missing_and_broken_file():

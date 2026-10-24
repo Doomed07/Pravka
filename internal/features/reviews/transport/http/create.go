@@ -73,6 +73,7 @@ func (h *ReviewsHTTPHandler) Create(rw http.ResponseWriter, r *http.Request) {
 		Playbook: r.FormValue("playbook"), OurAuthors: r.FormValue("our_authors"),
 		Company: r.FormValue("company"), ConfirmRole: r.FormValue("confirm_role"), ProjectName: r.FormValue("project_name"),
 		CounterpartyName: r.FormValue("counterparty_name"), CounterpartyINN: r.FormValue("counterparty_inn"),
+		FirstVersion: r.FormValue("first_version") == "1",
 	}
 	if v := r.FormValue("counterparty_id"); v != "" {
 		id, err := strconv.Atoi(v)

@@ -351,15 +351,24 @@ type PartyDTO struct {
 type DetectedPartiesDTO struct {
 	Parties      []PartyDTO `json:"parties"`
 	Counterparty *PartyDTO  `json:"counterparty"`
+	Ours         *PartyDTO  `json:"ours"`
+	Title        string     `json:"title"`
+	ContractType string     `json:"contract_type"`
+	Playbook     string     `json:"playbook"`
+	Source       string     `json:"source"`
 }
 
 func detectedPartiesDTOFromDomain(d core_domain.DetectedParties) DetectedPartiesDTO {
-	out := DetectedPartiesDTO{Parties: make([]PartyDTO, len(d.Parties))}
+	out := DetectedPartiesDTO{Parties: make([]PartyDTO, len(d.Parties)), Title: d.Title, ContractType: d.ContractType,
+		Playbook: d.Playbook, Source: d.Source}
 	for i, p := range d.Parties {
 		out.Parties[i] = PartyDTO{Role: p.Role, Name: p.Name, INN: p.INN}
 	}
 	if d.Counterparty != nil {
 		out.Counterparty = &PartyDTO{Role: d.Counterparty.Role, Name: d.Counterparty.Name, INN: d.Counterparty.INN}
+	}
+	if d.Ours != nil {
+		out.Ours = &PartyDTO{Role: d.Ours.Role, Name: d.Ours.Name, INN: d.Ours.INN}
 	}
 	return out
 }

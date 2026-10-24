@@ -77,7 +77,15 @@ type DetectedParty struct {
 
 // DetectedParties — стороны договора и контрагент (сторона, не совпавшая с вашей компанией); Counterparty == nil, если нашу
 // сторону определить не удалось: юрист выбирает контрагента сам.
+//
+// Ours — наша сторона (если найдена), Title — название договора из заголовка, ContractType — supply или services (или пусто),
+// Playbook — ключ подходящего плейбука (или пусто), Source — «rules» (по образцам преамбулы) или «model» (помогла модель).
 type DetectedParties struct {
 	Parties      []DetectedParty
 	Counterparty *DetectedParty
+	Ours         *DetectedParty
+	Title        string
+	ContractType string
+	Playbook     string
+	Source       string
 }

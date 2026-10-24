@@ -87,6 +87,8 @@ function roundWhat(it) {
       return `добавлено «${it.after}»`;
     case 'delete':
       return `удалено «${it.before}»`;
+    case 'clause':
+      return `положение договора: «${it.after}»`;
     case 'para_insert':
       return `новый пункт: «${it.after}»`;
     case 'para_delete':
@@ -365,7 +367,9 @@ function decideBlock(ch) {
 
 function note(ch, order) {
   const v = verdict(ch);
-  const diff = ch.replaced_para
+  const diff = ch.source === 'clause'
+    ? html`<p class="note__diff">Положение первой версии договора: «${short(ch.after, 160)}». Проверено по плейбуку: это замечание, а не правка контрагента.</p>`
+    : ch.replaced_para
     ? html`<p class="note__diff">Пункт заменён новой редакцией${isSilent(ch) ? ' без отметки в рецензировании' : ''}.</p>`
     : fromBase(ch)
     ? html`<p class="note__diff">Принята правка из нашей версии (автор: ${ch.accepted_from_base.join(', ')}): было «${ch.before || '—'}», стало «${ch.after || '—'}».</p>`
@@ -643,7 +647,7 @@ function unifiedView(r, doc, changes, sum) {
       <aside class="rv-side">
         ${r.has_docx ? '' : noWordNote()}
         ${summary(changes)}
-        ${changes.length ? list(changes, order) : html`<p class="empty-state">Правок не найдено.</p>`}
+        ${changes.length ? list(changes, order) : html`<p class="empty-state">Правок и замечаний не найдено.</p>`}
         <p class="legend">
           <span><ins class="r-ins">вставлено</ins></span>
           <span><del class="r-del">удалено</del></span>

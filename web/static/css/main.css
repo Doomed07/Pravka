@@ -2323,3 +2323,15 @@ select.form__input {
 .section-heading + .cards {
   margin-top: 22px;
 }
+
+/* Кнопки выбора контрагента среди найденных сторон */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -6px 0 6px;
+}
+
+.chips[hidden] {
+  display: none;
+}

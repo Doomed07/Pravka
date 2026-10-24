@@ -83,6 +83,7 @@ func ParseRoundChanges(changes []byte) ([]RoundChange, error) {
 		Clause      string `json:"clause"`
 		Topic       string `json:"topic"`
 		Kind        string `json:"kind"`
+		Source      string `json:"source"`
 		Before      string `json:"before"`
 		After       string `json:"after"`
 		Materiality string `json:"materiality"`
@@ -92,7 +93,8 @@ func ParseRoundChanges(changes []byte) ([]RoundChange, error) {
 	}
 	out := []RoundChange{}
 	for _, c := range list {
-		if c.Kind == "comment" || c.Materiality == "техническая" {
+		// замечания к положениям первой версии (source «clause») правками контрагента не были: в раундах не сравниваются
+		if c.Kind == "comment" || c.Materiality == "техническая" || c.Source == "clause" {
 			continue
 		}
 		out = append(out, RoundChange{ID: c.ID, Fingerprint: c.Fingerprint, Clause: c.Clause, Topic: c.Topic,

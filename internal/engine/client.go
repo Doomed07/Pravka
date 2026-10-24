@@ -111,7 +111,7 @@ func (c *Client) Review(ctx context.Context, r core_domain.ReviewRequest) (Resul
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	for k, v := range map[string]string{"playbook": r.Playbook, "our_authors": r.OurAuthors, "company": r.Company,
-		"confirm_role": r.ConfirmRole} {
+		"confirm_role": r.ConfirmRole, "first_version": firstVersionField(r.FirstVersion)} {
 		if v != "" {
 			_ = mw.WriteField(k, v)
 		}
@@ -307,4 +307,12 @@ func (c *Client) Embed(ctx context.Context, texts []string) (string, [][]float32
 		return "", nil, fmt.Errorf("движок: векторов %d, текстов %d: %w", len(out.Vectors), len(texts), core_errors.ErrUnavailable)
 	}
 	return out.Model, out.Vectors, nil
+}
+
+// firstVersionField — значение поля first_version для движка: «1» только у первой версии нового договора.
+func firstVersionField(first bool) string {
+	if first {
+		return "1"
+	}
+	return ""
 }

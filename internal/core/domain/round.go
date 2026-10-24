@@ -73,6 +73,9 @@ func SummarizeRound(changes []byte) (RoundSummary, error) {
 	var other *RoundTopic
 	pos := map[string]int{}
 	for _, c := range list {
+		if c.Source == "clause" {
+			c.Kind = "clause" // замечание к положению первой версии, а не правка контрагента
+		}
 		if c.Materiality == "техническая" && c.Kind != "comment" {
 			out.Technical++
 			continue
