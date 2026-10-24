@@ -210,3 +210,24 @@ def test_continuation_in_lowercase_is_joined_even_when_long_and_with_a_note(tmp_
     src = str(make_docx(tmp_path / "t.docx", body))
     document = build_unified(None, read_docx(src), set(), [])
     assert [d["index"] for d in document if d.get("join_next")] == [0]
+
+
+def test_join_keeps_numbering_and_format_of_the_first_paragraph(tmp_path):
+    """В Word при удалении знака абзаца склеенный абзац берёт вид второго (нумерация слетала, выравнивание менялось).
+    Поэтому текст второго переносится в первый, а второй удаляется целиком: у первого остаётся его w:pPr."""
+    import zipfile
+    from lxml import etree
+    num = '<w:numPr><w:ilvl w:val="1"/><w:numId w:val="7"/></w:numPr>'
+    body = p(r("В течение 5 (пяти)"), ppr=num) + p(r("рабочих дней со дня получения акта."), ppr='<w:jc w:val="right"/>') + p(r("Следующий пункт."))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    assert document[0].get("join_next")
+    out = str(tmp_path / "a.docx")
+    assert build_answer(src, out, [], {}, AUTHOR, document)["join"] == 1
+    root = etree.fromstring(zipfile.ZipFile(out).read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paras = root.findall(".//w:p", ns)
+    assert paras[0].find("w:pPr/w:numPr", ns) is not None and paras[0].find("w:pPr/w:rPr/w:del", ns) is None
+    assert paras[1].find("w:pPr/w:rPr/w:del", ns) is not None  # второй абзац удаляется целиком нашей правкой
+    accepted = [normalize(t) for _, t in view_paragraphs(read_docx(out), "accepted", set()) if normalize(t)]
+    assert accepted[0] == "В течение 5 (пяти) рабочих дней со дня получения акта." and accepted[1] == "Следующий пункт."

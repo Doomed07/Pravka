@@ -22,7 +22,7 @@ from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
 from .answer_replies import EXT_PART, REL_NS, Replies, with_w14
-from .answer_silent import Writer, _explode, _nodes, apply_edit, apply_silent, paragraphs
+from .answer_silent import Writer, _explode, _nodes, _unique, apply_edit, apply_silent, paragraphs
 from .model import ANNOTATOR
 
 TRACKED = {q("ins"), q("del"), q("moveFrom"), q("moveTo")}
@@ -179,6 +179,9 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
                   default=0) if comments_root is not None else 0
     replies = Replies(doc_root, comments_root, ext_root, date) if comments_root is not None else None
 
+    joins = {d["index"] for d in document or [] if d.get("join_next") and 0 <= d["index"] + 1 < len(paras)
+             and (choices.get(f"J{d['index']:03d}") or {}).get("choice") != "reject"}
+
     for ch in changes:
         sel = choices.get(ch.get("id", "")) or {}
         choice = sel.get("choice", "")
@@ -192,6 +195,8 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
             # положение первой версии: текста контрагента в рецензировании нет, ответ юриста — примечание к абзацу
             note = (sel.get("text") or "").strip() or (CLAUSE_REJECT if choice == "reject" else "")
             idx = ch.get("paragraph_index", -1)
+            if idx - 1 in joins:
+                idx -= 1  # абзац склеен с предыдущим: примечание — к склеенному, второй абзац удаляется
             if choice == "accept":
                 stats["accept"] += 1
             elif note and comments_root is not None and 0 <= idx < len(paras):
@@ -241,21 +246,25 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         else:
             stats["без отметки"] += 1
 
-    # склеенные абзацы: предложение разорвано в файле контрагента; в Word — наша правка (знак абзаца удаляется)
-    for para in document or []:
-        key = f"J{para.get('index', -1):03d}"
-        if not para.get("join_next") or (choices.get(key) or {}).get("choice") == "reject":
-            continue
-        idx = para["index"]
+    # склеенные абзацы: предложение разорвано в файле контрагента. Текст второго абзаца вставляется в конец первого нашей
+    # правкой, а сам второй абзац удаляется: нумерация и вид первого остаются (при удалении знака абзаца Word
+    # оставил бы вид второго).
+    for idx in sorted(joins):
         writer = Writer(author, date, max_id)
-        if 0 <= idx + 1 < len(paras):
-            _explode(paras[idx])
-            nodes = _nodes(paras[idx])
-            if nodes and not nodes[-1][2].endswith(" "):
-                writer.insert_after(nodes[-1][0], " ", nodes[-1][0])  # слова не слипаются: «26.2-1 НК РФ.»
-            writer.mark_paragraph(paras[idx], "del")
-            max_id = writer.max_id
-            stats["join"] += 1
+        head, rest = paras[idx], paras[idx + 1]
+        _explode(head)
+        _explode(rest)
+        tail = "".join(t for _, _, t in _nodes(rest))
+        last, runs = _nodes(head), _unique([r for r, _, t in _nodes(rest) if t])
+        if not last or not runs or not tail.strip():
+            stats["без отметки"] += 1
+            continue
+        body = "".join(t for _, _, t in last)
+        writer.insert_after(last[-1][0], ("" if body.endswith(" ") else " ") + tail.strip(), last[-1][0])
+        writer.delete_runs(runs)
+        writer.mark_paragraph(rest, "del")
+        max_id = writer.max_id
+        stats["join"] += 1
 
     def ser(root) -> bytes:
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
