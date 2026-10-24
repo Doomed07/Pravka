@@ -207,4 +207,38 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
             continue
         target["comments"].append({"author": cm.author, "date": cm.date, "text": cm.text, "ours": cm.author in ours,
                                    "anchor": cm.anchor})
+    mark_broken_paragraphs(out)
     return out
+
+
+
+_END = ".;:!?)»\"…"
+_NUMBERED = re.compile(r"^\s*(\d+(\.\d+)*[.)]?|[а-яa-z][.)])\s")
+MAX_TAIL = 40  # обрывок из следующего абзаца — не длиннее (символов)
+
+
+def _plain(p: dict) -> str:
+    return "".join(s["t"] for s in p["segments"]).strip()
+
+
+def mark_broken_paragraphs(out: list[dict]) -> int:
+    """Предложение, разорванное границей абзаца («…гл. 26.2-1» и отдельным абзацем «НК РФ.»): абзацу, который надо
+    склеить со следующим, ставится join_next. Осторожно: оба абзаца без правок и вне таблиц, следующий идёт сразу за
+    первым, не пронумерован, не список, короткий и заканчивается знаком конца предложения, а первый до конца не дошёл.
+    Склейка — исправление вёрстки, не смысла: на сайте она подсвечена, юрист может её отклонить."""
+    n = 0
+    for p, q in zip(out, out[1:]):
+        if p["index"] < 0 or q["index"] != p["index"] + 1 or p.get("table") or q.get("table"):
+            continue
+        if any(x["k"] != "equal" for x in p["segments"] + q["segments"]) or p["changes"] or q["changes"]:
+            continue
+        if p.get("comments") or q.get("comments") or q.get("label") or q.get("list") or p.get("list") == "bullet":
+            continue
+        a, b = _plain(p), _plain(q)
+        if len(a) < 40 or not b or len(b) > MAX_TAIL or a[-1] in _END or b[-1] not in ".;" or _NUMBERED.match(b):
+            continue
+        if p["style"] != q["style"] and not (p["style"] or "").lower().startswith("list"):
+            continue
+        p["join_next"] = True
+        n += 1
+    return n

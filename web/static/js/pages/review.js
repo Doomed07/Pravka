@@ -449,6 +449,7 @@ function styled(s, inner) {
 
 function segment(s) {
   if (s.k === 'equal') return styled(s, s.t);
+  if (s.k === 'fixed') return html`<mark class="doc__fixed" title="Склеено: предложение было разорвано границей абзаца в файле контрагента">${styled(s, s.t)}</mark>`;
   // ins/del — настоящие теги: экранные дикторы и копирование текста понимают правку
   const tag = s.k.endsWith('ins') ? 'ins' : 'del';
   return html`${tag === 'ins' ? html`<ins class="${SEGMENT[s.k]}" title="${SEGMENT_LABEL[s.k]}">${styled(s, s.t)}</ins>` : html`<del class="${SEGMENT[s.k]}" title="${SEGMENT_LABEL[s.k]}">${styled(s, s.t)}</del>`}`;
@@ -486,6 +487,34 @@ const plain = (para) => para.segments.map((s) => s.t).join('');
 // Править можно абзац без отметок в рецензировании: в абзаце с правкой контрагента отвечают решением по правке.
 const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal');
 
+// Предложение, разорванное границей абзаца в файле контрагента: движок помечает первый абзац (join_next), сайт показывает
+// склеенный текст с подсветкой. Решение «не склеивать» — choice reject у номера J<абзац>; в Word склейка — наша правка.
+const joinKey = (index) => 'J' + String(index).padStart(3, '0');
+
+function joinBroken(doc) {
+  const out = [];
+  for (let i = 0; i < doc.length; i++) {
+    const p = doc[i];
+    const q = doc[i + 1];
+    const refused = CHOICES.get(joinKey(p.index))?.choice === 'reject';
+    if (p.join_next && q && q.index === p.index + 1 && !refused) {
+      out.push({ ...p, joined: true, segments: [...p.segments, { k: 'equal', t: ' ' }, ...q.segments.map((x) => ({ ...x, k: 'fixed' }))] });
+      i++;
+    } else out.push(p);
+  }
+  return out;
+}
+
+function joinBar(para) {
+  if (para.joined) {
+    return html`<span class="doc__fixnote">склеено: предложение было разорвано в файле <button class="doc__unjoin" type="button" data-join="${joinKey(para.index)}" data-on="1">Не склеивать</button></span>`;
+  }
+  if (para.join_next) {
+    return html`<span class="doc__fixnote">предложение разорвано в файле <button class="doc__unjoin" type="button" data-join="${joinKey(para.index)}">Склеить</button></span>`;
+  }
+  return '';
+}
+
 function row(para, i, total, byID, order, shown) {
   const changes = para.changes.map((id) => byID.get(id)).filter(Boolean);
   const silent = para.segments.some((s) => s.k.startsWith('silent'));
@@ -506,7 +535,7 @@ function row(para, i, total, byID, order, shown) {
     <div class="doc__row">
       <div class="doc__num${first && verdict(first).mod === 'reject' ? ' doc__num--hot' : ''}">${first ? num(order.get(first.id)) : ''}</div>
       <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${edit}${look.style ? html` style="${look.style}"` : ''}>
-        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}
+        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${joinBar(para)}${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}
         ${para.index < 0 ? html` <span class="tag tag--silent">абзац удалён без отметки</span>` : ''}
         ${partyComments(para.comments)}
       </div>
@@ -564,6 +593,7 @@ function blocks(doc) {
 }
 
 function documentView(doc, changes, order) {
+  doc = joinBroken(doc);
   const byID = new Map(changes.map((c) => [c.id, c]));
   const placed = new Set(doc.flatMap((p) => p.changes));
   const orphans = changes.filter((c) => !placed.has(c.id));
@@ -916,6 +946,22 @@ function wireEditing(id) {
   });
 }
 
+function wireJoin(id) {
+  document.querySelectorAll('.doc__unjoin').forEach((b) => {
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      b.disabled = true;
+      try {
+        await reviews.saveChoice(id, b.dataset.join, b.dataset.on ? 'reject' : '', '');
+        location.reload();
+      } catch {
+        b.disabled = false;
+        b.textContent = 'Не удалось, ещё раз?';
+      }
+    });
+  });
+}
+
 function wireNotesLayout() {
   const doc = document.querySelector('.doc');
   if (!doc) return;
@@ -993,6 +1039,7 @@ async function load() {
   wire(id);
   if (doc && doc.length) {
     wireEditing(id);
+    wireJoin(id);
     wireNotesLayout();
     wireDecisions(id, changes || []);
     loadWordings(id);

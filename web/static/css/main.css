@@ -2427,7 +2427,7 @@ select.form__input {
   margin-left: 8px;
   padding: 1px 8px;
   border-radius: 999px;
-  background: var(--surface-2, var(--line-soft));
+  background: var(--chip);
   font-size: 12px;
 }
 
@@ -2464,4 +2464,30 @@ select.form__input {
 .doc__editstatus {
   color: var(--muted);
   font-size: 13px;
+}
+
+/* Склеенное предложение: исправление вёрстки файла контрагента, подсвечено */
+.doc__fixed {
+  background: var(--chip);
+  box-shadow: 0 0 0 2px var(--chip);
+  border-radius: 3px;
+  color: inherit;
+}
+
+.doc__fixnote {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.doc__unjoin {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }

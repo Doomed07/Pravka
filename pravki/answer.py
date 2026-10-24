@@ -22,7 +22,7 @@ from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
 from .answer_replies import EXT_PART, REL_NS, Replies, with_w14
-from .answer_silent import Writer, apply_edit, apply_silent, paragraphs
+from .answer_silent import Writer, _explode, _nodes, apply_edit, apply_silent, paragraphs
 from .model import ANNOTATOR
 
 TRACKED = {q("ins"), q("del"), q("moveFrom"), q("moveTo")}
@@ -162,7 +162,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         rels_root = _read_part(zin, "word/_rels/document.xml.rels")
         raw = {n: zin.read(n) for n in names}
 
-    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "без отметки": 0, "наших примечаний убрано": 0}
+    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "без отметки": 0, "наших примечаний убрано": 0}
     stats["наших примечаний убрано"] = _strip_annotations(doc_root, comments_root)
     by_id: dict[str, list] = {}
     max_id = 0
@@ -240,6 +240,22 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
             max_id = writer.max_id
         else:
             stats["без отметки"] += 1
+
+    # склеенные абзацы: предложение разорвано в файле контрагента; в Word — наша правка (знак абзаца удаляется)
+    for para in document or []:
+        key = f"J{para.get('index', -1):03d}"
+        if not para.get("join_next") or (choices.get(key) or {}).get("choice") == "reject":
+            continue
+        idx = para["index"]
+        writer = Writer(author, date, max_id)
+        if 0 <= idx + 1 < len(paras):
+            _explode(paras[idx])
+            nodes = _nodes(paras[idx])
+            if nodes and not nodes[-1][2].endswith(" "):
+                writer.insert_after(nodes[-1][0], " ", nodes[-1][0])  # слова не слипаются: «26.2-1 НК РФ.»
+            writer.mark_paragraph(paras[idx], "del")
+            max_id = writer.max_id
+            stats["join"] += 1
 
     def ser(root) -> bytes:
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)

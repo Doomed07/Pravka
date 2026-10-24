@@ -178,3 +178,24 @@ def test_site_paragraph_edit_becomes_tracked_changes(tmp_path):
     src2 = str(make_docx(tmp_path / "t.docx", tracked))
     stats2 = build_answer(src2, str(tmp_path / "a2.docx"), [], {"P000": {"choice": "edit", "text": "Срок 5 дней"}}, AUTHOR, None)
     assert stats2["edit"] == 0 and stats2["без отметки"] == 1
+
+
+def test_sentence_broken_by_paragraph_is_found_and_joined_in_word(tmp_path):
+    """«…на основании гл. 26.2-1» и отдельным абзацем «НК РФ.»: оба абзаца склеиваются нашей правкой в рецензировании;
+    заголовки, пронумерованные и обычные короткие абзацы не трогаются; отклонённая склейка в файл не попадает."""
+    from pravki.docx_reader import view_paragraphs
+    body = (p(r("1.3 Стоимость услуг составляет 475 000 рублей. НДС не облагается на основании гл. 26.2-1")) + p(r("НК РФ.")) +
+            p(r("2.1 Исполнитель обязан оказать услуги надлежащего качества в согласованный срок")) + p(r("Подписи сторон")) +
+            p(r("3.1 Заказчик оплачивает услуги в течение десяти дней со дня подписания акта.")) + p(r("Конец.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    theirs = read_docx(src)
+    document = build_unified(None, theirs, set(), [])
+    marked = [d["index"] for d in document if d.get("join_next")]
+    assert marked == [0]  # только «НК РФ.»; «Подписи сторон» без точки — не хвост предложения, а «Конец.» следует за законченным
+    out = str(tmp_path / "a.docx")
+    stats = build_answer(src, out, [], {}, AUTHOR, document)
+    assert stats["join"] == 1
+    joined = [normalize(t) for _, t in view_paragraphs(read_docx(out), "accepted", set()) if normalize(t)]
+    assert joined[0].endswith("26.2-1 НК РФ.") and "НК РФ." not in joined[1:2]
+    stats2 = build_answer(src, str(tmp_path / "b.docx"), [], {"J000": {"choice": "reject"}}, AUTHOR, document)
+    assert stats2["join"] == 0
