@@ -56,7 +56,24 @@ func TestReviewsRepository_Integration(t *testing.T) {
 	if saved.ID == 0 || saved.Counts["красные линии"] != 2 || len(saved.Warnings) != 1 || saved.CreatedAt.IsZero() {
 		t.Fatalf("saved = %+v", saved)
 	}
+	if !saved.HasDocx {
+		t.Errorf("разбор с единой версией в Word: HasDocx = false")
+	}
+	noDocx, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "Договор.pdf"},
+		core_domain.ReviewFiles{ReportHTML: []byte("x"), ReportXLSX: []byte("PK"), Changes: []byte("[]")})
+	if err != nil || noDocx.HasDocx {
+		t.Fatalf("разбор PDF без Word: %+v, %v", noDocx, err)
+	}
+	if got, err := repo.GetReview(ctx, u1, noDocx.ID); err != nil || got.HasDocx {
+		t.Errorf("GetReview без Word: %+v, %v", got, err)
+	}
+	if _, err := repo.GetFile(ctx, u1, noDocx.ID, "docx"); err == nil {
+		t.Errorf("единой версии в Word нет, а файл отдан")
+	}
 
+	if err := repo.DeleteReview(ctx, u1, noDocx.ID); err != nil {
+		t.Fatal(err)
+	}
 	list, err := repo.ListReviews(ctx, u1, 10, 0)
 	if err != nil || len(list) != 1 || list[0].TheirsName != "Договор 03.04.docx" {
 		t.Fatalf("list = %+v, err = %v", list, err)
@@ -459,5 +476,138 @@ func TestReviewsRepository_SemanticPrecedents(t *testing.T) {
 	}
 	if _, err := repo.ListSemanticPrecedents(ctx, user+100000, cur, nil); !errors.Is(err, core_errors.ErrNotFound) {
 		t.Fatalf("other user's review: err = %v", err)
+	}
+}
+
+// Договор (проект) и его раунды: разбор без ProjectID открывает новый договор, с ProjectID — очередной раунд;
+// чужой договор не виден; последний удалённый разбор уносит договор; прежние правки и решения читаются по раундам.
+func TestReviewsRepository_Projects(t *testing.T) {
+	if os.Getenv("PRAVKI_TEST_DB") == "" {
+		t.Skip("PRAVKI_TEST_DB не задан: нужна настоящая PostgreSQL")
+	}
+	ctx := context.Background()
+	pool, err := core_postgres_pgx.NewConnPool(core_postgres_pgx.NewConfigMust(), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	var u1, u2 int
+	for i, name := range []string{"repo_proj_a", "repo_proj_b"} {
+		_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE username = $1`, name)
+		var id int
+		if err := pool.QueryRow(ctx, `INSERT INTO pravkiapp.users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
+			name, name+"@example.com", "$2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234").Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			u1 = id
+		} else {
+			u2 = id
+		}
+	}
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE id IN ($1, $2)`, u1, u2) }()
+	repo := NewReviewsRepository(pool)
+	files := func(changes string) core_domain.ReviewFiles {
+		return core_domain.ReviewFiles{ReportHTML: []byte("x"), ReportXLSX: []byte("PK"), Changes: []byte(changes)}
+	}
+
+	r1, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "v1.docx", ProjectName: "Поставка Омега",
+		OurRole: "Поставщик", Playbook: "supply.yaml", PlaybookName: "Поставка", ContractType: "supply"},
+		files(`[{"id":"E001","fingerprint":"a","clause":"2.2","topic":"порядок и сроки оплаты","kind":"replace","before":"30%","after":"10%"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.ProjectID == 0 || r1.ProjectName != "Поставка Омега" || r1.Round != 1 {
+		t.Fatalf("первый разбор открывает договор: %+v", r1)
+	}
+	// очередной раунд — в тот же договор; название игнорируется
+	r2, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "v2.docx", ProjectID: r1.ProjectID,
+		ProjectName: "другое название", OurRole: "Поставщик", Playbook: "supply.yaml", PlaybookName: "Поставка", ContractType: "supply"},
+		files(`[{"id":"E001","fingerprint":"a","clause":"2.2","topic":"порядок и сроки оплаты","kind":"replace","before":"30%","after":"10%"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r2.ProjectID != r1.ProjectID || r2.ProjectName != "Поставка Омега" || r2.Round != 2 {
+		t.Fatalf("второй раунд: %+v", r2)
+	}
+	if got, err := repo.GetReview(ctx, u1, r1.ID); err != nil || got.Round != 1 || got.ProjectID != r1.ProjectID {
+		t.Errorf("номер раунда первого разбора не меняется: %+v, %v", got, err)
+	}
+	// другой договор того же юриста не мешает номерам
+	other, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "z.docx", ProjectName: "   "}, files(`[]`))
+	if err != nil || other.Round != 1 || other.ProjectID == r1.ProjectID || other.ProjectName != "Договор" {
+		t.Fatalf("другой договор: %+v, %v", other, err)
+	}
+	// в чужой договор раунд не добавить: внешний ключ не пускает несуществующий, владельца проверяет сервис через GetProject
+	if _, err := repo.GetProject(ctx, u2, r1.ProjectID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("чужой договор виден: %v", err)
+	}
+	if _, err := repo.ListProjectRounds(ctx, u2, r1.ProjectID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("раунды чужого договора видны: %v", err)
+	}
+
+	p, err := repo.GetProject(ctx, u1, r1.ProjectID)
+	if err != nil || p.Name != "Поставка Омега" || p.Rounds != 2 || p.LastReviewID != r2.ID || p.OurRole != "Поставщик" ||
+		p.Playbook != "supply.yaml" || p.ContractType != "supply" {
+		t.Fatalf("договор: %+v, %v", p, err)
+	}
+	list, err := repo.ListProjects(ctx, u1, 10)
+	if err != nil || len(list) != 2 || list[0].ID != other.ProjectID || list[1].ID != r1.ProjectID {
+		t.Fatalf("список договоров (последний изменённый — первым): %+v, %v", list, err)
+	}
+	if none, err := repo.ListProjects(ctx, u2, 10); err != nil || len(none) != 0 {
+		t.Fatalf("договоры чужого юриста: %+v, %v", none, err)
+	}
+
+	if err := repo.SaveChoice(ctx, u1, r1.ID, core_domain.ReviewChoice{ChangeID: "E001", Choice: core_domain.ChoiceReject}); err != nil {
+		t.Fatal(err)
+	}
+	rounds, err := repo.ListProjectRounds(ctx, u1, r1.ProjectID)
+	if err != nil || len(rounds) != 2 || rounds[0].ReviewID != r1.ID || rounds[0].Round != 1 || rounds[1].ReviewID != r2.ID || rounds[1].Round != 2 {
+		t.Fatalf("раунды: %+v, %v", rounds, err)
+	}
+	if len(rounds[0].Choices) != 1 || rounds[0].Choices[0].ChangeID != "E001" || rounds[0].Choices[0].Choice != core_domain.ChoiceReject ||
+		len(rounds[1].Choices) != 0 || !strings.Contains(string(rounds[0].Changes), `"fingerprint"`) {
+		t.Errorf("решения и правки раундов: %+v", rounds)
+	}
+	// сравнение раундов на настоящих данных: правка раунда 2 — повтор правки раунда 1, которую вы отклонили
+	r1changes, _ := core_domain.ParseRoundChanges(rounds[0].Changes)
+	r2changes, _ := core_domain.ParseRoundChanges(rounds[1].Changes)
+	cmp := core_domain.CompareRounds(r2changes, []core_domain.RoundSource{{ReviewID: r1.ID, Round: 1, Changes: r1changes,
+		Decisions: map[string]core_domain.ReviewChoice{"E001": rounds[0].Choices[0]}}})
+	if l := cmp.Links[0]; l.Relation != core_domain.RelationRepeat || l.Decision != core_domain.ChoiceReject {
+		t.Errorf("повтор: %+v", l)
+	}
+
+	// удалили не последний разбор — договор остаётся; удалили последний — договор уходит вместе с ним
+	if err := repo.DeleteReview(ctx, u1, r1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := repo.GetProject(ctx, u1, r1.ProjectID); err != nil || p.Rounds != 1 {
+		t.Fatalf("договор после удаления одного из двух разборов: %+v, %v", p, err)
+	}
+	if got, err := repo.GetReview(ctx, u1, r2.ID); err != nil || got.Round != 1 {
+		t.Errorf("оставшийся разбор стал первым раундом: %+v, %v", got, err)
+	}
+	if err := repo.DeleteReview(ctx, u1, r2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetProject(ctx, u1, r1.ProjectID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("договор без разборов остался: %v", err)
+	}
+	if _, err := repo.GetProject(ctx, u1, other.ProjectID); err != nil {
+		t.Errorf("чужой по договору разбор удалил не свой договор: %v", err)
+	}
+	var left int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM pravkiapp.projects WHERE user_id = $1`, u1).Scan(&left)
+	if left != 1 {
+		t.Errorf("осталось договоров: %d, want 1", left)
+	}
+	// удаление договора уносит и его разборы (каскад)
+	if _, err := pool.Exec(ctx, `DELETE FROM pravkiapp.projects WHERE id = $1`, other.ProjectID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetReview(ctx, u1, other.ID); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("разбор удалённого договора остался: %v", err)
 	}
 }

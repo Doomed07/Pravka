@@ -45,7 +45,7 @@ func (f *fakeService) Get(_ context.Context, userID, id int) (core_domain.Contra
 	if userID != 1 {
 		return core_domain.ContractReview{}, core_errors.ErrNotFound
 	}
-	return core_domain.ContractReview{ID: id}, nil
+	return core_domain.ContractReview{ID: id, HasDocx: id != 7}, nil // разбор 7 — файл контрагента не .docx: Word нет
 }
 func (f *fakeService) File(_ context.Context, userID, id int, kind string) ([]byte, error) {
 	if userID != 1 {
@@ -107,6 +107,33 @@ func (f *fakeService) Summary(_ context.Context, userID, _ int) (core_domain.Rou
 	return core_domain.RoundSummary{Technical: 2, Topics: []core_domain.RoundTopic{{Topic: "порядок и сроки оплаты",
 		Verdicts: map[string]int{core_domain.VerdictReject: 1}, Silent: 1, Items: []core_domain.RoundItem{{ChangeID: "E003",
 			Clause: "2.3", Kind: "replace", Verdict: core_domain.VerdictReject, Silent: true, Before: "10 дней", After: "30 дней"}}}}}, nil
+}
+func (f *fakeService) Projects(_ context.Context, userID int) ([]core_domain.ProjectSummary, error) {
+	if userID != 1 {
+		return []core_domain.ProjectSummary{}, nil
+	}
+	return []core_domain.ProjectSummary{{Project: core_domain.Project{ID: 3, Name: "Поставка Омега"}, Rounds: 2, LastReviewID: 9,
+		Playbook: "supply.yaml", OurRole: "Поставщик", ContractType: "supply"}}, nil
+}
+func (f *fakeService) Project(_ context.Context, userID, id int) (core_domain.ProjectView, error) {
+	if userID != 1 || id != 3 {
+		return core_domain.ProjectView{}, core_errors.ErrNotFound
+	}
+	return core_domain.ProjectView{Project: core_domain.ProjectSummary{Project: core_domain.Project{ID: 3, Name: "Поставка Омега"}, Rounds: 2},
+		Rounds: []core_domain.ProjectRoundView{{ReviewID: 8, Round: 1, TheirsName: "v1.docx", Total: 4, New: 4},
+			{ReviewID: 9, Round: 2, TheirsName: "v2.docx", Total: 5, New: 1, Repeat: 2, Returned: 1, Closed: 3}}}, nil
+}
+func (f *fakeService) Rounds(_ context.Context, userID, _ int) (core_domain.ReviewRounds, error) {
+	if userID != 1 {
+		return core_domain.ReviewRounds{}, core_errors.ErrNotFound
+	}
+	return core_domain.ReviewRounds{Project: core_domain.ProjectSummary{Project: core_domain.Project{ID: 3, Name: "Поставка Омега"}, Rounds: 2},
+		Round: 2, PrevReviewID: 8, Comparison: core_domain.RoundComparison{
+			Links: []core_domain.RoundLink{{ChangeID: "E001", Relation: core_domain.RelationRepeat, Round: 1, ReviewID: 8,
+				PastChangeID: "E004", PastBefore: "30%", PastAfter: "10%", Decision: core_domain.ChoiceReject},
+				{ChangeID: "E002", Relation: core_domain.RelationNew}},
+			Closed: []core_domain.RoundClosed{{Round: 1, ReviewID: 8, ChangeID: "E007", Clause: "5.1", Decision: core_domain.ChoiceCounter,
+				DecisionText: "0,05%"}}}}, nil
 }
 func (f *fakeService) Answer(_ context.Context, userID, _ int, author string) (engine.AnswerResult, error) {
 	if userID != 1 {
@@ -294,5 +321,78 @@ func TestChoicesAndAnswer(t *testing.T) {
 		if rec := do(2, c.method, c.path, c.body); rec.Code != http.StatusNotFound {
 			t.Errorf("someone else's %s %s: %d, want 404", c.method, c.path, rec.Code)
 		}
+	}
+}
+
+func TestProjectsAndRounds(t *testing.T) {
+	get := func(userID int, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		router(&fakeService{}, userID).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	if rec := get(1, "/projects"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"Поставка Омега"`) ||
+		!strings.Contains(rec.Body.String(), `"rounds":2`) || !strings.Contains(rec.Body.String(), `"our_role":"Поставщик"`) ||
+		!strings.Contains(rec.Body.String(), `"last_review_id":9`) {
+		t.Fatalf("projects: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(2, "/projects"); rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("projects of a user without any: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(1, "/projects/3"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"review_id":9`) ||
+		!strings.Contains(rec.Body.String(), `"returned":1`) || !strings.Contains(rec.Body.String(), `"closed":3`) {
+		t.Fatalf("project: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(1, "/reviews/9/rounds"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"relation":"repeat"`) ||
+		!strings.Contains(rec.Body.String(), `"past_change_id":"E004"`) || !strings.Contains(rec.Body.String(), `"decision":"reject"`) ||
+		!strings.Contains(rec.Body.String(), `"prev_review_id":8`) || !strings.Contains(rec.Body.String(), `"decision_text":"0,05%"`) {
+		t.Fatalf("rounds: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range []struct {
+		user int
+		path string
+		want int
+	}{
+		{0, "/projects", http.StatusUnauthorized}, {0, "/projects/3", http.StatusUnauthorized}, {0, "/reviews/9/rounds", http.StatusUnauthorized},
+		{2, "/projects/3", http.StatusNotFound}, {1, "/projects/4", http.StatusNotFound}, {2, "/reviews/9/rounds", http.StatusNotFound},
+		{1, "/projects/abc", http.StatusNotFound},
+	} {
+		if rec := get(c.user, c.path); rec.Code != c.want {
+			t.Errorf("user %d GET %s: %d, want %d", c.user, c.path, rec.Code, c.want)
+		}
+	}
+}
+
+func TestCreate_ProjectFields(t *testing.T) {
+	svc := &fakeService{}
+	rec := httptest.NewRecorder()
+	router(svc, 1).ServeHTTP(rec, upload(t, map[string]string{"project_id": "3"}, true))
+	if rec.Code != http.StatusCreated || svc.got.ProjectID != 3 || svc.got.ProjectName != "" {
+		t.Fatalf("очередной раунд: status = %d, got %+v", rec.Code, svc.got)
+	}
+	rec = httptest.NewRecorder()
+	router(svc, 1).ServeHTTP(rec, upload(t, map[string]string{"project_name": "Поставка Омега"}, true))
+	if rec.Code != http.StatusCreated || svc.got.ProjectID != 0 || svc.got.ProjectName != "Поставка Омега" {
+		t.Fatalf("новый договор: status = %d, got %+v", rec.Code, svc.got)
+	}
+	for _, bad := range []string{"abc", "0", "-2", "3.5"} {
+		rec = httptest.NewRecorder()
+		router(svc, 1).ServeHTTP(rec, upload(t, map[string]string{"project_id": bad}, true))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("project_id %q: status = %d, want 400", bad, rec.Code)
+		}
+	}
+}
+
+func TestGet_HasDocxTellsWhetherWordFileExists(t *testing.T) {
+	get := func(path string) string {
+		rec := httptest.NewRecorder()
+		router(&fakeService{}, 1).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Body.String()
+	}
+	if body := get("/reviews/5"); !strings.Contains(body, `"has_docx":true`) {
+		t.Errorf("разбор docx: %s", body)
+	}
+	if body := get("/reviews/7"); !strings.Contains(body, `"has_docx":false`) {
+		t.Errorf("разбор PDF или odt: %s", body)
 	}
 }

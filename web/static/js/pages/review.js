@@ -174,6 +174,51 @@ function replyBlock(ch) {
     </div>`;
 }
 
+// ---------- Раунды договора ----------
+
+// Связь правок с прошлыми раундами: id правки → {relation, round, review_id, past_change_id, decision…}. Только подсказка.
+const LINKS = new Map();
+let ROUNDS = null;
+
+function roundMark(ch) {
+  const l = LINKS.get(ch.id);
+  if (!l || l.relation === 'new') return '';
+  const past = `/reviews/${l.review_id}#c-${l.past_change_id}`;
+  const decided = l.decision ? ` · вы ${PAST_CHOICE[l.decision] || l.decision}` : '';
+  const text = l.decision === 'counter' && l.decision_text ? html` — «${short(l.decision_text, 120)}»` : '';
+  return l.relation === 'repeat'
+    ? html`<p class="round-mark"><b>Повторная правка</b> · <a href="${past}">раунд ${l.round}</a>${decided}${text}</p>`
+    : html`<p class="round-mark round-mark--returned"><b>Контрагент вернулся к пункту</b> · в <a href="${past}">раунде ${l.round}</a> было «${short(l.past_before, 50) || '—'}» → «${short(l.past_after, 50) || '—'}»${decided}${text}</p>`;
+}
+
+function roundBar(r) {
+  if (!ROUNDS) return '';
+  const n = (rel) => ROUNDS.links.filter((l) => l.relation === rel).length;
+  const closed = ROUNDS.closed || [];
+  const parts = ROUNDS.round > 1
+    ? [`новых ${n('new')}`, `повторных ${n('repeat')}`, `вернулись к пункту ${n('returned')}`, `снято контрагентом ${closed.length}`]
+    : [];
+  return html`
+    <section class="round-bar" aria-label="Раунд договора">
+      <p class="round-bar__line"><b>Раунд ${ROUNDS.round}</b> по договору «${ROUNDS.project.name}»${parts.length ? html`: ${parts.join(' · ')}` : ''}</p>
+      <p class="round-bar__actions">
+        <a href="/projects/${ROUNDS.project.id}">История договора</a>
+        <a class="button button--ghost" href="/?project=${ROUNDS.project.id}">Следующий раунд</a>
+      </p>
+      ${closed.length ? html`
+        <details class="round-bar__closed">
+          <summary>Что контрагент снял с прошлого раунда: ${closed.length}</summary>
+          <ul class="past__list">
+            ${closed.map((c) => html`<li class="past__item">
+              <p class="past__head">${c.clause ? `п. ${c.clause} · ` : ''}${c.topic || 'без темы'} · <a href="/reviews/${c.review_id}#c-${c.change_id}">раунд ${c.round}</a></p>
+              <p class="past__diff">было «${short(c.before, 60) || '—'}», стало «${short(c.after, 60) || '—'}»</p>
+              <p class="past__choice">${c.decision ? `Ваше решение: ${PAST_CHOICE[c.decision] || c.decision}` : 'Вы не решали'}${c.decision === 'counter' && c.decision_text ? html` — «${short(c.decision_text, 120)}»` : ''}</p>
+            </li>`)}
+          </ul>
+        </details>` : ''}
+    </section>`;
+}
+
 // ---------- Как решали раньше ----------
 
 // Прошлые решения юриста по похожим правкам: id правки → список. Только подсказка: решает юрист.
@@ -337,6 +382,7 @@ function note(ch, order) {
         <span class="note__level note__level--${v.mod}">${v.label}</span>
       </div>
       ${carried ? html`<p><span class="tag tag--line">из прошлого раунда</span></p>` : ''}
+      ${roundMark(ch)}
       ${diff}
       ${ch.explanation ? html`<p>${ch.explanation}</p>` : ''}
       ${ch.suggested ? html`<p class="note__suggest">Наша позиция: ${ch.suggested}</p>` : ''}
@@ -526,7 +572,7 @@ function head(r, hasDocx) {
   return html`
     <header class="rv-head">
       <div>
-        <p class="eyebrow">Единая версия договора</p>
+        <p class="eyebrow">${r.project_name ? `${r.project_name} · раунд ${r.round}` : 'Единая версия договора'}</p>
         <h1 class="rv-head__title">${r.theirs_name}</h1>
         <p class="rv-head__meta">Наша редакция: ${r.base_name || 'не загружена'} · Плейбук: ${r.playbook_name || 'без плейбука'}${r.side ? html` · ${r.side}` : ''}</p>
       </div>
@@ -557,6 +603,16 @@ function defaultAuthor() {
   }
 }
 
+// Файл контрагента не .docx (.odt или PDF): единая версия и ответ собираются из Word-файла, поэтому только для .docx.
+function noWordNote() {
+  return html`
+    <section class="answer" aria-label="Word недоступен">
+      <h2 class="answer__title">Word недоступен</h2>
+      <p class="answer__progress">Файл контрагента не .docx: Word с примечаниями и ответ контрагенту в Word собираются только из .docx.
+      Решения по правкам сохраняются, отчёт и Excel доступны.</p>
+    </section>`;
+}
+
 function answerPanel(changes) {
   const [done, total] = decidedCount(changes);
   return html`
@@ -574,11 +630,12 @@ function unifiedView(r, doc, changes, sum) {
   const order = new Map(changes.map((c, i) => [c.id, i + 1]));
   const warnings = r.warnings || [];
   return html`
-    ${head(r, true)}
+    ${head(r, r.has_docx)}
+    ${roundBar(r)}
     ${roundView(sum)}
     <div class="rv">
       <aside class="rv-side">
-        ${answerPanel(changes)}
+        ${r.has_docx ? answerPanel(changes) : noWordNote()}
         ${summary(changes)}
         ${changes.length ? list(changes, order) : html`<p class="empty-state">Правок не найдено.</p>`}
         <p class="legend">
@@ -682,6 +739,7 @@ function wireDecisions(id, changes) {
   const build = $('#answer-build');
   const author = $('#answer-author');
   const status = $('#answer-status');
+  if (!build) return; // у разбора не из .docx панели ответа нет
   build.addEventListener('click', async () => {
     try {
       localStorage.setItem(AUTHOR_KEY, author.value.trim());
@@ -744,9 +802,12 @@ async function load() {
     return;
   }
   const id = pathID();
-  const [r, doc, changes, choices, precedents, sum] = await Promise.all([reviews.get(id), reviews.document(id),
+  const [r, doc, changes, choices, precedents, sum, rounds] = await Promise.all([reviews.get(id), reviews.document(id),
     reviews.changes(id), reviews.choices(id).catch(() => []), reviews.precedents(id).catch(() => []),
-    reviews.summary(id).catch(() => null)]);
+    reviews.summary(id).catch(() => null), reviews.rounds(id).catch(() => null)]);
+  ROUNDS = rounds;
+  LINKS.clear();
+  for (const l of (rounds && rounds.links) || []) LINKS.set(l.change_id, l);
   PRECEDENTS.clear();
   for (const p of precedents || []) {
     if (!PRECEDENTS.has(p.change_id)) PRECEDENTS.set(p.change_id, []);

@@ -40,6 +40,7 @@ from .answer import build_answer
 from .docx_reader import DocxError
 from .llm import Explainer, LLMError, OpenAICompatClient, is_local
 from .parties import PartiesError, RoleCheckError, SideConfig, profile_from_args
+from .readers import sniff_format
 from .pipeline import DISCLAIMER, review_files
 from .playbook import PlaybookError, load_playbook
 from .report import render_html, render_xlsx
@@ -207,6 +208,7 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
             with open(base, "wb") as f:
                 f.write(files["base"])
         try:
+            source_format = sniff_format(theirs)  # docx, odt или pdf: по содержимому, имя файла движку не передаётся
             side = SideConfig(profile=profile_from_args(names, inns), confirm_role=confirm)
             rv = review_files(theirs, base, pb, our_authors=authors, explainer=make_explainer(), side=side)
         except RoleCheckError as ex:
@@ -219,10 +221,12 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
         render_xlsx(rv, xlsx_path)
         with open(xlsx_path, "rb") as f:
             xlsx = base64.b64encode(f.read()).decode("ascii")
-        unified_path = os.path.join(d, "unified.docx")
-        annotate_docx(theirs, unified_path, rv.changes, rv.document)
-        with open(unified_path, "rb") as f:
-            unified = base64.b64encode(f.read()).decode("ascii")
+        unified = ""  # Word с примечаниями собирается из XML файла контрагента: только для docx
+        if source_format == "docx":
+            unified_path = os.path.join(d, "unified.docx")
+            annotate_docx(theirs, unified_path, rv.changes, rv.document)
+            with open(unified_path, "rb") as f:
+                unified = base64.b64encode(f.read()).decode("ascii")
     return 200, {
         "counts": rv.counts(),
         "warnings": rv.warnings,
@@ -235,6 +239,7 @@ def review(fields: dict, files: dict, playbooks_root: str | None = None) -> tupl
         "changes": [c.to_dict() for c in rv.changes],
         "document": rv.document,
         "unified_docx": unified,
+        "source_format": source_format,
         "disclaimer": DISCLAIMER,
     }
 

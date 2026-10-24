@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
 	core_errors "github.com/Doomed07/Pravka/internal/core/errors"
+	core_logger "github.com/Doomed07/Pravka/internal/core/logger"
 	"github.com/Doomed07/Pravka/internal/engine"
+	"go.uber.org/zap"
 )
 
 type fakeRepo struct {
@@ -24,6 +29,13 @@ type fakeRepo struct {
 	files     []core_domain.ReviewFiles
 	listArg   [3]int
 	choices   []core_domain.ReviewChoice
+	project   core_domain.ProjectSummary // договор, который отдаёт GetProject; ID 0 — договора нет
+	rounds    []core_domain.ProjectRound
+	asked     [2]int // для кого и какой договор запрашивали
+	review    core_domain.ContractReview
+	queue     []int         // разборы, ждущие индексации (отдаются один раз)
+	sourceErr map[int]error // ошибка чтения исходных данных разбора
+	mu        sync.Mutex
 }
 
 func (f *fakeRepo) CreateReview(_ context.Context, rev core_domain.ContractReview, files core_domain.ReviewFiles) (core_domain.ContractReview, error) {
@@ -37,7 +49,7 @@ func (f *fakeRepo) ListReviews(_ context.Context, userID, limit, offset int) ([]
 	return nil, nil
 }
 func (f *fakeRepo) GetReview(context.Context, int, int) (core_domain.ContractReview, error) {
-	return core_domain.ContractReview{}, nil
+	return f.review, nil
 }
 func (f *fakeRepo) GetFile(_ context.Context, _, _ int, kind string) ([]byte, error) {
 	return []byte("file:" + kind), nil
@@ -63,9 +75,16 @@ func (f *fakeRepo) SaveVectors(_ context.Context, _ int, model string, v map[str
 	f.saves++
 	return nil
 }
-func (f *fakeRepo) ReviewsToIndex(context.Context, int) ([]int, error) { return nil, nil }
+func (f *fakeRepo) ReviewsToIndex(context.Context, int) ([]int, error) {
+	q := f.queue
+	f.queue = nil // очередь отдаём один раз: дальше в ней пусто
+	return q, nil
+}
 func (f *fakeRepo) NeedsIndex(context.Context, int, int) (bool, error) { return f.needIndex, nil }
-func (f *fakeRepo) IndexSource(context.Context, int) ([]byte, []core_domain.VectorChange, error) {
+func (f *fakeRepo) IndexSource(_ context.Context, id int) ([]byte, []core_domain.VectorChange, error) {
+	if err := f.sourceErr[id]; err != nil {
+		return nil, nil, err
+	}
 	return f.document, f.missing, nil
 }
 func (f *fakeRepo) SaveParagraphs(_ context.Context, _ int, _ string, p []core_domain.DocParagraph, v [][]float32) error {
@@ -76,8 +95,17 @@ func (f *fakeRepo) SaveParagraphs(_ context.Context, _ int, _ string, p []core_d
 	return nil
 }
 func (f *fakeRepo) MarkIndexed(_ context.Context, id int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.indexed = append(f.indexed, id)
 	return nil
+}
+
+// indexedSafe — копия списка проиндексированных: индексатор работает в своей горутине.
+func (f *fakeRepo) indexedSafe() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.indexed...)
 }
 func (f *fakeRepo) ListWordings(context.Context, int, int) ([]core_domain.Wording, error) {
 	return []core_domain.Wording{{ChangeID: "E001", Text: "прошлая редакция"}}, nil
@@ -93,8 +121,23 @@ func (f *fakeRepo) ListPrecedents(context.Context, int, int) ([]core_domain.Prec
 	return []core_domain.Precedent{{ChangeID: "E001", Choice: "reject"}}, nil
 }
 
+func (f *fakeRepo) GetProject(_ context.Context, userID, id int) (core_domain.ProjectSummary, error) {
+	f.asked = [2]int{userID, id}
+	if f.project.ID == 0 || f.project.ID != id || f.project.UserID != userID {
+		return core_domain.ProjectSummary{}, core_errors.ErrNotFound
+	}
+	return f.project, nil
+}
+func (f *fakeRepo) ListProjects(context.Context, int, int) ([]core_domain.ProjectSummary, error) {
+	return []core_domain.ProjectSummary{f.project}, nil
+}
+func (f *fakeRepo) ListProjectRounds(context.Context, int, int) ([]core_domain.ProjectRound, error) {
+	return f.rounds, nil
+}
+
 type fakeEngine struct {
 	noEmbed  bool
+	tries    int // сколько раз просили посчитать векторы, включая отказы
 	embedded []string
 	err      error
 	calls    int
@@ -109,6 +152,7 @@ func (f *fakeEngine) Answer(_ context.Context, unified, document, changes []byte
 }
 
 func (f *fakeEngine) Embed(_ context.Context, texts []string) (string, [][]float32, error) {
+	f.tries++
 	if f.noEmbed {
 		return "", nil, engine.ErrNoEmbedModel
 	}
@@ -156,7 +200,8 @@ func TestCreate_SavesReportsNotContracts(t *testing.T) {
 func TestCreate_RejectsBadUploadsBeforeEngine(t *testing.T) {
 	cases := map[string]core_domain.ReviewRequest{
 		"empty":       {Theirs: core_domain.UploadedFile{Name: "a.docx"}},
-		"not docx":    {Theirs: core_domain.UploadedFile{Name: "a.pdf", Data: []byte("PK..")}},
+		"not docx":    {Theirs: core_domain.UploadedFile{Name: "a.doc", Data: []byte("PK..")}},
+		"pdf is zip":  {Theirs: core_domain.UploadedFile{Name: "a.pdf", Data: []byte("PK..")}},
 		"not zip":     {Theirs: core_domain.UploadedFile{Name: "a.docx", Data: []byte("hello")}},
 		"bad base":    {Theirs: docx, Base: &core_domain.UploadedFile{Name: "b.doc", Data: []byte("PK..")}},
 		"long fields": {Theirs: docx, OurAuthors: string(make([]rune, 600))},
@@ -297,5 +342,207 @@ func TestIndexReview_ParagraphsAndChangesThenMarked(t *testing.T) {
 	repo2 := &fakeRepo{needIndex: true, document: []byte(doc)}
 	if _, err := NewReviewsService(repo2, &fakeEngine{noEmbed: true}).Wordings(context.Background(), 1, 7); err != nil || len(repo2.indexed) != 0 {
 		t.Fatalf("no model: err = %v, indexed = %v", err, repo2.indexed)
+	}
+}
+
+func TestCreate_NewProjectGetsNameFromEnteredOrFile(t *testing.T) {
+	repo := &fakeRepo{}
+	s := NewReviewsService(repo, &fakeEngine{})
+	if _, err := s.Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx}); err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.saved[0]; got.ProjectID != 0 || got.ProjectName != "Договор 03.04" {
+		t.Errorf("по умолчанию — имя файла без .docx: %+v", got)
+	}
+	if _, err := s.Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectName: "  Поставка   Омега "}); err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.saved[1]; got.ProjectName != "Поставка Омега" {
+		t.Errorf("введённое название: %+v", got)
+	}
+	eng := &fakeEngine{}
+	_, err := NewReviewsService(&fakeRepo{}, eng).Create(context.Background(), 7,
+		core_domain.ReviewRequest{Theirs: docx, ProjectName: strings.Repeat("я", 300)})
+	if !errors.Is(err, core_errors.ErrInvalidArgument) || eng.calls != 0 {
+		t.Errorf("слишком длинное название договора: err = %v, engine calls = %d", err, eng.calls)
+	}
+}
+
+func TestCreate_NextRoundOfProject(t *testing.T) {
+	proj := core_domain.ProjectSummary{Project: core_domain.Project{ID: 5, UserID: 7, Name: "Поставка Омега"}, Rounds: 1,
+		OurRole: "Заказчик"}
+	repo := &fakeRepo{project: proj}
+	eng := &fakeEngine{}
+	rev, err := NewReviewsService(repo, eng).Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := repo.saved[0]; got.ProjectID != 5 || got.ProjectName != "" || rev.ProjectID != 5 {
+		t.Errorf("очередной раунд записывается в тот же договор: %+v", got)
+	}
+}
+
+func TestCreate_ProjectGuards(t *testing.T) {
+	proj := core_domain.ProjectSummary{Project: core_domain.Project{ID: 5, UserID: 7, Name: "Поставка Омега"}, OurRole: "Поставщик"}
+	// чужой или несуществующий договор — 404 до долгого разбора
+	repo, eng := &fakeRepo{project: proj}, &fakeEngine{}
+	_, err := NewReviewsService(repo, eng).Create(context.Background(), 8, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5})
+	if !errors.Is(err, core_errors.ErrNotFound) || eng.calls != 0 || len(repo.saved) != 0 {
+		t.Fatalf("чужой договор: err = %v, engine calls = %d, saved = %d", err, eng.calls, len(repo.saved))
+	}
+	// плейбук за другую роль, чем в прошлых раундах (движок вернул «Заказчик»), — не сохраняем
+	repo = &fakeRepo{project: proj}
+	_, err = NewReviewsService(repo, &fakeEngine{}).Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5})
+	if !errors.Is(err, core_errors.ErrInvalidArgument) || len(repo.saved) != 0 {
+		t.Fatalf("другая роль: err = %v, saved = %d", err, len(repo.saved))
+	}
+	for _, want := range []string{"Поставка Омега", "Поставщик", "Заказчик"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("в сообщении нет %q: %v", want, err)
+		}
+	}
+	// у прошлых раундов роли не было (разбор без плейбука) — проверять нечего
+	proj.OurRole = ""
+	repo = &fakeRepo{project: proj}
+	if _, err := NewReviewsService(repo, &fakeEngine{}).Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, ProjectID: 5}); err != nil {
+		t.Fatalf("роли в договоре нет: %v", err)
+	}
+}
+
+func roundRepo() *fakeRepo {
+	changes := func(fp, clause, after string) []byte {
+		return []byte(`[{"id":"E001","fingerprint":"` + fp + `","clause":"` + clause + `","topic":"порядок и сроки оплаты","kind":"replace",` +
+			`"before":"30%","after":"` + after + `","materiality":"высокая"}]`)
+	}
+	return &fakeRepo{
+		project: core_domain.ProjectSummary{Project: core_domain.Project{ID: 5, UserID: 7, Name: "Поставка"}, Rounds: 4},
+		review:  core_domain.ContractReview{ID: 12, UserID: 7, ProjectID: 5, Round: 2},
+		rounds: []core_domain.ProjectRound{
+			{ReviewID: 11, Round: 1, Changes: changes("a", "2.2", "10%"),
+				Choices: []core_domain.ReviewChoice{{ChangeID: "E001", Choice: core_domain.ChoiceReject}}},
+			{ReviewID: 12, Round: 2, Changes: changes("a", "2.2", "10%")},
+			{ReviewID: 13, Round: 3, Changes: changes("b", "2.2", "15%")},
+			{ReviewID: 14, Round: 4, Changes: changes("c", "9.9", "40%")}, // к пункту 2.2 контрагент больше не вернулся
+		},
+	}
+}
+
+func TestRounds_ComparesWithEarlierRoundsOnly(t *testing.T) {
+	v, err := NewReviewsService(roundRepo(), &fakeEngine{}).Rounds(context.Background(), 7, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Round != 2 || v.PrevReviewID != 11 || v.Project.Name != "Поставка" || len(v.Comparison.Links) != 1 {
+		t.Fatalf("rounds = %+v", v)
+	}
+	// раунд 3 (правка «15%») в сравнение раунда 2 не входит: правка раунда 2 — повтор раунда 1, решение «отклонить» видно
+	if l := v.Comparison.Links[0]; l.Relation != core_domain.RelationRepeat || l.ReviewID != 11 || l.Decision != core_domain.ChoiceReject {
+		t.Errorf("link = %+v", l)
+	}
+	later := roundRepo()
+	later.review.ID, later.review.Round = 14, 4
+	if v4, err := NewReviewsService(later, &fakeEngine{}).Rounds(context.Background(), 7, 14); err != nil || v4.PrevReviewID != 13 ||
+		len(v4.Comparison.Closed) != 1 || v4.Comparison.Closed[0].ReviewID != 13 {
+		t.Errorf("раунд 4: %+v, %v", v4, err)
+	}
+	first, err := NewReviewsService(func() *fakeRepo { r := roundRepo(); r.review.ID, r.review.Round = 11, 1; return r }(), &fakeEngine{}).
+		Rounds(context.Background(), 7, 11)
+	if err != nil || first.PrevReviewID != 0 || first.Comparison.Count(core_domain.RelationNew) != 1 {
+		t.Errorf("первый раунд: %+v, %v", first, err)
+	}
+}
+
+func TestProject_HistoryCountsPerRound(t *testing.T) {
+	v, err := NewReviewsService(roundRepo(), &fakeEngine{}).Project(context.Background(), 7, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Rounds) != 4 {
+		t.Fatalf("rounds = %+v", v.Rounds)
+	}
+	r1, r2, r3, r4 := v.Rounds[0], v.Rounds[1], v.Rounds[2], v.Rounds[3]
+	if r1.New != 1 || r1.Repeat != 0 || r1.Closed != 0 || r1.Total != 1 {
+		t.Errorf("раунд 1 = %+v", r1)
+	}
+	if r2.Repeat != 1 || r2.New != 0 || r2.Closed != 0 {
+		t.Errorf("раунд 2 = %+v", r2)
+	}
+	if r3.Returned != 1 || r3.Repeat != 0 || r3.Closed != 0 || r3.ReviewID != 13 {
+		t.Errorf("раунд 3 = %+v", r3)
+	}
+	if r4.New != 1 || r4.Closed != 1 || r4.Repeat != 0 || r4.Returned != 0 {
+		t.Errorf("раунд 4: правка раунда 3 снята, новая — по другому пункту: %+v", r4)
+	}
+	if _, err := NewReviewsService(roundRepo(), &fakeEngine{}).Project(context.Background(), 8, 5); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Errorf("чужой договор: %v", err)
+	}
+}
+
+func TestCreate_AcceptsOdtAndPdf(t *testing.T) {
+	for _, f := range []core_domain.UploadedFile{{Name: "a.odt", Data: []byte("PK\x03\x04")}, {Name: "a.pdf", Data: []byte("%PDF-1.7")}} {
+		eng := &fakeEngine{}
+		repo := &fakeRepo{}
+		base := core_domain.UploadedFile{Name: "base.docx", Data: []byte("PK\x03\x04")}
+		if _, err := NewReviewsService(repo, eng).Create(context.Background(), 1, core_domain.ReviewRequest{Theirs: f, Base: &base}); err != nil {
+			t.Errorf("%s: %v", f.Name, err)
+		}
+		if eng.calls != 1 || repo.saved[0].TheirsName != f.Name {
+			t.Errorf("%s: engine calls = %d, saved = %+v", f.Name, eng.calls, repo.saved)
+		}
+	}
+}
+
+func TestEmbedChanges_SkipsChangesWithoutText(t *testing.T) {
+	// правки без текста (убран пустой абзац) встречаются в настоящих договорах; пустую строку движок не принимает
+	repo := &fakeRepo{missing: []core_domain.VectorChange{
+		{ID: "E001", Kind: "delete", Topic: "прочее"},
+		{ID: "E002", Kind: "replace", Topic: "сроки исполнения", ContextAfter: "10 дней"},
+		{ID: "E003", Kind: "delete", Context: "   "},
+	}}
+	eng := &fakeEngine{}
+	if _, err := NewReviewsService(repo, eng).LawHints(context.Background(), 1, 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.embedded) != 1 || !strings.Contains(eng.embedded[0], "10 дней") {
+		t.Fatalf("в движок ушло %q, want только текст правки E002", eng.embedded)
+	}
+	if _, ok := repo.vectors["E002"]; !ok || len(repo.vectors) != 1 {
+		t.Errorf("векторы сохранены для %v, want только E002", repo.vectors)
+	}
+	// все правки без текста: к движку не обращаемся совсем
+	repo = &fakeRepo{missing: []core_domain.VectorChange{{ID: "E001", Kind: "delete"}}}
+	eng = &fakeEngine{}
+	if _, err := NewReviewsService(repo, eng).LawHints(context.Background(), 1, 7); err != nil || len(eng.embedded) != 0 {
+		t.Fatalf("err = %v, embedded = %q", err, eng.embedded)
+	}
+}
+
+func TestRunIndexer_OneFailingReviewDoesNotBlockTheQueue(t *testing.T) {
+	repo := &fakeRepo{queue: []int{1, 2, 3}, document: []byte(`[]`), sourceErr: map[int]error{1: errors.New("повреждённые данные")}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		NewReviewsService(repo, &fakeEngine{}).RunIndexer(ctx, &core_logger.Logger{Logger: zap.NewNop()})
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(repo.indexedSafe()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if got := repo.indexedSafe(); len(got) != 2 || got[0] != 2 || got[1] != 3 {
+		t.Fatalf("проиндексированы %v, want [2 3]: неудача разбора 1 не должна останавливать очередь", got)
+	}
+}
+
+func TestRunIndexer_NoModelStopsTheQueue(t *testing.T) {
+	repo := &fakeRepo{queue: []int{1, 2}, document: []byte(`[]`), missing: []core_domain.VectorChange{{ID: "E001", Kind: "replace", ContextAfter: "10 дней"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	eng := &fakeEngine{noEmbed: true}
+	NewReviewsService(repo, eng).RunIndexer(ctx, &core_logger.Logger{Logger: zap.NewNop()})
+	if got := repo.indexedSafe(); len(got) != 0 || eng.tries != 1 {
+		t.Fatalf("без модели проиндексированы %v, обращений к движку %d; want [] и 1: остальным разборам нечем считать", got, eng.tries)
 	}
 }

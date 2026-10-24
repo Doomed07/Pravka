@@ -104,6 +104,8 @@ export const reviews = {
   changes: (id) => api('/reviews/' + id + '/changes'),
   // сводка раунда по темам (собирается из правок, без модели)
   summary: (id) => api('/reviews/' + id + '/summary'),
+  // как правки связаны с прошлыми раундами того же договора: повторные, возвращения к пункту, снятые
+  rounds: (id) => api('/reviews/' + id + '/rounds'),
   choices: (id) => api('/reviews/' + id + '/choices'),
   // «как решали раньше»: прошлые решения юриста по похожим правкам
   precedents: (id) => api('/reviews/' + id + '/precedents'),
@@ -117,6 +119,12 @@ export const reviews = {
   answer: (id, author) => answerFile(id, author),
   create: (formData) => upload('/reviews', formData),
   remove: (id) => api('/reviews/' + id, { method: 'DELETE' }),
+};
+
+// Договоры (проекты): разборы одного договора — его раунды.
+export const projects = {
+  list: () => api('/projects'),
+  get: (id) => api('/projects/' + id),
 };
 
 // answerFile скачивает ответ контрагенту в Word: {blob, stats}. Файл собирается на сервере по решениям юриста.

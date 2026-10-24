@@ -90,6 +90,8 @@ class DocxDoc:
     paragraphs: list[Paragraph]
     comments: dict[str, Comment]
     authors: list[str]
+    format: str = "docx"  # docx | odt | pdf
+    notes: list[str] = field(default_factory=list)  # что юристу надо знать о том, как прочитан файл (попадает в предупреждения)
 
     @property
     def has_tracked(self) -> bool:

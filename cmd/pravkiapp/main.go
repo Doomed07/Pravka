@@ -51,6 +51,9 @@ func main() {
 	logger.Debug("application time zone", zap.Any("zone", time.Local))
 
 	logger.Debug("initializing connection pool")
+	core_postgres_pgx.OnStartRetry = func(attempt int, err error) {
+		logger.Warn("database is not ready yet, waiting", zap.Int("attempt", attempt), zap.Error(err))
+	}
 	pool, err := core_postgres_pgx.NewConnPool(
 		core_postgres_pgx.NewConfigMust(),
 		ctx,

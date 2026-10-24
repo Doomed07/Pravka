@@ -11,7 +11,7 @@ import (
 	core_errors "github.com/Doomed07/Pravka/internal/core/errors"
 )
 
-// MaxUploadBytes — предел размера одного docx.
+// MaxUploadBytes — предел размера одного файла договора.
 const MaxUploadBytes = 30 << 20
 
 // ContractReview — один разбор правок контрагента: что загрузили и что получилось.
@@ -21,6 +21,10 @@ type ContractReview struct {
 	UserID    int
 	CreatedAt time.Time
 
+	ProjectID    int // договор (проект), раундом которого стал разбор
+	ProjectName  string
+	Round        int  // номер раунда в проекте: порядок разборов по времени
+	HasDocx      bool // есть единая версия в Word: только если файл контрагента — .docx
 	TheirsName   string
 	BaseName     string
 	Playbook     string
@@ -41,7 +45,7 @@ type ReviewFiles struct {
 	Unified    []byte // docx: единая версия с примечаниями; у разборов до версии 0.3 пусто
 }
 
-// UploadedFile — docx из формы.
+// UploadedFile — файл договора из формы (.docx, .odt или PDF).
 type UploadedFile struct {
 	Name string
 	Data []byte
@@ -55,15 +59,17 @@ type ReviewRequest struct {
 	OurAuthors  string
 	Company     string
 	ConfirmRole string
+	ProjectID   int    // 0 — новый договор; иначе очередной раунд существующего
+	ProjectName string // название нового договора; пусто — имя файла контрагента
 }
 
 // Validate проверяет запрос до обращения к движку: дешёвые ошибки ловим сразу.
 func (r *ReviewRequest) Validate() error {
-	if err := validateDocx(r.Theirs, "версия контрагента"); err != nil {
+	if err := validateDocument(r.Theirs, "версия контрагента"); err != nil {
 		return err
 	}
 	if r.Base != nil {
-		if err := validateDocx(*r.Base, "наша версия"); err != nil {
+		if err := validateDocument(*r.Base, "наша версия"); err != nil {
 			return err
 		}
 	}
@@ -76,18 +82,27 @@ func (r *ReviewRequest) Validate() error {
 	return nil
 }
 
-func validateDocx(f UploadedFile, what string) error {
+// Форматы файлов: .docx и .odt — zip («PK»), PDF начинается с «%PDF-». Формат движок определяет по содержимому.
+var documentFormats = map[string]string{".docx": "PK", ".odt": "PK", ".pdf": "%PDF-"}
+
+// SupportedFormats — для сообщений об ошибках.
+const SupportedFormats = ".docx, .odt или PDF с текстом"
+
+// validateDocument — дешёвая проверка файла до обращения к движку: размер, расширение, сигнатура.
+func validateDocument(f UploadedFile, what string) error {
 	if len(f.Data) == 0 {
 		return fmt.Errorf("%s: файл не загружен: %w", what, core_errors.ErrInvalidArgument)
 	}
 	if len(f.Data) > MaxUploadBytes {
 		return fmt.Errorf("%s: файл больше 30 МБ: %w", what, core_errors.ErrInvalidArgument)
 	}
-	if !strings.EqualFold(filepath.Ext(f.Name), ".docx") {
-		return fmt.Errorf("%s: нужен файл .docx: %w", what, core_errors.ErrInvalidArgument)
+	ext := strings.ToLower(filepath.Ext(f.Name))
+	signature, ok := documentFormats[ext]
+	if !ok {
+		return fmt.Errorf("%s: нужен файл %s: %w", what, SupportedFormats, core_errors.ErrInvalidArgument)
 	}
-	if len(f.Data) < 4 || string(f.Data[:2]) != "PK" { // docx — это zip
-		return fmt.Errorf("%s: файл не похож на docx: %w", what, core_errors.ErrInvalidArgument)
+	if !strings.HasPrefix(string(f.Data[:min(len(f.Data), len(signature))]), signature) {
+		return fmt.Errorf("%s: файл не похож на %s: %w", what, ext, core_errors.ErrInvalidArgument)
 	}
 	return nil
 }

@@ -9,6 +9,36 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// При запуске база может быть ещё не готова (после перезагрузки компьютера или «make up»): ждём её, а не падаем сразу.
+var (
+	StartWait       = 60 * time.Second // сколько ждать базу при запуске
+	StartRetryEvery = 2 * time.Second
+	// OnStartRetry вызывается после каждой неудачной попытки: основной пакет пишет в журнал «жду базу».
+	OnStartRetry func(attempt int, err error)
+)
+
+// pingWithRetry пробует ping, пока не получится, не кончится время wait или не отменён ctx. Возвращает последнюю ошибку.
+func pingWithRetry(ctx context.Context, ping func(context.Context) error, wait, every time.Duration, onRetry func(int, error)) error {
+	deadline := time.Now().Add(wait)
+	for attempt := 1; ; attempt++ {
+		err := ping(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil || !time.Now().Add(every).Before(deadline) {
+			return err
+		}
+		if onRetry != nil {
+			onRetry(attempt, err)
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(every):
+		}
+	}
+}
+
 type ConnPool struct {
 	*pgxpool.Pool
 	opTimeout time.Duration
@@ -34,7 +64,8 @@ func NewConnPool(config Config, ctx context.Context) (*ConnPool, error) {
 		return nil, fmt.Errorf("create pgxpool: %w", err)
 	}
 
-	if err := pool.Ping(ctx); err != nil {
+	if err := pingWithRetry(ctx, pool.Ping, StartWait, StartRetryEvery, OnStartRetry); err != nil {
+		pool.Close()
 		return nil, fmt.Errorf("ping pgxpool: %w", err)
 	}
 

@@ -7,7 +7,8 @@ from datetime import datetime
 
 from .classify import classify
 from .compare import compare_versions, resolve_ours
-from .docx_reader import read_docx
+from .docx_reader import DocxError
+from .readers import read_document
 from .model import Change
 from .parties import (PARTY_TOPIC, RoleCheckError, SideConfig, SideResult, check_side, head_indices,
                       mark_head_changes, parties_of, party_changes)
@@ -62,10 +63,12 @@ def review_files(
     Если задан плейбук, сначала проверяется наша сторона договора (C9): при несовпадении или невозможности её
     определить бросается RoleCheckError и разбор не выполняется. Затем сверяются стороны между версиями (C10).
     """
-    theirs = read_docx(theirs_path)
-    base = read_docx(base_path) if base_path else None
+    theirs = read_document(theirs_path)
+    base = read_document(base_path) if base_path else None
+    if theirs.format == "pdf" and base is None:
+        raise DocxError("для PDF нужна ваша отправленная версия: в PDF нет рецензирования, правки находятся сравнением с ней")
     pb = load_playbook(playbook) if isinstance(playbook, str) else playbook
-    warnings: list[str] = []
+    warnings: list[str] = list(theirs.notes) + list(base.notes if base is not None else [])
     ours, ours_warnings = resolve_ours(our_authors, base)
     warnings.extend(ours_warnings)
 

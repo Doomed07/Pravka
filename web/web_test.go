@@ -22,6 +22,7 @@ func TestRoutes(t *testing.T) {
 	}{
 		{"home", http.MethodGet, "/", http.StatusOK, "text/html; charset=utf-8", "pages/home.js"},
 		{"review", http.MethodGet, "/reviews/12", http.StatusOK, "text/html; charset=utf-8", "pages/review.js"},
+		{"project", http.MethodGet, "/projects/3", http.StatusOK, "text/html; charset=utf-8", "pages/project.js"},
 		{"signup", http.MethodGet, "/signup", http.StatusOK, "text/html; charset=utf-8", "pages/signup.js"},
 		{"login", http.MethodGet, "/login?next=/reviews/3", http.StatusOK, "text/html; charset=utf-8", "pages/login.js"},
 		{"about", http.MethodGet, "/about", http.StatusOK, "text/html; charset=utf-8", "pages/static.js"},
@@ -58,5 +59,41 @@ func TestPagesCarryDisclaimer(t *testing.T) {
 		if !strings.Contains(string(body), "Черновик — требует вашей проверки") {
 			t.Errorf("%s: нет пометки о черновике", name)
 		}
+	}
+}
+
+// Каждый шрифт, на который ссылается main.css, должен отдаваться сайтом: раньше файлов не было, и сайт тихо показывался
+// системным шрифтом.
+func TestStylesheetFontsAreServed(t *testing.T) {
+	srv := core_http_server.NewHTTPServer(core_http_server.Config{}, nil)
+	srv.RegisterStatic("/static/", Static())
+	srv.RegisterRoutes(Routes()...)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+	css := get("/static/css/main.css").Body.String()
+	var urls []string
+	for _, part := range strings.Split(css, "url(\"")[1:] {
+		if u := part[:strings.Index(part, "\"")]; strings.Contains(u, "/fonts/") {
+			urls = append(urls, u)
+		}
+	}
+	if len(urls) < 4 {
+		t.Fatalf("в main.css найдено шрифтов: %d, want не меньше 4 (кириллица и латиница для двух шрифтов)", len(urls))
+	}
+	for _, u := range urls {
+		rec := get(u)
+		if rec.Code != http.StatusOK || rec.Body.Len() < 5000 || !strings.HasPrefix(rec.Body.String(), "wOF2") {
+			t.Errorf("%s: status %d, %d байт, начало %q", u, rec.Code, rec.Body.Len(), rec.Body.String()[:min(4, rec.Body.Len())])
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "woff2") {
+			t.Errorf("%s: Content-Type = %q", u, ct)
+		}
+	}
+	if strings.Contains(css, "://") {
+		t.Errorf("main.css ссылается на внешний адрес: шрифты должны отдаваться самим сайтом")
 	}
 }

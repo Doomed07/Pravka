@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
 	core_errors "github.com/Doomed07/Pravka/internal/core/errors"
@@ -70,7 +71,15 @@ func (h *ReviewsHTTPHandler) Create(rw http.ResponseWriter, r *http.Request) {
 	req := core_domain.ReviewRequest{
 		Theirs: *theirs, Base: base,
 		Playbook: r.FormValue("playbook"), OurAuthors: r.FormValue("our_authors"),
-		Company: r.FormValue("company"), ConfirmRole: r.FormValue("confirm_role"),
+		Company: r.FormValue("company"), ConfirmRole: r.FormValue("confirm_role"), ProjectName: r.FormValue("project_name"),
+	}
+	if v := r.FormValue("project_id"); v != "" {
+		id, err := strconv.Atoi(v)
+		if err != nil || id <= 0 {
+			resp.ErrorResponse(fmt.Errorf("номер договора %q: %w", v, core_errors.ErrInvalidArgument), "invalid project")
+			return
+		}
+		req.ProjectID = id
 	}
 	rev, err := h.service.Create(ctx, who.UserID, req)
 	if err != nil {
