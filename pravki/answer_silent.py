@@ -406,3 +406,38 @@ def remove_dots(p, w: Writer) -> int:
             w.delete_runs(runs)
             done += 1
     return done
+
+
+def delete_paragraph(p, w: Writer) -> bool:
+    """Абзац удаляется нашей правкой в рецензировании: текст зачёркнут, знак абзаца удалён. Абзац с правками в тексте
+    не трогается (False): его текст в файле неоднозначен."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in p.iter()):
+        return False
+    _explode(p)
+    runs = _unique([r for r, _, t in _nodes(p) if t])
+    if runs:
+        w.delete_runs(runs)
+    w.mark_paragraph(p, "del")
+    return True
+
+
+def insert_paragraphs_after(anchor, text: str, w: Writer) -> int:
+    """Новые абзацы (каждая строка текста — абзац) после anchor нашей вставкой в рецензировании; вид (стиль, нумерация,
+    отступы) берётся у anchor. Возвращает число вставленных абзацев."""
+    n, prev = 0, anchor
+    for line in [x.strip() for x in text.splitlines() if x.strip()]:
+        p = etree.Element(q("p"))
+        ppr = anchor.find(q("pPr"))
+        if ppr is not None:
+            ppr = copy.deepcopy(ppr)
+            for old in ppr.findall(q("rPr")):
+                ppr.remove(old)
+            p.append(ppr)
+        w.mark_paragraph(p, "ins")
+        ins = w.track("ins")
+        ins.append(_ins_run(line))
+        p.append(ins)
+        prev.addnext(p)
+        prev = p
+        n += 1
+    return n

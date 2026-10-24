@@ -338,3 +338,29 @@ def test_extra_spaces_are_removed_in_a_joined_paragraph_too(tmp_path):
     assert stats["join"] == 1 and stats["spaces"] == 1
     accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip()]
     assert accepted[0] == "1.3 Стоимость услуг: четыреста семьдесят пять тысяч рублей, НДС не облагается на основании гл. 26.2-1 НК РФ."
+
+
+def test_paragraph_deleted_and_added_on_the_site_become_tracked_changes(tmp_path):
+    """Удаление абзаца (X<абзац>, reject) и новый абзац после (A<абзац>, edit): наша правка в рецензировании. Новый абзац
+    наследует вид (нумерацию) того, после которого стоит. В удалённом абзаце другие правки не делаются."""
+    import zipfile
+    from lxml import etree
+    num = '<w:numPr><w:ilvl w:val="1"/><w:numId w:val="7"/></w:numPr>'
+    body = (p(r("1.1 Первый пункт  с лишним пробелом."), ppr=num) + p(r("1.2 Лишний пункт, который удаляем.  ")) +
+            p(r("1.3 Третий пункт."), ppr=num) + p(r("1.4 Последний пункт.")))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    out = str(tmp_path / "a.docx")
+    choices = {"X001": {"choice": "reject"}, "A002": {"choice": "edit", "text": "Новый пункт один.\nНовый пункт два."}}
+    stats = build_answer(src, out, [], choices, AUTHOR, document)
+    assert stats["delete"] == 1 and stats["add"] == 2 and stats["без отметки"] == 0
+    accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip()]
+    assert accepted == ["1.1 Первый пункт с лишним пробелом.", "1.3 Третий пункт.", "Новый пункт один.", "Новый пункт два.", "1.4 Последний пункт."]
+    root = etree.fromstring(zipfile.ZipFile(out).read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paras = root.findall(".//w:p", ns)
+    assert paras[1].find("w:pPr/w:rPr/w:del", ns) is not None  # второй абзац удалён целиком
+    new = [x for x in paras if x.find("w:pPr/w:rPr/w:ins", ns) is not None]
+    assert len(new) == 2 and all(x.find("w:pPr/w:numPr", ns) is not None for x in new)
+    rejected = [t for _, t in view_paragraphs(read_docx(out), "rejected", set()) if t.strip()]
+    assert "1.2 Лишний пункт, который удаляем." in " ".join(rejected) and "Новый пункт один." not in rejected

@@ -22,7 +22,7 @@ from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
 from .answer_replies import EXT_PART, REL_NS, Replies, with_w14
-from .answer_silent import Writer, _explode, _nodes, _unique, apply_edit, apply_silent, collapse_spaces, paragraphs, remove_dots
+from .answer_silent import Writer, _explode, _nodes, _unique, apply_edit, apply_silent, collapse_spaces, delete_paragraph, insert_paragraphs_after, paragraphs, remove_dots
 from .model import ANNOTATOR
 from .unified import mark_extra_spaces
 
@@ -163,7 +163,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         rels_root = _read_part(zin, "word/_rels/document.xml.rels")
         raw = {n: zin.read(n) for n in names}
 
-    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "spaces": 0, "dots": 0, "без отметки": 0, "наших примечаний убрано": 0}
+    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "spaces": 0, "dots": 0, "delete": 0, "add": 0, "без отметки": 0, "наших примечаний убрано": 0}
     stats["наших примечаний убрано"] = _strip_annotations(doc_root, comments_root)
     by_id: dict[str, list] = {}
     max_id = 0
@@ -182,6 +182,10 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
 
     joins = {d["index"] for d in document or [] if d.get("join_next") and 0 <= d["index"] + 1 < len(paras)
              and (choices.get(f"J{d['index']:03d}") or {}).get("choice") != "reject"}
+
+    # абзацы, удалённые юристом на сайте (X<абзац>, reject): другие правки в них не делаются; склеенные не удаляются
+    removed = {i for i in range(len(paras)) if (choices.get(f"X{i:03d}") or {}).get("choice") == "reject"
+               and i not in joins and i - 1 not in joins}
 
     for ch in changes:
         sel = choices.get(ch.get("id", "")) or {}
@@ -241,7 +245,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
     mark_extra_spaces(document or [])  # пометки считаются заново: работает и для разборов, сделанных до этой правки
     for para in document or []:
         idx = para.get("index", -1)
-        if not para.get("extra_spaces") or idx - 1 in joins or not 0 <= idx < len(paras):
+        if not para.get("extra_spaces") or idx - 1 in joins or idx in removed or not 0 <= idx < len(paras):
             continue
         if (choices.get(f"P{idx:03d}") or {}).get("choice") == EDIT:
             continue
@@ -255,7 +259,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         if not (key.startswith("P") and sel.get("choice") == EDIT):
             continue
         idx = int(key[1:]) if key[1:].isdigit() else -1
-        if idx in joins:
+        if idx in joins or idx in removed:
             continue  # склеенный абзац правится вместе со второй частью (ниже)
         writer = Writer(author, date, max_id)
         if 0 <= idx < len(paras) and (sel.get("text") or "").strip() and apply_edit(paras[idx], sel["text"], writer):
@@ -298,7 +302,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
     # отказаться (решение reject у D<абзац>) или править абзац сам
     for para in document or []:
         idx = para.get("index", -1)
-        if not para.get("stray_dots") or idx in joins or idx - 1 in joins or not 0 <= idx < len(paras):
+        if not para.get("stray_dots") or idx in joins or idx - 1 in joins or idx in removed or not 0 <= idx < len(paras):
             continue
         if (choices.get(f"P{idx:03d}") or {}).get("choice") == EDIT or (choices.get(f"D{idx:03d}") or {}).get("choice") == "reject":
             continue
@@ -306,6 +310,26 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         if remove_dots(paras[idx], writer):
             max_id = writer.max_id
             stats["dots"] += 1
+
+    # удаление абзацев и новые абзацы, сделанные юристом на сайте
+    for idx in sorted(removed):
+        writer = Writer(author, date, max_id)
+        if delete_paragraph(paras[idx], writer):
+            stats["delete"] += 1
+            max_id = writer.max_id
+        else:
+            stats["без отметки"] += 1
+    for key, sel in sorted(choices.items()):
+        if not (key.startswith("A") and key[1:].isdigit() and sel.get("choice") == EDIT and (sel.get("text") or "").strip()):
+            continue
+        idx = int(key[1:])
+        idx = idx + 1 if idx in joins else idx  # у склеенного абзаца новый идёт после второй части
+        if not 0 <= idx < len(paras):
+            stats["без отметки"] += 1
+            continue
+        writer = Writer(author, date, max_id)
+        stats["add"] += insert_paragraphs_after(paras[idx], sel["text"], writer)
+        max_id = writer.max_id
 
     def ser(root) -> bytes:
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)

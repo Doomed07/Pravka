@@ -2691,3 +2691,27 @@ select.form__input {
     right: 14px;
   }
 }
+
+/* Удалённый и добавленный на сайте абзацы */
+.doc__text--deleted .doc__body {
+  color: var(--del);
+  text-decoration: line-through;
+}
+
+.doc__added {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-left: 3px solid var(--ok);
+  background: var(--chip);
+  border-radius: 6px;
+}
+
+.doc__added p {
+  margin: 4px 0;
+}
+
+.doc__editlabel {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}

@@ -491,6 +491,29 @@ function freshNotes(changes, order, shown) {
 
 // Правка текста абзаца юристом: решение «edit» с номером P<абзац> (P012), в тексте — абзац целиком.
 const editKey = (index) => 'P' + String(index).padStart(3, '0');
+// Удаление абзаца — решение reject у X<абзац>; новый абзац после данного — решение edit у A<абзац> с текстом (строки — абзацы).
+const delKey = (index) => 'X' + String(index).padStart(3, '0');
+const addKey = (index) => 'A' + String(index).padStart(3, '0');
+const isDeleted = (para) => CHOICES.get(delKey(para.index))?.choice === 'reject';
+
+// После сохранения страница перерисовывается, а прокрутка остаётся на месте
+function reloadHere() {
+  try {
+    sessionStorage.setItem('pravki.scroll', String(scrollY));
+  } catch {
+    /* приватный режим */
+  }
+  location.reload();
+}
+
+function addedBlock(para) {
+  const mine = CHOICES.get(addKey(para.index));
+  if (!mine || mine.choice !== 'edit') return '';
+  return html`<div class="doc__added" data-add="${addKey(para.index)}">${mine.text.split('\n').map((l) => html`<p>${l}</p>`)}
+    <span class="doc__fixnote">абзац добавлен вами, в Word — вставка в рецензировании
+      <button class="doc__unjoin" type="button" data-addact="edit">Изменить</button>
+      <button class="doc__unjoin" type="button" data-addact="remove">Убрать</button></span></div>`;
+}
 const plain = (para) => para.segments.map((s) => s.t).join('').replace(/ {2,}/g, ' ');
 // Править можно абзац без отметок в рецензировании: в абзаце с правкой контрагента отвечают решением по правке.
 const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal' || s.k === 'dot' || (para.joined && s.k === 'fixed'));
@@ -572,14 +595,16 @@ function row(para, i, total, byID, order, shown) {
   if (i === 0) cls.push('doc__text--first');
   if (i === total - 1) cls.push('doc__text--last');
   const first = changes[0];
-  const edit = editable(para) ? html` data-edit="${editKey(para.index)}" data-orig="${plain(para)}"` : '';
+  const gone = isDeleted(para);
+  if (gone) cls.push('doc__text--deleted');
+  const edit = editable(para) && !gone ? html` data-edit="${editKey(para.index)}" data-orig="${plain(para)}"` : '';
   const mine = edit ? CHOICES.get(editKey(para.index)) : null;
   if (mine && mine.choice === 'edit') cls.push('doc__text--edited');
   return html`
     <div class="doc__row">
       <div class="doc__num${first && verdict(first).mod === 'reject' ? ' doc__num--hot' : ''}">${first ? num(order.get(first.id)) : ''}</div>
-      <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${edit}${look.style ? html` style="${look.style}"` : ''}>
-        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${joinBar(para)}${dotBar(para)}${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}
+      <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${edit}${para.joined ? html` data-joined="1"` : ''}${look.style ? html` style="${look.style}"` : ''}>
+        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${joinBar(para)}${dotBar(para)}${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}${gone ? html`<span class="doc__fixnote">абзац удалён вами, в Word — удаление в рецензировании <button class="doc__unjoin" type="button" data-restore="${delKey(para.index)}">Вернуть</button></span>` : ''}${addedBlock(para)}
         ${para.index < 0 ? html` <span class="tag tag--silent">абзац удалён без отметки</span>` : ''}
         ${partyComments(para.comments)}
       </div>
@@ -919,6 +944,54 @@ function wireEditing(id) {
     box.querySelector('.doc__editor')?.remove();
     box.classList.remove('is-editing');
   };
+  const saveThenReload = async (key, choice, text, status) => {
+    if (status) status.textContent = 'Сохраняю…';
+    try {
+      await reviews.saveChoice(id, key, choice, text);
+      if (choice) CHOICES.set(key, { choice, text });
+      else CHOICES.delete(key);
+      reloadHere();
+    } catch (err) {
+      if (status) status.textContent = err instanceof ApiError && err.status === 400 ? 'Не сохранено: проверьте текст' : 'Не сохранено, попробуйте ещё раз';
+    }
+  };
+  // Новый абзац после данного: каждая строка текста — отдельный абзац
+  const openAdd = (box) => {
+    if (box.querySelector('.doc__editor')) return;
+    const key = box.dataset.edit.replace('P', 'A');
+    const cur = CHOICES.get(key)?.text || '';
+    const ed = document.createElement('div');
+    ed.className = 'doc__editor';
+    mount(ed, html`
+      <p class="doc__editlabel">Новый абзац после этого (каждая строка — отдельный абзац):</p>
+      <textarea class="form__input doc__area" maxlength="5000" aria-label="Текст нового абзаца">${cur}</textarea>
+      <div class="doc__editbar">
+        <button class="button button--cta button--small" type="button" data-act="save">Добавить</button>
+        <button class="button button--ghost button--small" type="button" data-act="cancel">Отмена</button>
+        <span class="doc__editstatus" role="status"></span>
+      </div>`);
+    box.append(ed);
+    const area = ed.querySelector('textarea');
+    area.focus();
+    ed.addEventListener('click', (e) => {
+      const act = e.target.dataset?.act;
+      if (act === 'cancel') ed.remove();
+      else if (act === 'save') {
+        if (!area.value.trim()) ed.querySelector('.doc__editstatus').textContent = 'Введите текст абзаца';
+        else saveThenReload(key, 'edit', area.value, ed.querySelector('.doc__editstatus'));
+      }
+    });
+  };
+  doc.querySelectorAll('[data-restore]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    saveThenReload(b.dataset.restore, '', '', null);
+  }));
+  doc.querySelectorAll('[data-add] [data-addact]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const added = b.closest('[data-add]');
+    if (b.dataset.addact === 'remove') saveThenReload(added.dataset.add, '', '', null);
+    else openAdd(added.closest('.doc__text'));
+  }));
   const open = (box) => {
     if (box.classList.contains('is-editing')) return;
     const body = box.querySelector('.doc__body');
@@ -935,6 +1008,8 @@ function wireEditing(id) {
         <button class="button button--cta button--small" type="button" data-act="save">Сохранить</button>
         <button class="button button--ghost button--small" type="button" data-act="cancel">Отмена</button>
         ${saved ? html`<button class="button button--ghost button--small" type="button" data-act="reset">Вернуть исходный</button>` : ''}
+        ${box.dataset.joined ? '' : html`<button class="button button--ghost button--small" type="button" data-act="delete">Удалить абзац</button>`}
+        <button class="button button--ghost button--small" type="button" data-act="add">Добавить абзац после</button>
         <span class="doc__editstatus" role="status"></span>
       </div>`);
     body.after(ed);
@@ -966,6 +1041,11 @@ function wireEditing(id) {
       const act = e.target.dataset?.act;
       if (act === 'cancel') close(box);
       else if (act === 'reset') done(orig);
+      else if (act === 'delete') saveThenReload(box.dataset.edit.replace('P', 'X'), 'reject', '', status);
+      else if (act === 'add') {
+        close(box);
+        openAdd(box);
+      }
       else if (act === 'save') {
         if (!area.value.trim()) status.textContent = 'Текст абзаца не может быть пустым';
         else done(area.value);
@@ -1109,6 +1189,15 @@ async function load() {
     loadLaw(id);
   }
   // ссылка из «как решали раньше» ведёт к правке прошлого разбора: /reviews/3#c-E001
+  try {
+    const y = sessionStorage.getItem('pravki.scroll');
+    if (y !== null) {
+      sessionStorage.removeItem('pravki.scroll');
+      scrollTo(0, Number(y));
+    }
+  } catch {
+    /* приватный режим */
+  }
   const target = decodeURIComponent(location.hash.slice(1));
   if (target.startsWith('c-') && document.getElementById(target)) select(target.slice(2), 'doc');
 }

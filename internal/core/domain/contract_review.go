@@ -166,12 +166,15 @@ func (c ReviewChoice) Validate() error {
 	}
 	switch c.Choice {
 	case "", ChoiceAccept, ChoiceReject, ChoiceCounter, ChoiceReply:
-		if strings.HasPrefix(c.ChangeID, "P") && c.Choice != "" {
-			return fmt.Errorf("номер %q — правка абзаца, у неё только решение %q: %w", c.ChangeID, ChoiceEdit, core_errors.ErrInvalidArgument)
+		if strings.HasPrefix(c.ChangeID, "P") && c.Choice != "" || strings.HasPrefix(c.ChangeID, "A") && c.Choice != "" {
+			return fmt.Errorf("номер %q — правка текста абзаца, у неё только решение %q: %w", c.ChangeID, ChoiceEdit, core_errors.ErrInvalidArgument)
+		}
+		if strings.HasPrefix(c.ChangeID, "X") && c.Choice != "" && c.Choice != ChoiceReject {
+			return fmt.Errorf("номер %q — удаление абзаца: только решение %q: %w", c.ChangeID, ChoiceReject, core_errors.ErrInvalidArgument)
 		}
 	case ChoiceEdit:
-		if !strings.HasPrefix(c.ChangeID, "P") || strings.TrimSpace(c.Text) == "" {
-			return fmt.Errorf("правка абзаца: номер вида P012 и непустой текст: %w", core_errors.ErrInvalidArgument)
+		if !(strings.HasPrefix(c.ChangeID, "P") || strings.HasPrefix(c.ChangeID, "A")) || strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("правка абзаца: номер вида P012 или A012 и непустой текст: %w", core_errors.ErrInvalidArgument)
 		}
 	default:
 		return fmt.Errorf("неизвестное решение %q: %w", c.Choice, core_errors.ErrInvalidArgument)
