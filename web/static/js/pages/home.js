@@ -61,11 +61,13 @@ function formView(playbooks, memo, contracts, chosen) {
     <form class="form form--wide" id="review-form" novalidate>
       <div class="drops">
         <label class="drop" for="f-base">
+          <span class="drop__icon" aria-hidden="true">⇪</span>
           <span class="drop__title">Наша редакция</span>
           <span class="drop__file" data-empty="Отправленная контрагенту, .docx или .odt — перетащите или выберите">Отправленная контрагенту, .docx или .odt — перетащите или выберите</span>
           <input id="f-base" name="base" type="file" accept=".docx,.odt,.pdf">
         </label>
         <label class="drop drop--main" for="f-theirs">
+          <span class="drop__icon" aria-hidden="true">⇪</span>
           <span class="drop__title">Редакция контрагента</span>
           <span class="drop__file" data-empty="Его ответ, .docx, .odt или PDF — перетащите или выберите">Его ответ, .docx, .odt или PDF — перетащите или выберите</span>
           <input id="f-theirs" name="theirs" type="file" accept=".docx,.odt,.pdf" required>
@@ -91,6 +93,8 @@ function formView(playbooks, memo, contracts, chosen) {
           ${options}
         </select>
       </div>
+      <details class="more">
+        <summary class="more__summary">Дополнительно: авторы правок, компания, сторона</summary>
       <div class="form__row">
         <div class="form__field">
           <label class="form__label" for="f-authors">Авторы ваших правок в Word</label>
@@ -105,6 +109,7 @@ function formView(playbooks, memo, contracts, chosen) {
         <input type="checkbox" id="f-confirm"${memo.confirm ? ' checked' : ''}>
         <span>Ваша сторона в договоре называется иначе, чем в плейбуке (например, «Участник» вместо «Заказчика») — подтверждаю роль плейбука вручную</span>
       </label>
+      </details>
       <p><button class="button button--cta" type="submit" id="review-submit">Свести и разобрать →</button></p>
       <p class="form__hint" id="review-progress" hidden role="status">Разбираю договор… Это может занять до нескольких минут.</p>
     </form>`;
@@ -118,10 +123,29 @@ function fmtDate(iso) {
   }
 }
 
+const RECENT = 8; // сколько последних разборов показывать сразу
+
+function projectsView(contracts) {
+  if (!contracts.length) return emptyState('Договоров пока нет. Загрузите первый выше.');
+  const cards = contracts.map((c) => html`
+    <a class="card" href="/projects/${c.id}" data-name="${c.name.toLowerCase()}">
+      <span class="card__title">${c.name}</span>
+      <span class="card__meta">${c.playbook_name || 'без плейбука'}</span>
+      <span class="card__foot">
+        <span class="chip">раундов: ${c.rounds}</span>
+        <span class="card__date">${fmtDate(c.last_at)}</span>
+      </span>
+    </a>`);
+  return html`
+    <input class="form__input search" id="project-search" type="search" placeholder="Найти договор…" aria-label="Найти договор">
+    <div class="cards" id="project-cards">${cards}</div>
+    <p class="form__hint" id="project-none" hidden>Ничего не найдено.</p>`;
+}
+
 function listView(items) {
   if (!items.length) return emptyState('Разборов пока нет. Загрузите первый договор выше.');
-  const rows = items.map((r) => html`
-    <tr>
+  const rows = items.map((r, i) => html`
+    <tr${i >= RECENT ? html` class="is-extra" hidden` : ''}>
       <td>${fmtDate(r.created_at)}</td>
       <td><a href="/reviews/${r.id}">${r.theirs_name}</a></td>
       <td>${r.project_name ? html`<a href="/projects/${r.project_id}">${r.project_name}</a> · раунд ${r.round}` : '—'}</td>
@@ -134,7 +158,8 @@ function listView(items) {
         <thead><tr><th>Когда</th><th>Файл контрагента</th><th>Договор</th><th>Плейбук</th>${COUNTS.map(([, l]) => html`<th class="num">${l}</th>`)}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${items.length > RECENT ? html`<p><button class="button button--ghost button--small" type="button" id="show-all">Показать все (${items.length})</button></p>` : ''}`;
 }
 
 async function loggedInView() {
@@ -146,11 +171,40 @@ async function loggedInView() {
   mount($('#home'), html`
     ${playbooks === null ? html`<p class="alert">Движок разбора не отвечает: список плейбуков не загружен. Разбор без плейбука всё равно можно запустить.</p>` : ''}
     ${formView(playbooks || [], memo, contracts || [], chosen)}
+    <section class="section" aria-labelledby="projects-title">
+      <div class="section-heading"><h2 class="section-heading__title" id="projects-title">Мои договоры</h2></div>
+      ${projectsView(contracts || [])}
+    </section>
     <section class="section" aria-labelledby="list-title">
-      <div class="section-heading"><h2 class="section-heading__title" id="list-title">Мои разборы</h2></div>
+      <div class="section-heading"><h2 class="section-heading__title" id="list-title">Последние разборы</h2></div>
       ${listView(items || [])}
     </section>`);
   wireForm();
+  wireLists();
+}
+
+// Поиск по договорам и «показать все» в списке разборов.
+function wireLists() {
+  const search = $('#project-search');
+  if (search) {
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      let shown = 0;
+      document.querySelectorAll('#project-cards .card').forEach((card) => {
+        const hit = !q || card.dataset.name.includes(q);
+        card.hidden = !hit;
+        if (hit) shown++;
+      });
+      $('#project-none').hidden = shown > 0;
+    });
+  }
+  const all = $('#show-all');
+  if (all) {
+    all.addEventListener('click', () => {
+      document.querySelectorAll('.is-extra').forEach((row) => { row.hidden = false; });
+      all.hidden = true;
+    });
+  }
 }
 
 // Зоны загрузки: показать имя выбранного файла и подсветить зону, когда над ней держат файл.
