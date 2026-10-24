@@ -2679,3 +2679,15 @@ select.form__input {
   letter-spacing: 0;
   text-transform: none;
 }
+
+/* Широкий экран: под кнопку «Править» оставлено место справа, она не закрывает текст */
+@media (min-width: 1025px) and (hover: hover) {
+  .doc__text[data-edit] {
+    padding-right: 92px;
+  }
+
+  .doc__text[data-edit] .doc__pen {
+    top: 10px;
+    right: 14px;
+  }
+}
