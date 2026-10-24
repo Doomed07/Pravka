@@ -2318,3 +2318,8 @@ select.form__input {
 .eyebrow a:hover {
   text-decoration: underline;
 }
+
+/* Карточки сразу под заголовком раздела: при наведении приподнимаются и не должны задевать линию заголовка */
+.section-heading + .cards {
+  margin-top: 22px;
+}
