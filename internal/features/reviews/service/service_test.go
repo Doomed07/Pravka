@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
 	core_errors "github.com/Doomed07/Pravka/internal/core/errors"
+	core_logger "github.com/Doomed07/Pravka/internal/core/logger"
 	"github.com/Doomed07/Pravka/internal/engine"
+	"go.uber.org/zap"
 )
 
 type fakeRepo struct {
@@ -29,6 +33,9 @@ type fakeRepo struct {
 	rounds    []core_domain.ProjectRound
 	asked     [2]int // для кого и какой договор запрашивали
 	review    core_domain.ContractReview
+	queue     []int         // разборы, ждущие индексации (отдаются один раз)
+	sourceErr map[int]error // ошибка чтения исходных данных разбора
+	mu        sync.Mutex
 }
 
 func (f *fakeRepo) CreateReview(_ context.Context, rev core_domain.ContractReview, files core_domain.ReviewFiles) (core_domain.ContractReview, error) {
@@ -68,9 +75,16 @@ func (f *fakeRepo) SaveVectors(_ context.Context, _ int, model string, v map[str
 	f.saves++
 	return nil
 }
-func (f *fakeRepo) ReviewsToIndex(context.Context, int) ([]int, error) { return nil, nil }
+func (f *fakeRepo) ReviewsToIndex(context.Context, int) ([]int, error) {
+	q := f.queue
+	f.queue = nil // очередь отдаём один раз: дальше в ней пусто
+	return q, nil
+}
 func (f *fakeRepo) NeedsIndex(context.Context, int, int) (bool, error) { return f.needIndex, nil }
-func (f *fakeRepo) IndexSource(context.Context, int) ([]byte, []core_domain.VectorChange, error) {
+func (f *fakeRepo) IndexSource(_ context.Context, id int) ([]byte, []core_domain.VectorChange, error) {
+	if err := f.sourceErr[id]; err != nil {
+		return nil, nil, err
+	}
 	return f.document, f.missing, nil
 }
 func (f *fakeRepo) SaveParagraphs(_ context.Context, _ int, _ string, p []core_domain.DocParagraph, v [][]float32) error {
@@ -81,8 +95,17 @@ func (f *fakeRepo) SaveParagraphs(_ context.Context, _ int, _ string, p []core_d
 	return nil
 }
 func (f *fakeRepo) MarkIndexed(_ context.Context, id int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.indexed = append(f.indexed, id)
 	return nil
+}
+
+// indexedSafe — копия списка проиндексированных: индексатор работает в своей горутине.
+func (f *fakeRepo) indexedSafe() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.indexed...)
 }
 func (f *fakeRepo) ListWordings(context.Context, int, int) ([]core_domain.Wording, error) {
 	return []core_domain.Wording{{ChangeID: "E001", Text: "прошлая редакция"}}, nil
@@ -114,6 +137,7 @@ func (f *fakeRepo) ListProjectRounds(context.Context, int, int) ([]core_domain.P
 
 type fakeEngine struct {
 	noEmbed  bool
+	tries    int // сколько раз просили посчитать векторы, включая отказы
 	embedded []string
 	err      error
 	calls    int
@@ -128,6 +152,7 @@ func (f *fakeEngine) Answer(_ context.Context, unified, document, changes []byte
 }
 
 func (f *fakeEngine) Embed(_ context.Context, texts []string) (string, [][]float32, error) {
+	f.tries++
 	if f.noEmbed {
 		return "", nil, engine.ErrNoEmbedModel
 	}
@@ -464,5 +489,60 @@ func TestCreate_AcceptsOdtAndPdf(t *testing.T) {
 		if eng.calls != 1 || repo.saved[0].TheirsName != f.Name {
 			t.Errorf("%s: engine calls = %d, saved = %+v", f.Name, eng.calls, repo.saved)
 		}
+	}
+}
+
+func TestEmbedChanges_SkipsChangesWithoutText(t *testing.T) {
+	// правки без текста (убран пустой абзац) встречаются в настоящих договорах; пустую строку движок не принимает
+	repo := &fakeRepo{missing: []core_domain.VectorChange{
+		{ID: "E001", Kind: "delete", Topic: "прочее"},
+		{ID: "E002", Kind: "replace", Topic: "сроки исполнения", ContextAfter: "10 дней"},
+		{ID: "E003", Kind: "delete", Context: "   "},
+	}}
+	eng := &fakeEngine{}
+	if _, err := NewReviewsService(repo, eng).LawHints(context.Background(), 1, 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.embedded) != 1 || !strings.Contains(eng.embedded[0], "10 дней") {
+		t.Fatalf("в движок ушло %q, want только текст правки E002", eng.embedded)
+	}
+	if _, ok := repo.vectors["E002"]; !ok || len(repo.vectors) != 1 {
+		t.Errorf("векторы сохранены для %v, want только E002", repo.vectors)
+	}
+	// все правки без текста: к движку не обращаемся совсем
+	repo = &fakeRepo{missing: []core_domain.VectorChange{{ID: "E001", Kind: "delete"}}}
+	eng = &fakeEngine{}
+	if _, err := NewReviewsService(repo, eng).LawHints(context.Background(), 1, 7); err != nil || len(eng.embedded) != 0 {
+		t.Fatalf("err = %v, embedded = %q", err, eng.embedded)
+	}
+}
+
+func TestRunIndexer_OneFailingReviewDoesNotBlockTheQueue(t *testing.T) {
+	repo := &fakeRepo{queue: []int{1, 2, 3}, document: []byte(`[]`), sourceErr: map[int]error{1: errors.New("повреждённые данные")}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		NewReviewsService(repo, &fakeEngine{}).RunIndexer(ctx, &core_logger.Logger{Logger: zap.NewNop()})
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(repo.indexedSafe()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if got := repo.indexedSafe(); len(got) != 2 || got[0] != 2 || got[1] != 3 {
+		t.Fatalf("проиндексированы %v, want [2 3]: неудача разбора 1 не должна останавливать очередь", got)
+	}
+}
+
+func TestRunIndexer_NoModelStopsTheQueue(t *testing.T) {
+	repo := &fakeRepo{queue: []int{1, 2}, document: []byte(`[]`), missing: []core_domain.VectorChange{{ID: "E001", Kind: "replace", ContextAfter: "10 дней"}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	eng := &fakeEngine{noEmbed: true}
+	NewReviewsService(repo, eng).RunIndexer(ctx, &core_logger.Logger{Logger: zap.NewNop()})
+	if got := repo.indexedSafe(); len(got) != 0 || eng.tries != 1 {
+		t.Fatalf("без модели проиндексированы %v, обращений к движку %d; want [] и 1: остальным разборам нечем считать", got, eng.tries)
 	}
 }

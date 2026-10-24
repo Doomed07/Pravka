@@ -3,6 +3,7 @@ package reviews_service
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
@@ -56,6 +57,15 @@ func (s *ReviewsService) IndexReview(ctx context.Context, id int) error {
 
 // embedChanges — векторы правок (для «Что говорит ГК» и «как решали раньше» по смыслу).
 func (s *ReviewsService) embedChanges(ctx context.Context, id int, changes []core_domain.VectorChange) error {
+	// у правки без текста (например, убран пустой абзац или номер) вектора нет, и ничего подсказывать к ней не надо; пустую
+	// строку движок не принимает и отказал бы во всей пачке
+	withText := make([]core_domain.VectorChange, 0, len(changes))
+	for _, c := range changes {
+		if strings.TrimSpace(c.EmbedText()) != "" {
+			withText = append(withText, c)
+		}
+	}
+	changes = withText
 	for i := 0; i < len(changes); i += embedBatch {
 		batch := changes[i:min(i+embedBatch, len(changes))]
 		texts := make([]string, len(batch))
@@ -87,10 +97,11 @@ func (s *ReviewsService) RunIndexer(ctx context.Context, log *core_logger.Logger
 		}
 		for _, id := range ids {
 			if err := s.IndexReview(ctx, id); err != nil {
-				if !errors.Is(err, engine.ErrNoEmbedModel) {
-					log.Warn("index review failed", zap.Int("review", id), zap.Error(err))
+				if errors.Is(err, engine.ErrNoEmbedModel) {
+					break // модели нет — остальным тоже нечем считать, попробуем позже
 				}
-				break // модели нет или движок недоступен — попробуем позже
+				// один неудачный разбор не должен держать очередь: пишем в журнал и идём к следующему
+				log.Warn("index review failed", zap.Int("review", id), zap.Error(err))
 			}
 		}
 		if len(ids) == 5 && err == nil {
