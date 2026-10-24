@@ -12,6 +12,7 @@ type ReviewDTO struct {
 	ProjectID    int            `json:"project_id"`
 	ProjectName  string         `json:"project_name"`
 	Round        int            `json:"round"`
+	HasDocx      bool           `json:"has_docx"`
 	TheirsName   string         `json:"theirs_name"`
 	BaseName     string         `json:"base_name"`
 	Playbook     string         `json:"playbook"`
@@ -26,7 +27,7 @@ func reviewDTOFromDomain(r core_domain.ContractReview) ReviewDTO {
 	if r.Warnings == nil {
 		r.Warnings = []string{}
 	}
-	return ReviewDTO{ID: r.ID, CreatedAt: r.CreatedAt, ProjectID: r.ProjectID, ProjectName: r.ProjectName, Round: r.Round,
+	return ReviewDTO{ID: r.ID, CreatedAt: r.CreatedAt, ProjectID: r.ProjectID, ProjectName: r.ProjectName, Round: r.Round, HasDocx: r.HasDocx,
 		TheirsName: r.TheirsName, BaseName: r.BaseName, Playbook: r.Playbook,
 		PlaybookName: r.PlaybookName, OurRole: r.OurRole, Side: r.Side, Counts: r.Counts, Warnings: r.Warnings}
 }

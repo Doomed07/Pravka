@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import re
 
-from .compare import _align
+from .compare import _align, label_policy, paired_views
 from .docx_reader import view_paragraphs
 from .extract import _net_zero
 from .model import ANNOTATOR, Change, DocxDoc, Paragraph
-from .textdiff import diff_ops, normalize
+from .textdiff import diff_ops, normalize, strip_label
 
 
 def _squash(text: str) -> str:
@@ -140,8 +140,10 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
 
     removed: list[tuple[int, dict]] = []  # абзацы, удалённые без отметки: (после какого абзаца, абзац)
     if base is not None:
-        base_view = [(p, t) for p, t in view_paragraphs(base, "rejected", ours) if normalize(t)]
-        their_view = [(p, t) for p, t in view_paragraphs(theirs, "rejected", ours) if normalize(t)]
+        base_view, their_view = paired_views(base, theirs, ours)
+        base_view = [(p, t) for p, t in base_view if normalize(t)]
+        their_view = [(p, t) for p, t in their_view if normalize(t)]
+        _, strip_theirs = label_policy(base, theirs)
         last = -1
         for i, j in _align([t for _, t in base_view], [t for _, t in their_view]):
             if j is not None:
@@ -152,7 +154,12 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
                     continue
                 if i is not None and normalize(base_view[i][1]) == normalize(ttext):
                     continue
-                target["segments"] = _overlay(base_view[i][1] if i is not None else "", target["segments"])
+                before = base_view[i][1] if i is not None else ""
+                if strip_theirs and i is not None and tp.label_in_text:
+                    # номер пункта в тексте контрагента напечатан, у нас — нет: добавляем его к нашему тексту, иначе он «вставка»
+                    shown = "".join(sg["t"] for sg in target["segments"])
+                    before = shown[:len(shown) - len(strip_label(shown, tp.label))] + before
+                target["segments"] = _overlay(before, target["segments"])
             else:
                 bp, btext = base_view[i]
                 removed.append((last, {"index": -1, "clause": bp.clause, "label": _auto_label(bp), "style": bp.style,

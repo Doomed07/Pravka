@@ -17,7 +17,8 @@ import (
 const columns = `id, user_id, created_at, theirs_name, base_name, playbook, playbook_name, our_role, contract_type, side, counts, warnings,
 	project_id, (SELECT name FROM pravkiapp.projects p WHERE p.id = pravkiapp.reviews.project_id),
 	(SELECT count(*) + 1 FROM pravkiapp.reviews o WHERE o.project_id = pravkiapp.reviews.project_id
-	   AND (o.created_at, o.id) < (pravkiapp.reviews.created_at, pravkiapp.reviews.id))`
+	   AND (o.created_at, o.id) < (pravkiapp.reviews.created_at, pravkiapp.reviews.id)),
+	unified_docx IS NOT NULL`
 
 // ReviewModel — строка pravkiapp.reviews (без тяжёлых частей): counts и warnings — JSON.
 type ReviewModel struct {
@@ -36,12 +37,13 @@ type ReviewModel struct {
 	ProjectID    int
 	ProjectName  string
 	Round        int
+	HasDocx      bool
 }
 
 func scanReview(row core_postgres_pool.Row) (core_domain.ContractReview, error) {
 	var m ReviewModel
 	if err := row.Scan(&m.ID, &m.UserID, &m.CreatedAt, &m.TheirsName, &m.BaseName, &m.Playbook, &m.PlaybookName,
-		&m.OurRole, &m.ContractType, &m.Side, &m.Counts, &m.Warnings, &m.ProjectID, &m.ProjectName, &m.Round); err != nil {
+		&m.OurRole, &m.ContractType, &m.Side, &m.Counts, &m.Warnings, &m.ProjectID, &m.ProjectName, &m.Round, &m.HasDocx); err != nil {
 		return core_domain.ContractReview{}, err
 	}
 	return reviewDomainFromModel(m)
@@ -51,7 +53,7 @@ func reviewDomainFromModel(m ReviewModel) (core_domain.ContractReview, error) {
 	r := core_domain.ContractReview{
 		ID: m.ID, UserID: m.UserID, CreatedAt: m.CreatedAt, TheirsName: m.TheirsName, BaseName: m.BaseName,
 		Playbook: m.Playbook, PlaybookName: m.PlaybookName, OurRole: m.OurRole, ContractType: m.ContractType, Side: m.Side,
-		ProjectID: m.ProjectID, ProjectName: m.ProjectName, Round: m.Round,
+		ProjectID: m.ProjectID, ProjectName: m.ProjectName, Round: m.Round, HasDocx: m.HasDocx,
 	}
 	if err := json.Unmarshal(m.Counts, &r.Counts); err != nil {
 		return core_domain.ContractReview{}, fmt.Errorf("decode counts: %w", err)

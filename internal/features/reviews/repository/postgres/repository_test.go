@@ -56,7 +56,24 @@ func TestReviewsRepository_Integration(t *testing.T) {
 	if saved.ID == 0 || saved.Counts["красные линии"] != 2 || len(saved.Warnings) != 1 || saved.CreatedAt.IsZero() {
 		t.Fatalf("saved = %+v", saved)
 	}
+	if !saved.HasDocx {
+		t.Errorf("разбор с единой версией в Word: HasDocx = false")
+	}
+	noDocx, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: u1, TheirsName: "Договор.pdf"},
+		core_domain.ReviewFiles{ReportHTML: []byte("x"), ReportXLSX: []byte("PK"), Changes: []byte("[]")})
+	if err != nil || noDocx.HasDocx {
+		t.Fatalf("разбор PDF без Word: %+v, %v", noDocx, err)
+	}
+	if got, err := repo.GetReview(ctx, u1, noDocx.ID); err != nil || got.HasDocx {
+		t.Errorf("GetReview без Word: %+v, %v", got, err)
+	}
+	if _, err := repo.GetFile(ctx, u1, noDocx.ID, "docx"); err == nil {
+		t.Errorf("единой версии в Word нет, а файл отдан")
+	}
 
+	if err := repo.DeleteReview(ctx, u1, noDocx.ID); err != nil {
+		t.Fatal(err)
+	}
 	list, err := repo.ListReviews(ctx, u1, 10, 0)
 	if err != nil || len(list) != 1 || list[0].TheirsName != "Договор 03.04.docx" {
 		t.Fatalf("list = %+v, err = %v", list, err)

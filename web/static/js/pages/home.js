@@ -42,7 +42,7 @@ function guestView() {
     </section>
     <ol class="steps">
       <li class="steps__item"><span class="steps__num">01</span><span class="steps__title">Загрузите две редакции</span>
-        <span class="steps__text">Свою отправленную и ответ контрагента, .docx.</span></li>
+        <span class="steps__text">Свою отправленную и ответ контрагента: .docx, .odt или PDF с текстом.</span></li>
       <li class="steps__item"><span class="steps__num">02</span><span class="steps__title">Получите единую версию</span>
         <span class="steps__text">Правки в тексте, правки без отметки выделены отдельно.</span></li>
       <li class="steps__item"><span class="steps__num">03</span><span class="steps__title">Решения на полях</span>
@@ -55,20 +55,20 @@ function formView(playbooks, memo, contracts, chosen) {
   return html`
     <header class="page-header">
       <h1 class="page-title">Новый разбор</h1>
-      <p class="page-subtitle">Редакция контрагента обязательна. Ваша отправленная редакция нужна, чтобы найти правки без режима рецензирования.</p>
+      <p class="page-subtitle">Редакция контрагента обязательна. Ваша отправленная редакция нужна, чтобы найти правки без режима рецензирования; для PDF она обязательна: в PDF рецензирования нет. Word с примечаниями и ответ в Word — только для .docx.</p>
     </header>
     <p class="alert" role="alert" id="review-alert" hidden></p>
     <form class="form form--wide" id="review-form" novalidate>
       <div class="drops">
         <label class="drop" for="f-base">
           <span class="drop__title">Наша редакция</span>
-          <span class="drop__file" data-empty="Отправленная контрагенту, .docx — перетащите или выберите">Отправленная контрагенту, .docx — перетащите или выберите</span>
-          <input id="f-base" name="base" type="file" accept=".docx">
+          <span class="drop__file" data-empty="Отправленная контрагенту, .docx или .odt — перетащите или выберите">Отправленная контрагенту, .docx или .odt — перетащите или выберите</span>
+          <input id="f-base" name="base" type="file" accept=".docx,.odt,.pdf">
         </label>
         <label class="drop drop--main" for="f-theirs">
           <span class="drop__title">Редакция контрагента</span>
-          <span class="drop__file" data-empty="Его ответ, .docx — перетащите или выберите">Его ответ, .docx — перетащите или выберите</span>
-          <input id="f-theirs" name="theirs" type="file" accept=".docx" required>
+          <span class="drop__file" data-empty="Его ответ, .docx, .odt или PDF — перетащите или выберите">Его ответ, .docx, .odt или PDF — перетащите или выберите</span>
+          <input id="f-theirs" name="theirs" type="file" accept=".docx,.odt,.pdf" required>
         </label>
       </div>
       <div class="form__row">
@@ -207,8 +207,13 @@ function wireForm() {
     show('');
     const theirs = $('#f-theirs').files[0];
     if (!theirs) {
-      show('Выберите файл редакции контрагента (.docx).');
+      show('Выберите файл редакции контрагента (.docx, .odt или PDF).');
       $('#f-theirs').focus();
+      return;
+    }
+    if (/\.pdf$/i.test(theirs.name) && !$('#f-base').files[0]) {
+      show('Для PDF загрузите и вашу отправленную редакцию: в PDF нет рецензирования, правки находятся сравнением с ней.');
+      $('#f-base').focus();
       return;
     }
     const select = $('#f-playbook');

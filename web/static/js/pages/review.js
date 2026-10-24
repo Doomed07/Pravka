@@ -603,6 +603,16 @@ function defaultAuthor() {
   }
 }
 
+// Файл контрагента не .docx (.odt или PDF): единая версия и ответ собираются из Word-файла, поэтому только для .docx.
+function noWordNote() {
+  return html`
+    <section class="answer" aria-label="Word недоступен">
+      <h2 class="answer__title">Word недоступен</h2>
+      <p class="answer__progress">Файл контрагента не .docx: Word с примечаниями и ответ контрагенту в Word собираются только из .docx.
+      Решения по правкам сохраняются, отчёт и Excel доступны.</p>
+    </section>`;
+}
+
 function answerPanel(changes) {
   const [done, total] = decidedCount(changes);
   return html`
@@ -620,12 +630,12 @@ function unifiedView(r, doc, changes, sum) {
   const order = new Map(changes.map((c, i) => [c.id, i + 1]));
   const warnings = r.warnings || [];
   return html`
-    ${head(r, true)}
+    ${head(r, r.has_docx)}
     ${roundBar(r)}
     ${roundView(sum)}
     <div class="rv">
       <aside class="rv-side">
-        ${answerPanel(changes)}
+        ${r.has_docx ? answerPanel(changes) : noWordNote()}
         ${summary(changes)}
         ${changes.length ? list(changes, order) : html`<p class="empty-state">Правок не найдено.</p>`}
         <p class="legend">
@@ -729,6 +739,7 @@ function wireDecisions(id, changes) {
   const build = $('#answer-build');
   const author = $('#answer-author');
   const status = $('#answer-status');
+  if (!build) return; // у разбора не из .docx панели ответа нет
   build.addEventListener('click', async () => {
     try {
       localStorage.setItem(AUTHOR_KEY, author.value.trim());

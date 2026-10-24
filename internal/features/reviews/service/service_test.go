@@ -175,7 +175,8 @@ func TestCreate_SavesReportsNotContracts(t *testing.T) {
 func TestCreate_RejectsBadUploadsBeforeEngine(t *testing.T) {
 	cases := map[string]core_domain.ReviewRequest{
 		"empty":       {Theirs: core_domain.UploadedFile{Name: "a.docx"}},
-		"not docx":    {Theirs: core_domain.UploadedFile{Name: "a.pdf", Data: []byte("PK..")}},
+		"not docx":    {Theirs: core_domain.UploadedFile{Name: "a.doc", Data: []byte("PK..")}},
+		"pdf is zip":  {Theirs: core_domain.UploadedFile{Name: "a.pdf", Data: []byte("PK..")}},
 		"not zip":     {Theirs: core_domain.UploadedFile{Name: "a.docx", Data: []byte("hello")}},
 		"bad base":    {Theirs: docx, Base: &core_domain.UploadedFile{Name: "b.doc", Data: []byte("PK..")}},
 		"long fields": {Theirs: docx, OurAuthors: string(make([]rune, 600))},
@@ -449,5 +450,19 @@ func TestProject_HistoryCountsPerRound(t *testing.T) {
 	}
 	if _, err := NewReviewsService(roundRepo(), &fakeEngine{}).Project(context.Background(), 8, 5); !errors.Is(err, core_errors.ErrNotFound) {
 		t.Errorf("чужой договор: %v", err)
+	}
+}
+
+func TestCreate_AcceptsOdtAndPdf(t *testing.T) {
+	for _, f := range []core_domain.UploadedFile{{Name: "a.odt", Data: []byte("PK\x03\x04")}, {Name: "a.pdf", Data: []byte("%PDF-1.7")}} {
+		eng := &fakeEngine{}
+		repo := &fakeRepo{}
+		base := core_domain.UploadedFile{Name: "base.docx", Data: []byte("PK\x03\x04")}
+		if _, err := NewReviewsService(repo, eng).Create(context.Background(), 1, core_domain.ReviewRequest{Theirs: f, Base: &base}); err != nil {
+			t.Errorf("%s: %v", f.Name, err)
+		}
+		if eng.calls != 1 || repo.saved[0].TheirsName != f.Name {
+			t.Errorf("%s: engine calls = %d, saved = %+v", f.Name, eng.calls, repo.saved)
+		}
 	}
 }

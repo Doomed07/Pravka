@@ -13,6 +13,7 @@ from .anonymize import Anonymizer, anonymize_docx, learn_docx, residual_candidat
 from .docx_reader import DocxError
 from .evaluate import print_golden, print_report, run_golden, run_synthetic
 from .annotate import annotate_docx
+from .readers import sniff_format
 from .llm import Explainer, LLMError, OpenAICompatClient
 from .parties import PartiesError, RoleCheckError, SideConfig, canon_role, profile_from_args
 from .pipeline import DISCLAIMER, review_files
@@ -57,7 +58,9 @@ def cmd_review(a) -> int:
     _write(os.path.join(out, "report.html"), render_html(rv, prio))
     render_xlsx(rv, os.path.join(out, "report.xlsx"))
     write_json(rv, os.path.join(out, "changes.json"))
-    annotate_docx(a.theirs, os.path.join(out, "unified.docx"), rv.changes, rv.document)
+    has_word = sniff_format(a.theirs) == "docx"  # Word с примечаниями собирается из XML файла контрагента
+    if has_word:
+        annotate_docx(a.theirs, os.path.join(out, "unified.docx"), rv.changes, rv.document)
     c = rv.counts()
     print(f"Правок: {c['всего']} (в рецензировании {c['в рецензировании']}, комментариев {c['комментарии']}, "
           f"тихих {c['тихие правки']}, найдено сравнением {c['найдено сравнением']})")
@@ -69,7 +72,8 @@ def cmd_review(a) -> int:
     if round_n:
         print(f"Раунд {round_n} записан в журнал проекта {a.project}")
     print(f"Отчёты: {os.path.join(out, 'report.html')}, {os.path.join(out, 'report.xlsx')}, {os.path.join(out, 'changes.json')}")
-    print(f"Единая версия с примечаниями: {os.path.join(out, 'unified.docx')}")
+    if has_word:
+        print(f"Единая версия с примечаниями: {os.path.join(out, 'unified.docx')}")
     print(DISCLAIMER)
     return 0
 
@@ -158,8 +162,9 @@ def cmd_anonymize(a) -> int:
 
 def cmd_worksheet(a) -> int:
     """Анкета разметки: правки контрагента из одного или нескольких раундов → xlsx для юриста."""
-    from .docx_reader import read_docx, view_paragraphs
+    from .docx_reader import view_paragraphs
     from .parties import parse_parties
+    from .readers import read_document
 
     rows, contracts = [], []
     kinds = _pairs(a.kind, "--kind")
@@ -171,7 +176,7 @@ def cmd_worksheet(a) -> int:
         rv = review_files(theirs, base or None, None, our_authors=a.our_author, ordering="doc")
         rows += group_changes(rv.changes, name.strip())
         try:
-            text = "\n".join(t for _, t in view_paragraphs(read_docx(theirs), "accepted"))
+            text = "\n".join(t for _, t in view_paragraphs(read_document(theirs), "accepted"))
             ps = [p for p in parse_parties(text) if p.name]
             seen, parties = set(), []
             for p in ps:

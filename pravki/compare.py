@@ -89,6 +89,32 @@ def _tracked_key(c: Change) -> tuple:
     return (c.kind, c.author, c.date, normalize(c.before), normalize(c.after))
 
 
+def _types_labels(doc: DocxDoc) -> bool:
+    """Номера пунктов напечатаны в самом тексте (так в PDF и в договорах без автонумерации)."""
+    labeled = [p for p in doc.paragraphs if p.label]
+    return bool(labeled) and sum(p.label_in_text for p in labeled) / len(labeled) >= 0.5
+
+
+def label_policy(base: DocxDoc, theirs: DocxDoc) -> tuple[bool, bool]:
+    """Нужно ли убрать напечатанные номера пунктов из текста нашей версии / версии контрагента при сравнении.
+
+    Если в одной версии номера напечатаны (PDF, ручная нумерация), а в другой их показывает редактор (автонумерация),
+    «1.», «2.1.» в начале каждого абзаца были бы «вставками». Когда номера напечатаны в обеих версиях, они сравниваются
+    как обычный текст: изменённый номер пункта виден как правка."""
+    bt, tt = _types_labels(base), _types_labels(theirs)
+    return bt and not tt, tt and not bt
+
+
+def paired_views(base: DocxDoc, theirs: DocxDoc, ours, mode: str = "rejected"):
+    """Тексты абзацев обеих версий для сравнения: [(абзац, текст)], с учётом label_policy."""
+    strip_base, strip_theirs = label_policy(base, theirs)
+
+    def view(doc, strip):
+        return [(p, strip_label(t, p.label) if strip and p.label_in_text else t) for p, t in view_paragraphs(doc, mode, ours)]
+
+    return view(base, strip_base), view(theirs, strip_theirs)
+
+
 def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -> list[Change]:
     """Отличия текста, не отмеченные в рецензировании.
 
@@ -96,10 +122,11 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
     а чужие отклонены: так не мешают нерешённые правки контрагента прошлых раундов, которые остались
     в файле и в отправленной нами версии. Если ничего не менялось втихую, тексты совпадают.
     """
-    base_view = [(p, t) for p, t in view_paragraphs(base, "rejected", ours) if normalize(t)]
-    their_view = [(p, t) for p, t in view_paragraphs(theirs, "rejected", ours) if normalize(t)]
+    base_view, their_view = paired_views(base, theirs, ours)
+    base_view = [(p, t) for p, t in base_view if normalize(t)]
+    their_view = [(p, t) for p, t in their_view if normalize(t)]
     # наша версия со всеми правками принятыми: так видно, что контрагент просто принял правку из рецензирования
-    base_accepted = {p.index: normalize(t) for p, t in view_paragraphs(base, "accepted", ours)}
+    base_accepted = {p.index: normalize(t) for p, t in paired_views(base, theirs, ours, "accepted")[0]}
     pairs = _align([t for _, t in base_view], [t for _, t in their_view])
     changes: list[Change] = []
     last_order = -1.0

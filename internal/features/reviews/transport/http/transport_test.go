@@ -45,7 +45,7 @@ func (f *fakeService) Get(_ context.Context, userID, id int) (core_domain.Contra
 	if userID != 1 {
 		return core_domain.ContractReview{}, core_errors.ErrNotFound
 	}
-	return core_domain.ContractReview{ID: id}, nil
+	return core_domain.ContractReview{ID: id, HasDocx: id != 7}, nil // разбор 7 — файл контрагента не .docx: Word нет
 }
 func (f *fakeService) File(_ context.Context, userID, id int, kind string) ([]byte, error) {
 	if userID != 1 {
@@ -380,5 +380,19 @@ func TestCreate_ProjectFields(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("project_id %q: status = %d, want 400", bad, rec.Code)
 		}
+	}
+}
+
+func TestGet_HasDocxTellsWhetherWordFileExists(t *testing.T) {
+	get := func(path string) string {
+		rec := httptest.NewRecorder()
+		router(&fakeService{}, 1).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Body.String()
+	}
+	if body := get("/reviews/5"); !strings.Contains(body, `"has_docx":true`) {
+		t.Errorf("разбор docx: %s", body)
+	}
+	if body := get("/reviews/7"); !strings.Contains(body, `"has_docx":false`) {
+		t.Errorf("разбор PDF или odt: %s", body)
 	}
 }
