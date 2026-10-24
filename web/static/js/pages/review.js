@@ -117,7 +117,7 @@ const PRECEDENTS = new Map();
 const PAST_CHOICE = { accept: 'приняли', reject: 'отклонили', counter: 'встречная редакция' };
 
 function precedentItem(p) {
-  const kind = p.same ? 'Та же правка' : 'Похожая правка';
+  const kind = p.same ? 'Та же правка' : p.semantic ? 'Похожая по смыслу' : 'Похожая правка';
   return html`
     <li class="past__item">
       <p class="past__head"><b>${kind}</b> · <a href="/reviews/${p.review_id}#c-${p.past_change}">${short(p.theirs_name, 40)}</a>, ${fmtDate(p.created_at)}</p>
@@ -157,6 +157,61 @@ function lawBlock(hints) {
       </ul>
       <p class="law__foot">Подобрано по смыслу из ГК РФ (pravo.gov.ru). Подсказка: применимость нормы оценивает юрист.</p>
     </details>`;
+}
+
+// ---------- Ваши прошлые формулировки ----------
+
+function wordingsBlock(list) {
+  return html`
+    <details class="past past--wording">
+      <summary class="past__title">Ваши прошлые формулировки: ${list.length}</summary>
+      <ul class="past__list">
+        ${list.map((w) => html`
+          <li class="past__item">
+            <p class="past__head">${w.clause ? `п. ${w.clause} · ` : ''}<a href="/reviews/${w.review_id}">${short(w.theirs_name, 40)}</a>, ${fmtDate(w.created_at)}</p>
+            <p>«${w.text}»</p>
+            <button class="past__use" type="button" data-text="${w.text}">Взять эту формулировку</button>
+          </li>`)}
+      </ul>
+      <p class="past__foot">Пункты вашей редакции из прошлых разборов того же вида договора. Подсказка, решаете вы.</p>
+    </details>`;
+}
+
+// Кнопка «Взять эту формулировку»: встречная редакция с этим текстом, юрист может поправить. Блоки с кнопками
+// приходят и после отрисовки (формулировки), поэтому обработчик — один на документ.
+function wireUse(id, refresh) {
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest && e.target.closest('.past__use');
+    if (!btn) return;
+    e.stopPropagation();
+    const box = btn.closest('.note')?.querySelector('.decide');
+    if (!box) return;
+    const text = box.querySelector('.decide__text');
+    text.value = btn.dataset.text;
+    text.hidden = false;
+    box.querySelectorAll('.decide__btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.choice === 'counter')));
+    await saveChoice(id, box, 'counter', text.value);
+    refresh();
+    text.focus();
+  });
+}
+
+async function loadWordings(id) {
+  let list = [];
+  try {
+    list = (await reviews.wordings(id)) || [];
+  } catch {
+    return;
+  }
+  const by = new Map();
+  for (const w of list) {
+    if (!by.has(w.change_id)) by.set(w.change_id, []);
+    by.get(w.change_id).push(w);
+  }
+  for (const [change, items] of by) {
+    const slot = document.querySelector(`.wording-slot[data-change="${CSS.escape(change)}"]`);
+    if (slot) mount(slot, wordingsBlock(items));
+  }
 }
 
 // Подсказки по ГК приходят после отрисовки страницы: место для них — пустой блок в карточке правки.
@@ -223,6 +278,7 @@ function note(ch, order) {
       ${ch.escalate_to ? html`<p class="note__foot">Согласовать: ${ch.escalate_to}</p>` : ''}
       ${ch.rule_id && ch.rule_id !== 'PARTY' || isSilent(ch) ? html`<p class="note__foot">${[ch.rule_id && ch.rule_id !== 'PARTY' ? `правило ${ch.rule_id}` : '', isSilent(ch) ? 'найдено сравнением редакций' : ''].filter(Boolean).join(' · ')}</p>` : ''}
       ${precedentsBlock(ch)}
+      <div class="wording-slot" data-change="${ch.id}"></div>
       <div class="law-slot" data-change="${ch.id}"></div>
       ${decideBlock(ch)}
     </article>`;
@@ -555,21 +611,7 @@ function wireDecisions(id, changes) {
     });
   });
 
-  // «Взять эту формулировку» из прошлого разбора: встречная редакция с этим текстом, юрист может поправить
-  document.querySelectorAll('.past__use').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const box = btn.closest('.note')?.querySelector('.decide');
-      if (!box) return;
-      const text = box.querySelector('.decide__text');
-      text.value = btn.dataset.text;
-      text.hidden = false;
-      box.querySelectorAll('.decide__btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.choice === 'counter')));
-      await saveChoice(id, box, 'counter', text.value);
-      refresh();
-      text.focus();
-    });
-  });
+  wireUse(id, refresh);
 
   const build = $('#answer-build');
   const author = $('#answer-author');
@@ -653,6 +695,7 @@ async function load() {
   wire(id);
   if (doc && doc.length) {
     wireDecisions(id, changes || []);
+    loadWordings(id);
     loadLaw(id);
   }
   // ссылка из «как решали раньше» ведёт к правке прошлого разбора: /reviews/3#c-E001

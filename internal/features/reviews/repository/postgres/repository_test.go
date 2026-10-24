@@ -14,6 +14,7 @@ import (
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
 	core_errors "github.com/Doomed07/Pravka/internal/core/errors"
+	core_postgres_pool "github.com/Doomed07/Pravka/internal/core/repository/postgres/pool"
 	core_postgres_pgx "github.com/Doomed07/Pravka/internal/core/repository/postgres/pool/pgx"
 )
 
@@ -170,7 +171,10 @@ func TestReviewsRepository_Precedents(t *testing.T) {
 		change("S004", "порядок и сроки оплаты", "30%", "10%",
 			`Покупатель вносит аванс в размере 30% от стоимости Товара в течение 5 рабочих дней с даты подписания договора.`),
 		// та же суть и тема, но абзац о другом (монтаж, а не поставка): похожая правка, а не «та же»
-		change("S005", "сроки исполнения", "30", "10", `Монтаж оборудования выполняется Поставщиком в течение 30 календарных дней.`))
+		change("S005", "сроки исполнения", "30", "10", `Монтаж оборудования выполняется Поставщиком в течение 30 календарных дней.`),
+		// та же неустойка 0,1% → 0,5%, но платит Покупатель, а в прошлом разборе — Поставщик: не подсказка
+		change("S006", "неустойка и штрафы", "0,1%", "0,5%",
+			`За просрочку оплаты Покупатель уплачивает неустойку 0,1% от стоимости неоплаченного Товара за каждый день.`))
 	choose(a, cur, "S001", "reject", "") // решение по самому разбору — не «как решали раньше»
 
 	got, err := repo.ListPrecedents(ctx, a, cur)
@@ -192,9 +196,9 @@ func TestReviewsRepository_Precedents(t *testing.T) {
 	if s5 := by["S005"]; len(s5) == 0 || s5[0].Same {
 		t.Fatalf("S005: another paragraph is a similar edit, not the same: %+v", s5)
 	}
-	for _, id := range []string{"S002", "S003", "S004"} {
+	for _, id := range []string{"S002", "S003", "S004", "S006"} {
 		if len(by[id]) != 0 {
-			t.Fatalf("%s: no decision, nothing similar or another topic → no hint: %+v", id, by[id])
+			t.Fatalf("%s: no decision, nothing similar, another topic or another obligor → no hint: %+v", id, by[id])
 		}
 	}
 	if _, err := repo.ListPrecedents(ctx, b, cur); !errors.Is(err, core_errors.ErrNotFound) {
@@ -263,10 +267,18 @@ func TestReviewsRepository_LawHints(t *testing.T) {
 	}
 	supply := review("supply")
 	missing, err := repo.ChangesWithoutVectors(ctx, user, supply)
-	if err != nil || len(missing) != 1 || missing[0].ID != "E001" || missing[0].ContextAfter != "10 дней" {
-		t.Fatalf("only E001 needs a vector (taxes, comments, typos and technical edits are skipped): %+v, err = %v", missing, err)
+	ids := []string{}
+	for _, m := range missing {
+		ids = append(ids, m.ID)
 	}
-	if err := repo.SaveVectors(ctx, supply, "bge-m3", map[string][]float32{"E001": axis(0)}); err != nil {
+	if err != nil || strings.Join(ids, ",") != "E001,E002,E004" || missing[0].ContextAfter != "10 дней" {
+		t.Fatalf("vectors for all edits except comments and technical ones: %v, err = %v", ids, err)
+	}
+	vecs := map[string][]float32{}
+	for _, id := range ids {
+		vecs[id] = axis(0)
+	}
+	if err := repo.SaveVectors(ctx, supply, "bge-m3", vecs); err != nil {
 		t.Fatal(err)
 	}
 	if again, _ := repo.ChangesWithoutVectors(ctx, user, supply); len(again) != 0 {
@@ -278,6 +290,9 @@ func TestReviewsRepository_LawHints(t *testing.T) {
 	}
 	var got []string
 	for _, h := range hints {
+		if h.ChangeID != "E001" {
+			t.Fatalf("taxes and edits without a topic get no law hints: %+v", h)
+		}
 		if strings.HasPrefix(h.Title, "тест ") {
 			got = append(got, h.Article)
 		}
@@ -291,5 +306,158 @@ func TestReviewsRepository_LawHints(t *testing.T) {
 	}
 	if m, _ := repo.ChangesWithoutVectors(ctx, user, review("lease")); len(m) != 0 {
 		t.Fatalf("lease: no law hints: %+v", m)
+	}
+}
+
+// testUser — пользователь для интеграционного теста; удаляется вместе со всеми разборами после теста.
+func testUser(t *testing.T, ctx context.Context, pool interface {
+	Exec(context.Context, string, ...any) (core_postgres_pool.CommandTag, error)
+	QueryRow(context.Context, string, ...any) core_postgres_pool.Row
+}, name string) int {
+	t.Helper()
+	_, _ = pool.Exec(ctx, `DELETE FROM pravkiapp.users WHERE username = $1`, name)
+	var id int
+	if err := pool.QueryRow(ctx, `INSERT INTO pravkiapp.users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id`,
+		name, name+"@example.com", "$2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234").Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM pravkiapp.users WHERE id = $1`, id) })
+	return id
+}
+
+// near — единичный вектор по оси i с небольшим отклонением k по оси 1023: расстояние до axis(i) около 0,005·k².
+func near(i int, k float32) []float32 {
+	v := make([]float32, 1024)
+	v[i], v[1023] = 1, 0.1*k
+	return v
+}
+
+// «Ваши прошлые формулировки»: другой текст того же пункта из прошлой редакции — да; тот же шаблон, другая обязанная
+// сторона, далёкий по смыслу абзац, чужая роль — нет; одинаковый текст из двух разборов — один раз.
+func TestReviewsRepository_Wordings(t *testing.T) {
+	if os.Getenv("PRAVKI_TEST_DB") == "" {
+		t.Skip("PRAVKI_TEST_DB не задан: нужна настоящая PostgreSQL")
+	}
+	ctx := context.Background()
+	pool, err := core_postgres_pgx.NewConnPool(core_postgres_pgx.NewConfigMust(), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	user := testUser(t, ctx, pool, "wording_test")
+	repo := NewReviewsRepository(pool)
+	review := func(role, changes string) int {
+		rev, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: user, TheirsName: role + ".docx", OurRole: role,
+			ContractType: "supply"}, core_domain.ReviewFiles{ReportHTML: []byte("-"), ReportXLSX: []byte("-"), Changes: []byte(changes)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rev.ID
+	}
+	const ours = "Поставщик поставляет Товар в течение 30 календарных дней с даты получения аванса."
+	const other = "Срок поставки Товара Поставщиком — не позднее 45 рабочих дней после поступления предоплаты."
+	save := func(id int, paras []core_domain.DocParagraph, vecs [][]float32) {
+		t.Helper()
+		if err := repo.SaveParagraphs(ctx, id, "bge-m3", paras, vecs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := review("Поставщик", "[]")
+	save(past, []core_domain.DocParagraph{
+		{Index: 1, Clause: "3.1", Text: other},
+		{Index: 2, Clause: "3.1", Text: ours}, // тот же шаблон
+		{Index: 3, Clause: "3.2", Text: "Покупатель принимает Товар в течение 30 календарных дней с даты поставки."},
+		{Index: 4, Clause: "8.1", Text: "Споры разрешаются в Арбитражном суде города Москвы, претензионный порядок обязателен."},
+	}, [][]float32{near(0, 1), near(0, 0), near(0, 0), near(1, 0)})
+	past2 := review("Поставщик", "[]")
+	save(past2, []core_domain.DocParagraph{{Index: 1, Clause: "3.1", Text: other}}, [][]float32{near(0, 2)})
+	buyer := review("Покупатель", "[]") // мы — Покупатель: не наша формулировка для роли Поставщика
+	save(buyer, []core_domain.DocParagraph{{Index: 1, Clause: "3.1", Text: "Поставщик передаёт Товар в течение 10 дней."}},
+		[][]float32{near(0, 0)})
+
+	cur := review("Поставщик", `[{"id":"E001","kind":"replace","topic":"сроки исполнения","paragraph_index":7},
+	{"id":"E002","kind":"comment","topic":"сроки исполнения","paragraph_index":7},
+	{"id":"E003","kind":"replace","topic":"сроки исполнения","materiality":"техническая","paragraph_index":7}]`)
+	save(cur, []core_domain.DocParagraph{{Index: 7, Clause: "3.1", Text: ours}}, [][]float32{near(0, 0)})
+
+	got, err := repo.ListWordings(ctx, user, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ChangeID != "E001" || got[0].Text != other || got[0].ReviewID != past {
+		t.Fatalf("one different wording of the same clause, once: %+v", got)
+	}
+	if _, err := repo.ListWordings(ctx, user+100000, cur); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("other user's review: err = %v", err)
+	}
+}
+
+// «Как решали раньше» по смыслу: только близкие по вектору прошлые решения той же темы, стороны, типа и роли и только
+// к правкам без подсказок по словам.
+func TestReviewsRepository_SemanticPrecedents(t *testing.T) {
+	if os.Getenv("PRAVKI_TEST_DB") == "" {
+		t.Skip("PRAVKI_TEST_DB не задан: нужна настоящая PostgreSQL")
+	}
+	ctx := context.Background()
+	pool, err := core_postgres_pgx.NewConnPool(core_postgres_pgx.NewConfigMust(), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	user := testUser(t, ctx, pool, "semantic_test")
+	repo := NewReviewsRepository(pool)
+	ch := func(id, topic, para string) string {
+		return fmt.Sprintf(`{"id":%q,"kind":"replace","topic":%q,"before":"a","after":"b","context_after":%q}`, id, topic, para)
+	}
+	review := func(role, typ string, changes ...string) int {
+		rev, err := repo.CreateReview(ctx, core_domain.ContractReview{UserID: user, TheirsName: "п.docx", OurRole: role, ContractType: typ},
+			core_domain.ReviewFiles{ReportHTML: []byte("-"), ReportXLSX: []byte("-"), Changes: []byte("[" + strings.Join(changes, ",") + "]")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rev.ID
+	}
+	decide := func(id int, vecs map[string][]float32, choices map[string]string) {
+		t.Helper()
+		if err := repo.SaveVectors(ctx, id, "bge-m3", vecs); err != nil {
+			t.Fatal(err)
+		}
+		for c, choice := range choices {
+			text := ""
+			if choice == "counter" {
+				text = "в течение 20 дней"
+			}
+			if err := repo.SaveChoice(ctx, user, id, core_domain.ReviewChoice{ChangeID: c, Choice: choice, Text: text}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	const supplier = "Поставщик передаёт Товар в течение 20 дней с даты оплаты."
+	past := review("Поставщик", "supply",
+		ch("E001", "сроки исполнения", supplier),
+		ch("E002", "неустойка и штрафы", supplier),                                     // другая тема
+		ch("E003", "сроки исполнения", "Покупатель принимает Товар в течение 5 дней."), // другая обязанная сторона
+		ch("E004", "сроки исполнения", supplier),                                       // далеко по смыслу
+		ch("E005", "сроки исполнения", supplier))                                       // без решения юриста
+	decide(past, map[string][]float32{"E001": near(0, 1), "E002": near(0, 0), "E003": near(0, 0), "E004": near(2, 0),
+		"E005": near(0, 0)}, map[string]string{"E001": "counter", "E002": "reject", "E003": "accept", "E004": "reject"})
+	buyer := review("Покупатель", "supply", ch("E001", "сроки исполнения", supplier))
+	decide(buyer, map[string][]float32{"E001": near(0, 0)}, map[string]string{"E001": "reject"})
+
+	cur := review("Поставщик", "supply",
+		ch("S001", "сроки исполнения", "Поставщик поставляет Товар не позднее 10 дней после аванса."),
+		ch("S002", "сроки исполнения", "Поставщик поставляет Товар не позднее 10 дней после аванса."))
+	decide(cur, map[string][]float32{"S001": near(0, 0), "S002": near(0, 0)}, nil)
+
+	got, err := repo.ListSemanticPrecedents(ctx, user, cur, []string{"S002"}) // у S002 уже есть подсказки по словам
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ChangeID != "S001" || got[0].PastChangeID != "E001" || got[0].ReviewID != past ||
+		!got[0].Semantic || got[0].Same || got[0].Choice != "counter" || got[0].Text != "в течение 20 дней" {
+		t.Fatalf("only the close decision of the same topic, obligor and role: %+v", got)
+	}
+	if _, err := repo.ListSemanticPrecedents(ctx, user+100000, cur, nil); !errors.Is(err, core_errors.ErrNotFound) {
+		t.Fatalf("other user's review: err = %v", err)
 	}
 }

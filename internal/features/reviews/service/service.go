@@ -10,8 +10,10 @@ import (
 
 	core_domain "github.com/Doomed07/Pravka/internal/core/domain"
 	core_errors "github.com/Doomed07/Pravka/internal/core/errors"
+	core_logger "github.com/Doomed07/Pravka/internal/core/logger"
 	core_metrics "github.com/Doomed07/Pravka/internal/core/metrics"
 	"github.com/Doomed07/Pravka/internal/engine"
+	"go.uber.org/zap"
 )
 
 const (
@@ -31,6 +33,13 @@ type ReviewsRepository interface {
 	ChangesWithoutVectors(ctx context.Context, userID, reviewID int) ([]core_domain.VectorChange, error)
 	SaveVectors(ctx context.Context, reviewID int, model string, vectors map[string][]float32) error
 	ListLawHints(ctx context.Context, userID, reviewID int) ([]core_domain.LawHint, error)
+	ReviewsToIndex(ctx context.Context, limit int) ([]int, error)
+	NeedsIndex(ctx context.Context, userID, reviewID int) (bool, error)
+	IndexSource(ctx context.Context, reviewID int) ([]byte, []core_domain.VectorChange, error)
+	SaveParagraphs(ctx context.Context, reviewID int, model string, paras []core_domain.DocParagraph, vectors [][]float32) error
+	MarkIndexed(ctx context.Context, reviewID int) error
+	ListWordings(ctx context.Context, userID, reviewID int) ([]core_domain.Wording, error)
+	ListSemanticPrecedents(ctx context.Context, userID, reviewID int, skip []string) ([]core_domain.Precedent, error)
 }
 
 type Engine interface {
@@ -43,10 +52,11 @@ type Engine interface {
 type ReviewsService struct {
 	repo   ReviewsRepository
 	engine Engine
+	nudge  chan struct{} // новый разбор: фоновой индексации пора проснуться
 }
 
 func NewReviewsService(repo ReviewsRepository, eng Engine) *ReviewsService {
-	return &ReviewsService{repo: repo, engine: eng}
+	return &ReviewsService{repo: repo, engine: eng, nudge: make(chan struct{}, 1)}
 }
 
 func (s *ReviewsService) Playbooks(ctx context.Context) ([]core_domain.Playbook, error) {
@@ -93,6 +103,10 @@ func (s *ReviewsService) Create(ctx context.Context, userID int, req core_domain
 		return core_domain.ContractReview{}, fmt.Errorf("save review: %w", err)
 	}
 	core_metrics.ReviewsCreated.Inc()
+	select {
+	case s.nudge <- struct{}{}:
+	default:
+	}
 	return out, nil
 }
 
@@ -132,9 +146,127 @@ func (s *ReviewsService) SaveChoice(ctx context.Context, userID, id int, c core_
 	return s.repo.SaveChoice(ctx, userID, id, c)
 }
 
-// Precedents — «как решали раньше»: прошлые решения юриста по похожим правкам. Только подсказка.
+// Precedents — «как решали раньше»: прошлые решения юриста по похожим правкам. Только подсказка. Сначала по словам;
+// к правкам, для которых по словам ничего нет, — по смыслу (если векторы посчитаны).
 func (s *ReviewsService) Precedents(ctx context.Context, userID, id int) ([]core_domain.Precedent, error) {
-	return s.repo.ListPrecedents(ctx, userID, id)
+	words, err := s.repo.ListPrecedents(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.indexIfNeeded(ctx, userID, id); err != nil {
+		return nil, err
+	}
+	found := make([]string, 0, len(words))
+	for _, p := range words {
+		found = append(found, p.ChangeID)
+	}
+	sense, err := s.repo.ListSemanticPrecedents(ctx, userID, id, found)
+	if err != nil {
+		return nil, err
+	}
+	return append(words, sense...), nil
+}
+
+// Wordings — «ваши прошлые формулировки» к правкам разбора: похожие пункты из нашей редакции в прошлых разборах.
+func (s *ReviewsService) Wordings(ctx context.Context, userID, id int) ([]core_domain.Wording, error) {
+	if err := s.indexIfNeeded(ctx, userID, id); err != nil {
+		return nil, err
+	}
+	return s.repo.ListWordings(ctx, userID, id)
+}
+
+// indexIfNeeded — разбор открыли раньше, чем до него дошла фоновая индексация: считаем векторы сейчас.
+func (s *ReviewsService) indexIfNeeded(ctx context.Context, userID, id int) error {
+	need, err := s.repo.NeedsIndex(ctx, userID, id)
+	if err != nil || !need {
+		return err
+	}
+	if err := s.IndexReview(ctx, id); err != nil && !errors.Is(err, engine.ErrNoEmbedModel) {
+		return err
+	}
+	return nil
+}
+
+// IndexReview считает векторы абзацев нашей редакции и правок разбора. Модели для векторов нет —
+// engine.ErrNoEmbedModel, разбор остаётся непроиндексированным (дойдём позже).
+func (s *ReviewsService) IndexReview(ctx context.Context, id int) error {
+	document, changes, err := s.repo.IndexSource(ctx, id)
+	if err != nil {
+		return err
+	}
+	paras, err := core_domain.OurParagraphs(document)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(paras); i += embedBatch {
+		batch := paras[i:min(i+embedBatch, len(paras))]
+		texts := make([]string, len(batch))
+		for j, p := range batch {
+			texts[j] = p.Text
+		}
+		model, vectors, err := s.engine.Embed(ctx, texts)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.SaveParagraphs(ctx, id, model, batch, vectors); err != nil {
+			return err
+		}
+	}
+	if err := s.embedChanges(ctx, id, changes); err != nil {
+		return err
+	}
+	return s.repo.MarkIndexed(ctx, id)
+}
+
+// embedChanges — векторы правок (для «Что говорит ГК» и «как решали раньше» по смыслу).
+func (s *ReviewsService) embedChanges(ctx context.Context, id int, changes []core_domain.VectorChange) error {
+	for i := 0; i < len(changes); i += embedBatch {
+		batch := changes[i:min(i+embedBatch, len(changes))]
+		texts := make([]string, len(batch))
+		for j, c := range batch {
+			texts[j] = c.EmbedText()
+		}
+		model, vectors, err := s.engine.Embed(ctx, texts)
+		if err != nil {
+			return err
+		}
+		byID := make(map[string][]float32, len(batch))
+		for j, c := range batch {
+			byID[c.ID] = vectors[j]
+		}
+		if err := s.repo.SaveVectors(ctx, id, model, byID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RunIndexer — фоновая индексация разборов поставки и услуг: при запуске, после каждого нового разбора и раз в минуту.
+// Ошибки только в журнал: сайт работает и без векторов.
+func (s *ReviewsService) RunIndexer(ctx context.Context, log *core_logger.Logger) {
+	for {
+		ids, err := s.repo.ReviewsToIndex(ctx, 5)
+		if err != nil {
+			log.Warn("index: list reviews", zap.Error(err))
+		}
+		for _, id := range ids {
+			if err := s.IndexReview(ctx, id); err != nil {
+				if !errors.Is(err, engine.ErrNoEmbedModel) {
+					log.Warn("index review failed", zap.Int("review", id), zap.Error(err))
+				}
+				break // модели нет или движок недоступен — попробуем позже
+			}
+		}
+		if len(ids) == 5 && err == nil {
+			continue // ещё есть очередь
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.nudge:
+		case <-time.After(time.Minute):
+		}
+	}
 }
 
 // embedBatch — текстов за один запрос векторов (предел движка).
@@ -147,26 +279,8 @@ func (s *ReviewsService) LawHints(ctx context.Context, userID, id int) ([]core_d
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < len(missing); i += embedBatch {
-		batch := missing[i:min(i+embedBatch, len(missing))]
-		texts := make([]string, len(batch))
-		for j, c := range batch {
-			texts[j] = c.EmbedText()
-		}
-		model, vectors, err := s.engine.Embed(ctx, texts)
-		if errors.Is(err, engine.ErrNoEmbedModel) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		byID := make(map[string][]float32, len(batch))
-		for j, c := range batch {
-			byID[c.ID] = vectors[j]
-		}
-		if err := s.repo.SaveVectors(ctx, id, model, byID); err != nil {
-			return nil, err
-		}
+	if err := s.embedChanges(ctx, id, missing); err != nil && !errors.Is(err, engine.ErrNoEmbedModel) {
+		return nil, err
 	}
 	return s.repo.ListLawHints(ctx, userID, id)
 }

@@ -107,6 +107,8 @@ export const reviews = {
   precedents: (id) => api('/reviews/' + id + '/precedents'),
   // «что говорит ГК»: ближайшие по смыслу пункты ГК РФ к правкам (при первом открытии считается несколько секунд)
   law: (id) => api('/reviews/' + id + '/law'),
+  // «ваши прошлые формулировки»: похожие пункты нашей редакции из прошлых разборов
+  wordings: (id) => api('/reviews/' + id + '/wordings'),
   // пустой choice снимает решение
   saveChoice: (id, change, choice, text = '') =>
     api('/reviews/' + id + '/choices/' + encodeURIComponent(change), { method: 'PUT', body: { choice, text } }),

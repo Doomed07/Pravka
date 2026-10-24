@@ -224,8 +224,9 @@ func (r *ReviewsRepository) SaveChoice(ctx context.Context, userID, reviewID int
 
 // Похожесть прошлой правки на текущую: слова абзаца нашей редакции (вес 0,5) и суть правки — какие слова убраны
 // и какие добавлены (вес 0,5). Правки с разными темами не сравниваются: «30% → 10%» в авансе и «30 → 10 дней» в сроке
-// поставки дают одну и ту же суть {+10, -30}. «Та же правка» — та же суть в похожем абзаце (не меньше половины общих
-// слов); её показываем первой. Остальные — если похожесть не ниже 0,35 при той же теме или не ниже 0,5, когда тема
+// поставки дают одну и ту же суть {+10, -30}. Не сравниваются и правки с разной обязанной стороной (неустойка
+// Заказчика ≠ неустойка Исполнителя, pravkiapp.same_obligor). «Та же правка» — та же суть в похожем абзаце (не меньше
+// половины общих слов); её показываем первой. Остальные — если похожесть не ниже 0,35 при той же теме или не ниже 0,5, когда тема
 // у одной из правок не определена. Пороги подобраны на учебных договорах (поставка и услуги); проверка —
 // TestReviewsRepository_Precedents.
 const precedentsQuery = `
@@ -235,14 +236,16 @@ WITH cur AS (
 ), mine AS (
     SELECT c->>'id' AS id, coalesce(c->>'topic', '') AS topic,
            lower(btrim(coalesce(c->>'before', ''))) AS b, lower(btrim(coalesce(c->>'after', ''))) AS a,
-           pravkiapp.lexemes(c->>'context') AS ctx, pravkiapp.edit_sig(c->>'before', c->>'after') AS sig
+           pravkiapp.lexemes(c->>'context') AS ctx, pravkiapp.edit_sig(c->>'before', c->>'after') AS sig,
+           coalesce(nullif(c->>'context_after', ''), c->>'context') AS para
     FROM pravkiapp.reviews r CROSS JOIN LATERAL jsonb_array_elements(r.changes) c
     WHERE r.id = $1 AND r.user_id = $2 AND coalesce(c->>'kind', '') <> 'comment'
 ), past AS (
     SELECT p.id AS review_id, rc.change_id AS past_change, p.theirs_name, p.created_at, rc.choice, rc.text,
            coalesce(c->>'clause', '') AS clause, coalesce(c->>'topic', '') AS topic,
            coalesce(c->>'before', '') AS before, coalesce(c->>'after', '') AS after,
-           pravkiapp.lexemes(c->>'context') AS ctx, pravkiapp.edit_sig(c->>'before', c->>'after') AS sig
+           pravkiapp.lexemes(c->>'context') AS ctx, pravkiapp.edit_sig(c->>'before', c->>'after') AS sig,
+           coalesce(nullif(c->>'context_after', ''), c->>'context') AS para
     FROM cur
     JOIN pravkiapp.reviews p ON p.user_id = $2 AND p.id <> $1 AND p.contract_type = cur.contract_type
                              AND p.our_role = cur.our_role
@@ -256,7 +259,8 @@ WITH cur AS (
              OR (lower(btrim(past.before)) = mine.b AND lower(btrim(past.after)) = mine.a) AS same_edit,
            0.5 * pravkiapp.overlap(mine.ctx, past.ctx) + 0.5 * pravkiapp.overlap(mine.sig, past.sig) AS score
     FROM mine CROSS JOIN past
-    WHERE mine.topic = past.topic OR mine.topic IN ('', 'прочее') OR past.topic IN ('', 'прочее')
+    WHERE (mine.topic = past.topic OR mine.topic IN ('', 'прочее') OR past.topic IN ('', 'прочее'))
+      AND pravkiapp.same_obligor(mine.para, past.para)
 ), scored AS (
     SELECT *, same_edit AND ctx_score >= 0.5 AS same FROM pairs
 ), ranked AS (
@@ -296,24 +300,28 @@ func (r *ReviewsRepository) ListPrecedents(ctx context.Context, userID, reviewID
 	return out, nil
 }
 
-// ChangesWithoutVectors — правки разбора, к которым подсказывается ГК, но вектор ещё не посчитан. Только поставка и
-// услуги; комментарии, технические правки (опечатки, пунктуация) и темы из core_domain.NoLawTopics пропускаются.
+// ChangesWithoutVectors — правки разбора без посчитанного вектора (для «Что говорит ГК» и «как решали раньше» по
+// смыслу). Только поставка и услуги; комментарии и технические правки (опечатки, пунктуация) пропускаются.
 // Чужой разбор — ErrNotFound.
 func (r *ReviewsRepository) ChangesWithoutVectors(ctx context.Context, userID, reviewID int) ([]core_domain.VectorChange, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
-	defer cancel()
-
 	if _, err := r.GetReview(ctx, userID, reviewID); err != nil {
 		return nil, err
 	}
+	return r.changesWithoutVectors(ctx, reviewID)
+}
+
+func (r *ReviewsRepository) changesWithoutVectors(ctx context.Context, reviewID int) ([]core_domain.VectorChange, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
 	rows, err := r.pool.Query(ctx, `
 	SELECT c->>'id', coalesce(c->>'kind', ''), coalesce(c->>'topic', ''), coalesce(c->>'context', ''),
 	       coalesce(c->>'context_after', '')
 	FROM pravkiapp.reviews r CROSS JOIN LATERAL jsonb_array_elements(r.changes) c
 	WHERE r.id = $1 AND r.contract_type IN ('supply', 'services') AND coalesce(c->>'kind', '') <> 'comment'
-	  AND NOT (coalesce(c->>'topic', '') = ANY($2)) AND coalesce(c->>'materiality', '') <> 'техническая'
+	  AND coalesce(c->>'materiality', '') <> 'техническая'
 	  AND NOT EXISTS (SELECT 1 FROM pravkiapp.review_vectors v WHERE v.review_id = r.id AND v.change_id = c->>'id');`,
-		reviewID, core_domain.NoLawTopics)
+		reviewID)
 	if err != nil {
 		return nil, fmt.Errorf("select changes without vectors: %w", err)
 	}
@@ -364,7 +372,8 @@ func (r *ReviewsRepository) SaveVectors(ctx context.Context, reviewID int, model
 }
 
 // ListLawHints — «что говорит ГК» к правкам разбора: до $3 ближайших по смыслу пунктов ГК в частях кодекса для этого
-// типа договора (pravkiapp.in_law_scope), не дальше $4. Чужой разбор — ErrNotFound.
+// типа договора (pravkiapp.in_law_scope), не дальше $3; темы из core_domain.NoLawTopics пропускаются.
+// Чужой разбор — ErrNotFound.
 func (r *ReviewsRepository) ListLawHints(ctx context.Context, userID, reviewID int) ([]core_domain.LawHint, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
 	defer cancel()
@@ -376,6 +385,7 @@ func (r *ReviewsRepository) ListLawHints(ctx context.Context, userID, reviewID i
 	SELECT v.change_id, h.article, h.point, h.title, h.chapter, h.edited, h.text, h.distance
 	FROM pravkiapp.reviews r
 	JOIN pravkiapp.review_vectors v ON v.review_id = r.id
+	JOIN LATERAL jsonb_array_elements(r.changes) c ON c->>'id' = v.change_id
 	CROSS JOIN LATERAL (
 	    SELECT p.article, p.point, p.title, p.chapter, p.edited, p.text, p.embedding <=> v.embedding AS distance
 	    FROM pravkiapp.law_points p
@@ -384,7 +394,8 @@ func (r *ReviewsRepository) ListLawHints(ctx context.Context, userID, reviewID i
 	    LIMIT $2
 	) h
 	WHERE r.id = $1 AND r.contract_type IN ('supply', 'services') AND h.distance <= $3
-	ORDER BY v.change_id, h.distance;`, reviewID, core_domain.MaxLawHints, core_domain.LawHintMaxDistance)
+	  AND NOT (coalesce(c->>'topic', '') = ANY($4))
+	ORDER BY v.change_id, h.distance;`, reviewID, core_domain.MaxLawHints, core_domain.LawHintMaxDistance, core_domain.NoLawTopics)
 	if err != nil {
 		return nil, fmt.Errorf("select law hints: %w", err)
 	}
@@ -399,6 +410,227 @@ func (r *ReviewsRepository) ListLawHints(ctx context.Context, userID, reviewID i
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate law hints: %w", err)
+	}
+	return out, nil
+}
+
+// ---------- индексация разборов: векторы абзацев нашей редакции и правок ----------
+
+// ReviewsToIndex — разборы поставки и услуг, у которых ещё нет векторов (старые сначала). Для фоновой индексации.
+func (r *ReviewsRepository) ReviewsToIndex(ctx context.Context, limit int) ([]int, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	rows, err := r.pool.Query(ctx, `SELECT id FROM pravkiapp.reviews
+	WHERE indexed_at IS NULL AND contract_type IN ('supply', 'services') ORDER BY created_at, id LIMIT $1;`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("select reviews to index: %w", err)
+	}
+	defer rows.Close()
+	out := []int{}
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan review id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// NeedsIndex — разбор пользователя ещё не проиндексирован (и это поставка или услуги). Чужой — ErrNotFound.
+func (r *ReviewsRepository) NeedsIndex(ctx context.Context, userID, reviewID int) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	var need bool
+	err := r.pool.QueryRow(ctx, `SELECT indexed_at IS NULL AND contract_type IN ('supply', 'services')
+	FROM pravkiapp.reviews WHERE id = $1 AND user_id = $2;`, reviewID, userID).Scan(&need)
+	if errors.Is(err, core_postgres_pool.ErrNoRows) {
+		return false, fmt.Errorf("review %d: %w", reviewID, core_errors.ErrNotFound)
+	}
+	if err != nil {
+		return false, fmt.Errorf("select index state: %w", err)
+	}
+	return need, nil
+}
+
+// IndexSource — что индексировать в разборе: единая версия (JSON) и правки без векторов. Без проверки владельца:
+// только для фоновой индексации и после NeedsIndex.
+func (r *ReviewsRepository) IndexSource(ctx context.Context, reviewID int) ([]byte, []core_domain.VectorChange, error) {
+	c, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	var document []byte
+	err := r.pool.QueryRow(c, `SELECT convert_to(document::text, 'UTF8') FROM pravkiapp.reviews WHERE id = $1;`, reviewID).Scan(&document)
+	if err != nil {
+		return nil, nil, fmt.Errorf("select document: %w", err)
+	}
+	changes, err := r.changesWithoutVectors(ctx, reviewID)
+	return document, changes, err
+}
+
+// SaveParagraphs — абзацы нашей редакции разбора с векторами (по одному на абзац).
+func (r *ReviewsRepository) SaveParagraphs(ctx context.Context, reviewID int, model string, paras []core_domain.DocParagraph, vectors [][]float32) error {
+	if len(paras) == 0 {
+		return nil
+	}
+	if len(vectors) != len(paras) {
+		return fmt.Errorf("векторов %d, абзацев %d", len(vectors), len(paras))
+	}
+	idx, clauses, texts, lits := make([]int32, len(paras)), make([]string, len(paras)), make([]string, len(paras)), make([]string, len(paras))
+	for i, p := range paras {
+		idx[i], clauses[i], texts[i], lits[i] = int32(p.Index), p.Clause, p.Text, vectorLiteral(vectors[i])
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	_, err := r.pool.Exec(ctx, `
+	INSERT INTO pravkiapp.review_paragraphs (review_id, idx, clause, text, model, embedding)
+	SELECT $1, i, left(c, 50), t, $2, l::vector FROM unnest($3::int[], $4::text[], $5::text[], $6::text[]) AS x(i, c, t, l)
+	ON CONFLICT (review_id, idx) DO UPDATE SET clause = EXCLUDED.clause, text = EXCLUDED.text, model = EXCLUDED.model,
+	                                           embedding = EXCLUDED.embedding;`,
+		reviewID, model, idx, clauses, texts, lits)
+	if err != nil {
+		return fmt.Errorf("save paragraphs: %w", err)
+	}
+	return nil
+}
+
+// MarkIndexed — векторы абзацев и правок разбора посчитаны.
+func (r *ReviewsRepository) MarkIndexed(ctx context.Context, reviewID int) error {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	if _, err := r.pool.Exec(ctx, `UPDATE pravkiapp.reviews SET indexed_at = NOW() WHERE id = $1;`, reviewID); err != nil {
+		return fmt.Errorf("mark indexed: %w", err)
+	}
+	return nil
+}
+
+// ---------- ваши прошлые формулировки ----------
+
+// ListWordings — к правке разбора: абзацы нашей редакции из других разборов того же юриста, типа договора и роли,
+// ближайшие по смыслу к нашему абзацу с этой правкой (не дальше core_domain.WordingMaxDistance). Тот же текст
+// (тот же шаблон) и пункт с другой обязанной стороной (неустойка Покупателя к неустойке Поставщика) не показываются;
+// одинаковые тексты из разных разборов — один раз. Чужой разбор — ErrNotFound.
+func (r *ReviewsRepository) ListWordings(ctx context.Context, userID, reviewID int) ([]core_domain.Wording, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	if _, err := r.GetReview(ctx, userID, reviewID); err != nil {
+		return nil, err
+	}
+	rows, err := r.pool.Query(ctx, `
+	WITH cur AS (
+	    SELECT id, contract_type, our_role, changes FROM pravkiapp.reviews
+	    WHERE id = $1 AND user_id = $2 AND contract_type IN ('supply', 'services')
+	), mine AS (
+	    SELECT c->>'id' AS change_id, p.text, p.embedding
+	    FROM cur CROSS JOIN LATERAL jsonb_array_elements(cur.changes) c
+	    JOIN pravkiapp.review_paragraphs p ON p.review_id = cur.id AND p.idx = (c->>'paragraph_index')::int
+	    WHERE coalesce(c->>'kind', '') <> 'comment' AND coalesce(c->>'materiality', '') <> 'техническая'
+	      AND coalesce(c->>'topic', '') <> 'стороны и реквизиты'
+	), found AS (
+	    SELECT mine.change_id, w.*, row_number() OVER (PARTITION BY mine.change_id, w.norm ORDER BY w.distance) AS dup
+	    FROM mine CROSS JOIN cur CROSS JOIN LATERAL (
+	        SELECT p.review_id, r.theirs_name, r.created_at, p.clause, p.text, p.embedding <=> mine.embedding AS distance,
+	               regexp_replace(lower(p.text), '\s+', ' ', 'g') AS norm
+	        FROM pravkiapp.review_paragraphs p JOIN pravkiapp.reviews r ON r.id = p.review_id
+	        WHERE r.user_id = $2 AND r.id <> cur.id AND r.contract_type = cur.contract_type AND r.our_role = cur.our_role
+	          AND regexp_replace(lower(p.text), '\s+', ' ', 'g') <> regexp_replace(lower(mine.text), '\s+', ' ', 'g')
+	          AND pravkiapp.same_obligor(p.text, mine.text)
+	        ORDER BY distance LIMIT 20
+	    ) w
+	    WHERE w.distance <= $3
+	), ranked AS (
+	    SELECT *, row_number() OVER (PARTITION BY change_id ORDER BY distance, created_at DESC) AS n FROM found WHERE dup = 1
+	)
+	SELECT change_id, review_id, theirs_name, created_at, clause, text, distance FROM ranked WHERE n <= $4
+	ORDER BY change_id, n;`, reviewID, userID, core_domain.WordingMaxDistance, core_domain.MaxWordings)
+	if err != nil {
+		return nil, fmt.Errorf("select wordings: %w", err)
+	}
+	defer rows.Close()
+	out := []core_domain.Wording{}
+	for rows.Next() {
+		var w core_domain.Wording
+		if err := rows.Scan(&w.ChangeID, &w.ReviewID, &w.TheirsName, &w.CreatedAt, &w.Clause, &w.Text, &w.Distance); err != nil {
+			return nil, fmt.Errorf("scan wording: %w", err)
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate wordings: %w", err)
+	}
+	return out, nil
+}
+
+// ---------- как решали раньше: по смыслу ----------
+
+// ListSemanticPrecedents — «как решали раньше» по смыслу: к правкам разбора, кроме skip (у них уже есть подсказки
+// по словам), — прошлые решения юриста по правкам, близким по вектору (не дальше core_domain.SemanticPrecedentMaxDistance),
+// того же типа договора, роли, темы и обязанной стороны (как и в поиске по словам).
+// Чужой разбор — ErrNotFound.
+func (r *ReviewsRepository) ListSemanticPrecedents(ctx context.Context, userID, reviewID int, skip []string) ([]core_domain.Precedent, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.pool.OpTimeout())
+	defer cancel()
+
+	if _, err := r.GetReview(ctx, userID, reviewID); err != nil {
+		return nil, err
+	}
+	if skip == nil {
+		skip = []string{}
+	}
+	rows, err := r.pool.Query(ctx, `
+	WITH cur AS (
+	    SELECT id, contract_type, our_role, changes FROM pravkiapp.reviews
+	    WHERE id = $1 AND user_id = $2 AND contract_type IN ('supply', 'services')
+	), mine AS (
+	    SELECT v.change_id, v.embedding, coalesce(c->>'topic', '') AS topic,
+	           coalesce(nullif(c->>'context_after', ''), c->>'context') AS para
+	    FROM cur JOIN pravkiapp.review_vectors v ON v.review_id = cur.id
+	    JOIN LATERAL jsonb_array_elements(cur.changes) c ON c->>'id' = v.change_id
+	    WHERE NOT (v.change_id = ANY($3))
+	), found AS (
+	    SELECT mine.change_id, s.*, row_number() OVER (PARTITION BY mine.change_id ORDER BY s.distance, s.created_at DESC) AS n
+	    FROM mine CROSS JOIN cur CROSS JOIN LATERAL (
+	        SELECT p.id AS review_id, rc.change_id AS past_change, p.theirs_name, p.created_at, rc.choice, rc.text,
+	               coalesce(c->>'clause', '') AS clause, coalesce(c->>'topic', '') AS topic,
+	               coalesce(c->>'before', '') AS before, coalesce(c->>'after', '') AS after,
+	               pv.embedding <=> mine.embedding AS distance
+	        FROM pravkiapp.reviews p
+	        JOIN pravkiapp.review_choices rc ON rc.review_id = p.id AND rc.choice IN ('accept', 'reject', 'counter')
+	        JOIN pravkiapp.review_vectors pv ON pv.review_id = p.id AND pv.change_id = rc.change_id
+	        JOIN LATERAL jsonb_array_elements(p.changes) c ON c->>'id' = rc.change_id
+	        WHERE p.user_id = $2 AND p.id <> cur.id AND p.contract_type = cur.contract_type AND p.our_role = cur.our_role
+	          AND (coalesce(c->>'topic', '') = mine.topic OR mine.topic IN ('', 'прочее')
+	               OR coalesce(c->>'topic', '') IN ('', 'прочее'))
+	          AND pravkiapp.same_obligor(mine.para, coalesce(nullif(c->>'context_after', ''), c->>'context'))
+	        ORDER BY distance LIMIT $5
+	    ) s
+	    WHERE s.distance <= $4
+	)
+	SELECT change_id, review_id, past_change, theirs_name, created_at, clause, topic, before, after, choice, text, distance
+	FROM found WHERE n <= $5 ORDER BY change_id, n;`,
+		reviewID, userID, skip, core_domain.SemanticPrecedentMaxDistance, core_domain.MaxPrecedents)
+	if err != nil {
+		return nil, fmt.Errorf("select semantic precedents: %w", err)
+	}
+	defer rows.Close()
+	out := []core_domain.Precedent{}
+	for rows.Next() {
+		var p core_domain.Precedent
+		var dist float64
+		if err := rows.Scan(&p.ChangeID, &p.ReviewID, &p.PastChangeID, &p.TheirsName, &p.CreatedAt, &p.Clause, &p.Topic,
+			&p.Before, &p.After, &p.Choice, &p.Text, &dist); err != nil {
+			return nil, fmt.Errorf("scan semantic precedent: %w", err)
+		}
+		p.Semantic, p.Score = true, 1-dist
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate semantic precedents: %w", err)
 	}
 	return out, nil
 }

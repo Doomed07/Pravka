@@ -1260,6 +1260,11 @@ del + ins {
   font-size: 13px;
 }
 
+/* прошлые формулировки — та же карточка, другой цвет полоски */
+.past--wording {
+  border-left-color: var(--accent);
+}
+
 .past__title {
   font-weight: 700;
   cursor: pointer;

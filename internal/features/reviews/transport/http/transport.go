@@ -32,6 +32,7 @@ type ReviewsService interface {
 	SaveChoice(ctx context.Context, userID, id int, c core_domain.ReviewChoice) error
 	Precedents(ctx context.Context, userID, id int) ([]core_domain.Precedent, error)
 	LawHints(ctx context.Context, userID, id int) ([]core_domain.LawHint, error)
+	Wordings(ctx context.Context, userID, id int) ([]core_domain.Wording, error)
 	Answer(ctx context.Context, userID, id int, author string) (engine.AnswerResult, error)
 }
 
@@ -59,6 +60,7 @@ func (h *ReviewsHTTPHandler) Routes() []core_http_server.Route {
 		{Method: http.MethodPut, Path: "/reviews/{id}/choices/{change}", Handler: h.SaveChoice, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/precedents", Handler: h.Precedents, Middlewares: auth},
 		{Method: http.MethodGet, Path: "/reviews/{id}/law", Handler: h.LawHints, Middlewares: auth},
+		{Method: http.MethodGet, Path: "/reviews/{id}/wordings", Handler: h.Wordings, Middlewares: auth},
 		{Method: http.MethodPost, Path: "/reviews/{id}/answer", Handler: h.Answer, Middlewares: auth},
 		{Method: http.MethodDelete, Path: "/reviews/{id}", Handler: h.Delete, Middlewares: auth},
 	}
@@ -470,6 +472,7 @@ type PrecedentDTO struct {
 	Choice     string    `json:"choice"`
 	Text       string    `json:"text"`
 	Same       bool      `json:"same"`
+	Semantic   bool      `json:"semantic"`
 	Score      float64   `json:"score"`
 }
 
@@ -491,7 +494,7 @@ func (h *ReviewsHTTPHandler) Precedents(rw http.ResponseWriter, r *http.Request)
 	out := make([]PrecedentDTO, 0, len(list))
 	for _, p := range list {
 		out = append(out, PrecedentDTO{ChangeID: p.ChangeID, ReviewID: p.ReviewID, PastChange: p.PastChangeID, TheirsName: p.TheirsName, CreatedAt: p.CreatedAt,
-			Clause: p.Clause, Topic: p.Topic, Before: p.Before, After: p.After, Choice: p.Choice, Text: p.Text, Same: p.Same,
+			Clause: p.Clause, Topic: p.Topic, Before: p.Before, After: p.After, Choice: p.Choice, Text: p.Text, Same: p.Same, Semantic: p.Semantic,
 			Score: p.Score})
 	}
 	rw.Header().Set("Cache-Control", "no-store")
@@ -530,6 +533,42 @@ func (h *ReviewsHTTPHandler) LawHints(rw http.ResponseWriter, r *http.Request) {
 	for _, l := range list {
 		out = append(out, LawHintDTO{ChangeID: l.ChangeID, Article: l.Article, Point: l.Point, Title: l.Title, Chapter: l.Chapter,
 			Edited: l.Edited, Text: l.Text, Distance: l.Distance})
+	}
+	rw.Header().Set("Cache-Control", "no-store")
+	resp.JSONResponse(http.StatusOK, out)
+}
+
+// ---------- ваши прошлые формулировки ----------
+
+type WordingDTO struct {
+	ChangeID   string    `json:"change_id"`
+	ReviewID   int       `json:"review_id"`
+	TheirsName string    `json:"theirs_name"`
+	CreatedAt  time.Time `json:"created_at"`
+	Clause     string    `json:"clause"`
+	Text       string    `json:"text"`
+	Distance   float64   `json:"distance"`
+}
+
+func (h *ReviewsHTTPHandler) Wordings(rw http.ResponseWriter, r *http.Request) {
+	resp := core_http_response.NewHTTPResponseHandler(core_logger.FromCtx(r.Context()), rw)
+	who, ok := identity(r, resp)
+	if !ok {
+		return
+	}
+	id, ok := pathID(r, resp)
+	if !ok {
+		return
+	}
+	list, err := h.service.Wordings(r.Context(), who.UserID, id)
+	if err != nil {
+		resp.ErrorResponse(err, "failed to list wordings")
+		return
+	}
+	out := make([]WordingDTO, 0, len(list))
+	for _, w := range list {
+		out = append(out, WordingDTO{ChangeID: w.ChangeID, ReviewID: w.ReviewID, TheirsName: w.TheirsName, CreatedAt: w.CreatedAt,
+			Clause: w.Clause, Text: w.Text, Distance: w.Distance})
 	}
 	rw.Header().Set("Cache-Control", "no-store")
 	resp.JSONResponse(http.StatusOK, out)

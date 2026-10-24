@@ -12,13 +12,18 @@ import (
 )
 
 type fakeRepo struct {
-	missing []core_domain.VectorChange
-	vectors map[string][]float32
-	saves   int
-	saved   []core_domain.ContractReview
-	files   []core_domain.ReviewFiles
-	listArg [3]int
-	choices []core_domain.ReviewChoice
+	needIndex bool
+	document  []byte
+	paras     []core_domain.DocParagraph
+	indexed   []int
+	skipArg   []string
+	missing   []core_domain.VectorChange
+	vectors   map[string][]float32
+	saves     int
+	saved     []core_domain.ContractReview
+	files     []core_domain.ReviewFiles
+	listArg   [3]int
+	choices   []core_domain.ReviewChoice
 }
 
 func (f *fakeRepo) CreateReview(_ context.Context, rev core_domain.ContractReview, files core_domain.ReviewFiles) (core_domain.ContractReview, error) {
@@ -57,6 +62,29 @@ func (f *fakeRepo) SaveVectors(_ context.Context, _ int, model string, v map[str
 	}
 	f.saves++
 	return nil
+}
+func (f *fakeRepo) ReviewsToIndex(context.Context, int) ([]int, error) { return nil, nil }
+func (f *fakeRepo) NeedsIndex(context.Context, int, int) (bool, error) { return f.needIndex, nil }
+func (f *fakeRepo) IndexSource(context.Context, int) ([]byte, []core_domain.VectorChange, error) {
+	return f.document, f.missing, nil
+}
+func (f *fakeRepo) SaveParagraphs(_ context.Context, _ int, _ string, p []core_domain.DocParagraph, v [][]float32) error {
+	if len(p) != len(v) {
+		return fmt.Errorf("mismatch")
+	}
+	f.paras = append(f.paras, p...)
+	return nil
+}
+func (f *fakeRepo) MarkIndexed(_ context.Context, id int) error {
+	f.indexed = append(f.indexed, id)
+	return nil
+}
+func (f *fakeRepo) ListWordings(context.Context, int, int) ([]core_domain.Wording, error) {
+	return []core_domain.Wording{{ChangeID: "E001", Text: "прошлая редакция"}}, nil
+}
+func (f *fakeRepo) ListSemanticPrecedents(_ context.Context, _, _ int, skip []string) ([]core_domain.Precedent, error) {
+	f.skipArg = skip
+	return []core_domain.Precedent{{ChangeID: "E009", Choice: "counter", Semantic: true}}, nil
 }
 func (f *fakeRepo) ListLawHints(context.Context, int, int) ([]core_domain.LawHint, error) {
 	return []core_domain.LawHint{{ChangeID: "E001", Article: "330"}}, nil
@@ -239,5 +267,35 @@ func TestLawHints_EmbedsMissingChangesInBatches(t *testing.T) {
 	repo2 := &fakeRepo{missing: repo.missing}
 	if _, err := NewReviewsService(repo2, &fakeEngine{noEmbed: true}).LawHints(context.Background(), 1, 3); err != nil || repo2.saves != 0 {
 		t.Fatalf("no model: err = %v, saves = %d", err, repo2.saves)
+	}
+}
+
+func TestPrecedents_WordsFirstThenSenseForTheRest(t *testing.T) {
+	repo := &fakeRepo{}
+	got, err := NewReviewsService(repo, &fakeEngine{}).Precedents(context.Background(), 1, 3)
+	if err != nil || len(got) != 2 || got[0].ChangeID != "E001" || got[0].Semantic || !got[1].Semantic {
+		t.Fatalf("got %+v, err = %v", got, err)
+	}
+	if len(repo.skipArg) != 1 || repo.skipArg[0] != "E001" {
+		t.Fatalf("edits with word precedents are skipped in the semantic search: %v", repo.skipArg)
+	}
+}
+
+func TestIndexReview_ParagraphsAndChangesThenMarked(t *testing.T) {
+	doc := `[{"index":4,"clause":"3.1","segments":[{"k":"equal","t":"Поставщик поставляет Товар в течение тридцати календарных дней."}]},
+	{"index":5,"clause":"3.2","segments":[{"k":"equal","t":"Коротко."}]}]`
+	repo := &fakeRepo{needIndex: true, document: []byte(doc),
+		missing: []core_domain.VectorChange{{ID: "E001", Kind: "replace", Topic: "сроки исполнения", ContextAfter: "10 дней"}}}
+	eng := &fakeEngine{}
+	if _, err := NewReviewsService(repo, eng).Wordings(context.Background(), 1, 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.paras) != 1 || repo.paras[0].Index != 4 || len(repo.vectors) != 1 || len(repo.indexed) != 1 || repo.indexed[0] != 7 {
+		t.Fatalf("paras=%+v vectors=%d indexed=%v", repo.paras, len(repo.vectors), repo.indexed)
+	}
+	// модели нет — разбор не помечается проиндексированным, подсказки отдаются без ошибки
+	repo2 := &fakeRepo{needIndex: true, document: []byte(doc)}
+	if _, err := NewReviewsService(repo2, &fakeEngine{noEmbed: true}).Wordings(context.Background(), 1, 7); err != nil || len(repo2.indexed) != 0 {
+		t.Fatalf("no model: err = %v, indexed = %v", err, repo2.indexed)
 	}
 }

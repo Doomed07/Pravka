@@ -164,8 +164,14 @@ type Precedent struct {
 	Choice       string  // решение юриста: accept, reject или counter
 	Text         string  // текст встречной редакции
 	Same         bool    // та же правка: «было» и «стало» совпадают
+	Semantic     bool    // найдена по смыслу (вектор), а не по словам
 	Score        float64 // похожесть от 0 до 1
 }
 
 // MaxPrecedents — сколько прошлых решений показывать к одной правке.
 const MaxPrecedents = 3
+
+// SemanticPrecedentMaxDistance — «как решали раньше» по смыслу: дальше этого прошлая правка не показывается.
+// На учебных договорах та же правка — не дальше 0,134 (199 из 199), правка другого пункта той же темы и стороны —
+// не ближе 0,168.
+const SemanticPrecedentMaxDistance = 0.15

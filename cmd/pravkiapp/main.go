@@ -74,6 +74,7 @@ func main() {
 	reviewsRepository := reviews_repository_postgres.NewReviewsRepository(pool)
 	reviewsService := reviews_service.NewReviewsService(reviewsRepository, engineClient)
 	reviewsTransportHTTP := reviews_transport_http.NewReviewsHTTPHandler(reviewsService)
+	go reviewsService.RunIndexer(ctx, logger) // векторы разборов для подсказок: в фоне
 
 	// нормы ГК РФ для подсказок: загрузка в фоне, сайт работает и без них
 	lawService := law_service.NewLawService(law_repository_postgres.NewLawRepository(pool), engineClient)
