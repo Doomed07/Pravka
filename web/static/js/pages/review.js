@@ -480,6 +480,12 @@ function freshNotes(changes, order, shown) {
   });
 }
 
+// Правка текста абзаца юристом: решение «edit» с номером P<абзац> (P012), в тексте — абзац целиком.
+const editKey = (index) => 'P' + String(index).padStart(3, '0');
+const plain = (para) => para.segments.map((s) => s.t).join('');
+// Править можно абзац без отметок в рецензировании: в абзаце с правкой контрагента отвечают решением по правке.
+const editable = (para) => para.index >= 0 && para.segments.length > 0 && para.segments.every((s) => s.k === 'equal');
+
 function row(para, i, total, byID, order, shown) {
   const changes = para.changes.map((id) => byID.get(id)).filter(Boolean);
   const silent = para.segments.some((s) => s.k.startsWith('silent'));
@@ -493,11 +499,14 @@ function row(para, i, total, byID, order, shown) {
   if (i === 0) cls.push('doc__text--first');
   if (i === total - 1) cls.push('doc__text--last');
   const first = changes[0];
+  const edit = editable(para) ? html` data-edit="${editKey(para.index)}" data-orig="${plain(para)}"` : '';
+  const mine = edit ? CHOICES.get(editKey(para.index)) : null;
+  if (mine && mine.choice === 'edit') cls.push('doc__text--edited');
   return html`
     <div class="doc__row">
       <div class="doc__num${first && verdict(first).mod === 'reject' ? ' doc__num--hot' : ''}">${first ? num(order.get(first.id)) : ''}</div>
-      <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${look.style ? html` style="${look.style}"` : ''}>
-        ${look.marker}${para.label ? `${para.label} ` : ''}${para.segments.map(segment)}
+      <div class="${cls.join(' ')}" id="p-${para.index >= 0 ? para.index : 'r' + i}" ${first ? html`data-change="${first.id}"` : ''}${edit}${look.style ? html` style="${look.style}"` : ''}>
+        ${look.marker}${para.label ? `${para.label} ` : ''}<span class="doc__body">${mine && mine.choice === 'edit' ? mine.text : para.segments.map(segment)}</span>${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст абзаца" title="Править текст абзаца (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}
         ${para.index < 0 ? html` <span class="tag tag--silent">абзац удалён без отметки</span>` : ''}
         ${partyComments(para.comments)}
       </div>
@@ -562,6 +571,7 @@ function documentView(doc, changes, order) {
   const shown = new Set();
   return html`
     <div class="doc">
+      <p class="doc__hint">Текст договора можно править: нажмите «Править» у абзаца или дважды щёлкните по нему. Правки попадут в Word как правки в рецензировании, ваши комментарии — как примечания.</p>
       ${orphans.length ? html`
         <div class="doc__orphans">
           <p class="eyebrow">Без места в тексте: стороны, реквизиты, общие замечания</p>
@@ -791,7 +801,7 @@ function wireDecisions(id, changes) {
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       const skipped = stats.untracked ? ` Не вошли в файл (правки без отметки): ${stats.untracked}.` : '';
-      setStatus(status, `Готово: принято ${stats.accept}, отклонено ${stats.reject}, встречных редакций ${stats.counter}, ответов на комментарии ${stats.reply}.${skipped} Черновик — проверьте перед отправкой, дисклеймер в конце отклоните.`);
+      setStatus(status, `Готово: принято ${stats.accept}, отклонено ${stats.reject}, встречных редакций ${stats.counter}, ответов на комментарии ${stats.reply}, правок текста ${stats.edit}.${skipped} Черновик — проверьте перед отправкой, дисклеймер в конце отклоните.`);
     } catch (err) {
       setStatus(status, err instanceof ApiError && err.status === 404
         ? 'Для этого разбора ответ собрать нельзя: загрузите договор заново.'
@@ -825,6 +835,85 @@ function layoutNotes() {
     bottom = top + n.offsetHeight;
   }
   doc.style.minHeight = `${bottom}px`;
+}
+
+// Редактор абзаца на месте: поле с текстом, «Сохранить», «Отмена», «Вернуть исходный». Сохраняется как решение «edit».
+function wireEditing(id) {
+  const doc = document.querySelector('.doc');
+  if (!doc) return;
+  const close = (box) => {
+    box.querySelector('.doc__editor')?.remove();
+    box.classList.remove('is-editing');
+  };
+  const open = (box) => {
+    if (box.classList.contains('is-editing')) return;
+    const body = box.querySelector('.doc__body');
+    const key = box.dataset.edit;
+    const orig = box.dataset.orig;
+    const saved = CHOICES.get(key);
+    const cur = saved && saved.choice === 'edit' ? saved.text : orig;
+    box.classList.add('is-editing');
+    const ed = document.createElement('div');
+    ed.className = 'doc__editor';
+    mount(ed, html`
+      <textarea class="form__input doc__area" maxlength="5000" aria-label="Текст абзаца">${cur}</textarea>
+      <div class="doc__editbar">
+        <button class="button button--cta button--small" type="button" data-act="save">Сохранить</button>
+        <button class="button button--ghost button--small" type="button" data-act="cancel">Отмена</button>
+        ${saved ? html`<button class="button button--ghost button--small" type="button" data-act="reset">Вернуть исходный</button>` : ''}
+        <span class="doc__editstatus" role="status"></span>
+      </div>`);
+    body.after(ed);
+    const area = ed.querySelector('textarea');
+    const status = ed.querySelector('.doc__editstatus');
+    const fit = () => {
+      area.style.height = 'auto';
+      area.style.height = `${area.scrollHeight + 4}px`;
+    };
+    area.addEventListener('input', fit);
+    fit();
+    area.focus();
+    const done = async (text) => {
+      status.textContent = 'Сохраняю…';
+      try {
+        const same = text === orig;
+        await reviews.saveChoice(id, key, same ? '' : 'edit', same ? '' : text);
+        if (same) CHOICES.delete(key);
+        else CHOICES.set(key, { choice: 'edit', text });
+        if (same) body.innerHTML = box.dataset.html;
+        else body.textContent = text;
+        box.classList.toggle('doc__text--edited', !same);
+        close(box);
+      } catch (err) {
+        status.textContent = err instanceof ApiError && err.status === 400 ? 'Не сохранено: проверьте текст' : 'Не сохранено, попробуйте ещё раз';
+      }
+    };
+    ed.addEventListener('click', (e) => {
+      const act = e.target.dataset?.act;
+      if (act === 'cancel') close(box);
+      else if (act === 'reset') done(orig);
+      else if (act === 'save') {
+        if (!area.value.trim()) status.textContent = 'Текст абзаца не может быть пустым';
+        else done(area.value);
+      }
+    });
+    area.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') close(box);
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ed.querySelector('[data-act="save"]').click();
+    });
+  };
+  doc.querySelectorAll('.doc__text[data-edit]').forEach((box) => {
+    box.dataset.html = box.querySelector('.doc__body').innerHTML; // исходный вид, если правку снимут
+    box.querySelector('.doc__pen').addEventListener('click', (e) => {
+      e.stopPropagation();
+      open(box);
+    });
+    box.querySelector('.doc__body').addEventListener('dblclick', () => open(box));
+  });
+  // исходный вид абзаца — до подстановки правки юриста
+  doc.querySelectorAll('.doc__text--edited[data-edit]').forEach((box) => {
+    box.dataset.html = box.dataset.orig.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  });
 }
 
 function wireNotesLayout() {
@@ -903,6 +992,7 @@ async function load() {
   mount(box, body);
   wire(id);
   if (doc && doc.length) {
+    wireEditing(id);
     wireNotesLayout();
     wireDecisions(id, changes || []);
     loadWordings(id);

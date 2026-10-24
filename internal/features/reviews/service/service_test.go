@@ -296,6 +296,9 @@ func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
 		{ChangeID: "E001; DROP", Choice: "accept"},
 		{ChangeID: "E001", Choice: "maybe"},
 		{ChangeID: "E001", Choice: "counter", Text: string(make([]rune, core_domain.MaxChoiceText+1))},
+		{ChangeID: "E001", Choice: "edit", Text: "правка абзаца только у номера P…"},
+		{ChangeID: "P012", Choice: "edit", Text: "  "},
+		{ChangeID: "P012", Choice: "accept"},
 	}
 	for _, c := range bad {
 		if err := s.SaveChoice(context.Background(), 1, 1, c); !errors.Is(err, core_errors.ErrInvalidArgument) {
@@ -306,7 +309,8 @@ func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
 		t.Fatalf("invalid choices reached repo: %+v", repo.choices)
 	}
 	for _, c := range []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}, {ChangeID: "S002", Choice: ""},
-		{ChangeID: "E003", Choice: "reply", Text: "Согласны."}} {
+		{ChangeID: "E003", Choice: "reply", Text: "Согласны."}, {ChangeID: "P012", Choice: "edit", Text: "Новый текст абзаца."},
+		{ChangeID: "P012", Choice: ""}} {
 		if err := s.SaveChoice(context.Background(), 1, 1, c); err != nil {
 			t.Fatalf("%+v: %v", c, err)
 		}

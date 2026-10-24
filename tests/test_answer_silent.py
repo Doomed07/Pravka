@@ -154,3 +154,27 @@ def test_first_version_clause_decisions_become_word_comments(tmp_path):
     doc = read_docx(out)
     assert _ours(doc) == []  # текст договора не тронут: ни вставок, ни удалений
     assert z.read("word/document.xml").decode().count("commentReference") == 2
+
+
+def test_site_paragraph_edit_becomes_tracked_changes(tmp_path):
+    """Юрист правит текст абзаца на сайте: в Word это наши вставки и удаления по словам. «Принять все» даёт новый
+    текст, «отклонить наше» — прежний. Абзац с правкой контрагента не трогается."""
+    old = "2.3.5. Акт подписывается в течение 5 рабочих дней со дня получения, иначе считается подписанным."
+    new = "2.3.5. Акт подписывается в течение семи рабочих дней со дня получения."
+    body = p(r("2.3.5. Акт подписывается в те"), r("чение 5 рабочих дней со дня пол"), r("учения, иначе считается подписанным.")) + p(r("Второй абзац остаётся."))
+    src = str(make_docx(tmp_path / "first.docx", body))
+    out = str(tmp_path / "answer.docx")
+    stats = build_answer(src, out, [], {"P000": {"choice": "edit", "text": new}, "P099": {"choice": "edit", "text": "x"}},
+                         AUTHOR, None)
+    assert stats["edit"] == 1 and stats["без отметки"] == 1  # P099 — абзаца нет
+    doc = read_docx(out)
+    assert _accepted(doc)[0] == normalize(new) and normalize("Второй абзац остаётся.") in _accepted(doc)
+    ours = _ours(doc)
+    assert ("del", "5") in ours and ("ins", "семи") in ours  # по словам, а не весь абзац
+    rejected = [normalize(t) for _, t in view_paragraphs(doc, "rejected", set()) if normalize(t)]
+    assert rejected[0] == normalize(old)
+    # абзац, где уже есть правка контрагента, не трогаем
+    tracked = p(r("Срок "), '<w:ins w:id="7" w:author="Они" w:date="2026-01-01T00:00:00Z"><w:r><w:t>10 дней</w:t></w:r></w:ins>')
+    src2 = str(make_docx(tmp_path / "t.docx", tracked))
+    stats2 = build_answer(src2, str(tmp_path / "a2.docx"), [], {"P000": {"choice": "edit", "text": "Срок 5 дней"}}, AUTHOR, None)
+    assert stats2["edit"] == 0 and stats2["без отметки"] == 1

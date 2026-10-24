@@ -22,12 +22,13 @@ from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
 from .answer_replies import EXT_PART, REL_NS, Replies, with_w14
-from .answer_silent import Writer, apply_silent, paragraphs
+from .answer_silent import Writer, apply_edit, apply_silent, paragraphs
 from .model import ANNOTATOR
 
 TRACKED = {q("ins"), q("del"), q("moveFrom"), q("moveTo")}
 INSERTS = {q("ins"), q("moveTo")}
 CHOICES = ("accept", "reject", "counter")
+EDIT = "edit"  # правка текста абзаца на сайте
 REPLY = "reply"  # ответ на комментарий контрагента (answer_replies)
 
 
@@ -161,7 +162,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         rels_root = _read_part(zin, "word/_rels/document.xml.rels")
         raw = {n: zin.read(n) for n in names}
 
-    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "без отметки": 0, "наших примечаний убрано": 0}
+    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "без отметки": 0, "наших примечаний убрано": 0}
     stats["наших примечаний убрано"] = _strip_annotations(doc_root, comments_root)
     by_id: dict[str, list] = {}
     max_id = 0
@@ -227,6 +228,18 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         for e in els:
             _apply(e, choice, author, date)
         stats[choice] += 1
+
+    # правки текста абзацев, сделанные юристом на сайте: choices["P<номер абзаца>"] = {"choice": "edit", "text": ...}
+    for key, sel in choices.items():
+        if not (key.startswith("P") and sel.get("choice") == EDIT):
+            continue
+        idx = int(key[1:]) if key[1:].isdigit() else -1
+        writer = Writer(author, date, max_id)
+        if 0 <= idx < len(paras) and (sel.get("text") or "").strip() and apply_edit(paras[idx], sel["text"], writer):
+            stats["edit"] += 1
+            max_id = writer.max_id
+        else:
+            stats["без отметки"] += 1
 
     def ser(root) -> bytes:
         return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)

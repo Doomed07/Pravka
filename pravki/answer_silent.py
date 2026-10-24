@@ -321,3 +321,53 @@ def _restore_paragraph(paras: list, ch: dict, new: str, w: Writer, document: lis
     p.append(ins)
     anchor.addnext(p)
     return True
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"\s+|\w+|[^\w\s]", text)
+
+
+def apply_edit(p, new_text: str, w: Writer) -> bool:
+    """Правка текста абзаца юристом на сайте: разница между текстом в файле и новым текстом оформляется нашими
+    вставками и удалениями в рецензировании (по словам). Абзац с правками контрагента не трогается (False): его
+    текст в файле неоднозначен, там юрист отвечает решением по правке. Одинаковый текст — ничего не делает (True)."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in p.iter()):
+        return False
+    _explode(p)
+    old = "".join(t for _, _, t in _nodes(p))
+    if "\t" in old or "\n" in old:
+        return False  # табуляция и переносы режут слова непредсказуемо: правка вручную в Word
+    new_text = " ".join(new_text.split()) if "\n" in new_text else new_text
+    a, b = _tokens(old), _tokens(new_text)
+    ops = [o for o in SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if o[0] != "equal"]
+    if not ops:
+        return True
+    pos = [0]
+    for tok in a:
+        pos.append(pos[-1] + len(tok))
+    for tag, i1, i2, j1, j2 in reversed(ops):  # с конца: ранние смещения не меняются
+        start, end, ins = pos[i1], pos[i2], "".join(b[j1:j2])
+        if end > start:
+            _split_at(p, end)
+            _split_at(p, start)
+            runs = _unique(_runs_in(p, start, end))
+            if not runs:
+                return False
+            d = w.delete_runs(runs)
+            if ins:
+                w.insert_after(d, ins, d[0] if len(d) else None)
+            continue
+        _split_at(p, start)  # чистая вставка
+        off, placed = 0, False
+        for r, _el, t in _nodes(p):
+            if off == start and t:
+                w.insert_before(r, ins, r)
+                placed = True
+                break
+            off += len(t)
+        if not placed:
+            nodes = _nodes(p)
+            if not nodes:
+                return False
+            w.insert_after(nodes[-1][0], ins, nodes[-1][0])
+    return True

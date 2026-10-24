@@ -146,6 +146,7 @@ const (
 	ChoiceReject  = "reject"  // отклонить
 	ChoiceCounter = "counter" // встречная редакция: текст пишет юрист
 	ChoiceReply   = "reply"   // ответ на комментарий контрагента: текст пишет юрист
+	ChoiceEdit    = "edit"    // правка текста абзаца на сайте; номер «P<абзац>», в Text — новый текст абзаца целиком
 )
 
 // MaxChoiceText — предел текста встречной редакции.
@@ -165,6 +166,13 @@ func (c ReviewChoice) Validate() error {
 	}
 	switch c.Choice {
 	case "", ChoiceAccept, ChoiceReject, ChoiceCounter, ChoiceReply:
+		if strings.HasPrefix(c.ChangeID, "P") && c.Choice != "" {
+			return fmt.Errorf("номер %q — правка абзаца, у неё только решение %q: %w", c.ChangeID, ChoiceEdit, core_errors.ErrInvalidArgument)
+		}
+	case ChoiceEdit:
+		if !strings.HasPrefix(c.ChangeID, "P") || strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("правка абзаца: номер вида P012 и непустой текст: %w", core_errors.ErrInvalidArgument)
+		}
 	default:
 		return fmt.Errorf("неизвестное решение %q: %w", c.Choice, core_errors.ErrInvalidArgument)
 	}
