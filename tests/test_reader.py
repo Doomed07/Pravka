@@ -188,3 +188,11 @@ def test_number_at_paragraph_start_is_not_a_clause_label(tmp_path):
 def test_real_clause_labels_are_kept(tmp_path, text, label):
     doc = read_docx(str(make_docx(tmp_path / "l.docx", p(r(text)))))
     assert doc.paragraphs[0].label == label
+
+
+def test_appendix_starts_new_section(tmp_path):
+    body = (p(r("10. Реквизиты сторон")) + p(r("ИНН 7701234567")) + p(r("Приложение № 1 к Договору на участие в мероприятии"))
+            + p(r("Индивидуальные опции:")) + p(r("Выступление с докладом;")))
+    paras = read_docx(str(make_docx(tmp_path / "a.docx", body))).paragraphs
+    assert [x.clause for x in paras] == ["10", "10", "Приложение 1", "Приложение 1", "Приложение 1"]
+    assert paras[4].heading.startswith("Приложение № 1")

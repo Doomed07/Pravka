@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -47,6 +48,7 @@ type Result struct {
 	Side         string          `json:"side"`
 	PlaybookName string          `json:"playbook_name"`
 	OurRole      string          `json:"our_role"`
+	ContractType string          `json:"contract_type"`
 	ReportHTML   string          `json:"report_html"`
 	ReportXLSX   string          `json:"report_xlsx"` // base64
 	Changes      json.RawMessage `json:"changes"`
@@ -169,4 +171,140 @@ func (c *Client) Review(ctx context.Context, r core_domain.ReviewRequest) (Resul
 	}
 	res.UnifiedDOCX = ""
 	return res, xlsx, nil
+}
+
+// AnswerResult — ответ контрагенту в Word и счётчики применённых решений.
+type AnswerResult struct {
+	DOCX  []byte
+	Stats map[string]int
+}
+
+// Answer собирает ответ контрагенту: единая версия (docx и абзацы JSON) + правки разбора (JSON) + решения юриста.
+func (c *Client) Answer(ctx context.Context, unified, document, changes []byte, choices []core_domain.ReviewChoice, author string) (AnswerResult, error) {
+	sel := make(map[string]map[string]string, len(choices))
+	for _, ch := range choices {
+		sel[ch.ChangeID] = map[string]string{"choice": ch.Choice, "text": ch.Text}
+	}
+	selJSON, err := json.Marshal(sel)
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for k, v := range map[string]string{"changes": string(changes), "choices": string(selJSON), "author": author,
+		"document": string(document)} {
+		_ = mw.WriteField(k, v)
+	}
+	w, err := mw.CreateFormFile("unified", "unified.docx")
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	if _, err := w.Write(unified); err != nil {
+		return AnswerResult{}, err
+	}
+	if err := mw.Close(); err != nil {
+		return AnswerResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.URL+"/answer", &buf)
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.do(req)
+	if err != nil {
+		return AnswerResult{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 200<<20))
+	if err != nil {
+		return AnswerResult{}, fmt.Errorf("движок: чтение ответа: %v: %w", err, core_errors.ErrUnavailable)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var eb errorBody
+		_ = json.Unmarshal(body, &eb)
+		if resp.StatusCode == http.StatusBadRequest {
+			return AnswerResult{}, fmt.Errorf("%s: %w", eb.Message, core_errors.ErrInvalidArgument)
+		}
+		return AnswerResult{}, fmt.Errorf("движок: статус %d: %s: %w", resp.StatusCode, eb.Message, core_errors.ErrUnavailable)
+	}
+	var raw struct {
+		DOCX  string         `json:"answer_docx"`
+		Stats map[string]int `json:"stats"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return AnswerResult{}, fmt.Errorf("движок: разбор ответа: %w", err)
+	}
+	docx, err := base64.StdEncoding.DecodeString(raw.DOCX)
+	if err != nil {
+		return AnswerResult{}, fmt.Errorf("движок: файл ответа повреждён: %w", err)
+	}
+	return AnswerResult{DOCX: docx, Stats: raw.Stats}, nil
+}
+
+// LawPage — часть пунктов ГК РФ из движка и версия всего набора.
+type LawPage struct {
+	Version string                 `json:"version"`
+	Total   int                    `json:"total"`
+	Points  []core_domain.LawPoint `json:"points"`
+}
+
+// Law отдаёт пункты ГК РФ начиная с offset (не больше limit).
+func (c *Client) Law(ctx context.Context, offset, limit int) (LawPage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/law?offset=%d&limit=%d", c.cfg.URL, offset, limit), nil)
+	if err != nil {
+		return LawPage{}, err
+	}
+	resp, err := c.do(req)
+	if err != nil {
+		return LawPage{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return LawPage{}, fmt.Errorf("движок: нормы ГК: статус %d: %w", resp.StatusCode, core_errors.ErrUnavailable)
+	}
+	var page LawPage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(&page); err != nil {
+		return LawPage{}, fmt.Errorf("движок: разбор норм ГК: %w", err)
+	}
+	return page, nil
+}
+
+// ErrNoEmbedModel — модель для векторов в движке не настроена: работает только поиск по словам.
+var ErrNoEmbedModel = errors.New("модель для векторов не настроена")
+
+// Embed — векторы текстов (для поиска по смыслу) и имя модели, которая их посчитала.
+func (c *Client) Embed(ctx context.Context, texts []string) (string, [][]float32, error) {
+	body, err := json.Marshal(map[string][]string{"texts": texts})
+	if err != nil {
+		return "", nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.URL+"/embed", bytes.NewReader(body))
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return "", nil, ErrNoEmbedModel
+	}
+	if resp.StatusCode != http.StatusOK {
+		var eb errorBody
+		_ = json.NewDecoder(resp.Body).Decode(&eb)
+		return "", nil, fmt.Errorf("движок: векторы: статус %d: %s: %w", resp.StatusCode, eb.Message, core_errors.ErrUnavailable)
+	}
+	var out struct {
+		Model   string      `json:"model"`
+		Vectors [][]float32 `json:"vectors"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 50<<20)).Decode(&out); err != nil {
+		return "", nil, fmt.Errorf("движок: разбор векторов: %w", err)
+	}
+	if len(out.Vectors) != len(texts) {
+		return "", nil, fmt.Errorf("движок: векторов %d, текстов %d: %w", len(out.Vectors), len(texts), core_errors.ErrUnavailable)
+	}
+	return out.Model, out.Vectors, nil
 }

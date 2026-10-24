@@ -1226,3 +1226,182 @@ del + ins {
 .doc-table__p + .doc-table__p {
   margin-top: 4px;
 }
+
+/* ---------- Пошаговый просмотр: решение по правке и ответ контрагенту ---------- */
+
+.answer {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+}
+
+.answer__title {
+  font: 700 15px/1.3 var(--font-display);
+}
+
+.answer__progress {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.answer__status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* «как решали раньше»: прошлые решения юриста, свёрнуты, кроме той же правки */
+.past {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--ok);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+/* прошлые формулировки — та же карточка, другой цвет полоски */
+.past--wording {
+  border-left-color: var(--accent);
+}
+
+.past__title {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.past__list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.past__item p {
+  margin: 0;
+}
+
+.past__head a {
+  color: inherit;
+}
+
+.past__diff,
+.past__foot {
+  color: var(--muted);
+}
+
+.past__foot {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.past__use {
+  margin-top: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font: 700 12px/1.4 var(--font-sans);
+  cursor: pointer;
+}
+
+.past__use:hover {
+  border-color: var(--ink);
+}
+
+/* «что говорит ГК»: пункты статей, свёрнуты */
+.law {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--muted);
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.law__title {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.law__list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.law__item p {
+  margin: 0;
+}
+
+.law__text {
+  white-space: pre-line;
+}
+
+.law__ed,
+.law__foot {
+  color: var(--muted);
+}
+
+.law__foot {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.decide {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.decide__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.decide__btn {
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font: 700 12px/1.4 var(--font-sans);
+  cursor: pointer;
+}
+
+.decide__btn:hover {
+  border-color: var(--ink);
+}
+
+/* совпадает с выводом программы — тонкая рамка-подсказка, решение всё равно за юристом */
+.decide__btn--hint {
+  border-color: var(--ink);
+  border-style: dashed;
+}
+
+.decide__btn[aria-pressed="true"] {
+  border-style: solid;
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.decide__text {
+  min-height: 70px;
+  font-size: 14px;
+}
+
+.decide__note,
+.decide__status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.decide__label {
+  font-size: 12px;
+  font-weight: 700;
+}

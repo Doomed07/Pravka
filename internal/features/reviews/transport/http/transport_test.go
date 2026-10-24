@@ -24,6 +24,8 @@ type fakeService struct {
 	createErr error
 	got       core_domain.ReviewRequest
 	userID    int
+	choice    core_domain.ReviewChoice
+	author    string
 }
 
 func (f *fakeService) Playbooks(context.Context) ([]core_domain.Playbook, error) {
@@ -36,7 +38,9 @@ func (f *fakeService) Create(_ context.Context, userID int, r core_domain.Review
 	}
 	return core_domain.ContractReview{ID: 5, UserID: userID, TheirsName: r.Theirs.Name, Counts: map[string]int{"всего": 1}}, nil
 }
-func (f *fakeService) List(context.Context, int, int, int) ([]core_domain.ContractReview, error) { return nil, nil }
+func (f *fakeService) List(context.Context, int, int, int) ([]core_domain.ContractReview, error) {
+	return nil, nil
+}
 func (f *fakeService) Get(_ context.Context, userID, id int) (core_domain.ContractReview, error) {
 	if userID != 1 {
 		return core_domain.ContractReview{}, core_errors.ErrNotFound
@@ -59,6 +63,50 @@ func (f *fakeService) File(_ context.Context, userID, id int, kind string) ([]by
 	return []byte("<h1>отчёт</h1>"), nil
 }
 func (f *fakeService) Delete(context.Context, int, int) error { return nil }
+func (f *fakeService) Choices(_ context.Context, userID, _ int) ([]core_domain.ReviewChoice, error) {
+	if userID != 1 {
+		return nil, core_errors.ErrNotFound
+	}
+	return []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}}, nil
+}
+func (f *fakeService) SaveChoice(_ context.Context, userID, _ int, c core_domain.ReviewChoice) error {
+	if userID != 1 {
+		return core_errors.ErrNotFound
+	}
+	if c.Choice == "maybe" {
+		return core_errors.ErrInvalidArgument
+	}
+	f.choice = c
+	return nil
+}
+func (f *fakeService) Precedents(_ context.Context, userID, _ int) ([]core_domain.Precedent, error) {
+	if userID != 1 {
+		return nil, core_errors.ErrNotFound
+	}
+	return []core_domain.Precedent{{ChangeID: "E002", ReviewID: 3, TheirsName: "Поставка_v2.docx", Choice: "counter",
+		Text: "15 дней", Same: true, Score: 0.8}}, nil
+}
+func (f *fakeService) LawHints(_ context.Context, userID, _ int) ([]core_domain.LawHint, error) {
+	if userID != 1 {
+		return nil, core_errors.ErrNotFound
+	}
+	return []core_domain.LawHint{{ChangeID: "E002", Article: "511", Point: "3", Title: "Восполнение недопоставки товаров",
+		Text: "3. Покупатель вправе…", Distance: 0.21}}, nil
+}
+func (f *fakeService) Wordings(_ context.Context, userID, _ int) ([]core_domain.Wording, error) {
+	if userID != 1 {
+		return nil, core_errors.ErrNotFound
+	}
+	return []core_domain.Wording{{ChangeID: "E002", ReviewID: 9, TheirsName: "Поставка_2025.docx", Clause: "3.1",
+		Text: "Поставщик поставляет Товар в течение 20 дней."}}, nil
+}
+func (f *fakeService) Answer(_ context.Context, userID, _ int, author string) (engine.AnswerResult, error) {
+	if userID != 1 {
+		return engine.AnswerResult{}, core_errors.ErrNotFound
+	}
+	f.author = author
+	return engine.AnswerResult{DOCX: []byte("PKanswer"), Stats: map[string]int{"reject": 2, "без отметки": 1}}, nil
+}
 
 // router собирает маршруты так же, как main: с проверкой происхождения запроса и логгером в контексте.
 func router(svc ReviewsService, userID int) http.Handler {
@@ -176,5 +224,61 @@ func TestUnifiedVersion(t *testing.T) {
 	}
 	if rec := get(1, "/reviews/4/docx"); rec.Code != http.StatusNotFound {
 		t.Errorf("old review without docx: status = %d, want 404", rec.Code)
+	}
+}
+
+func TestChoicesAndAnswer(t *testing.T) {
+	svc := &fakeService{}
+	do := func(userID int, method, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		router(svc, userID).ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := do(1, http.MethodGet, "/reviews/5/choices", ""); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"change_id":"E001"`) || !strings.Contains(rec.Body.String(), `"text":"30 дней"`) {
+		t.Fatalf("choices: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(1, http.MethodPut, "/reviews/5/choices/E007", `{"choice":"counter","text":"45 дней"}`); rec.Code != http.StatusNoContent ||
+		svc.choice != (core_domain.ReviewChoice{ChangeID: "E007", Choice: "counter", Text: "45 дней"}) {
+		t.Fatalf("save: %d, %+v", rec.Code, svc.choice)
+	}
+	if rec := do(1, http.MethodPut, "/reviews/5/choices/E007", `не json`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad json: %d", rec.Code)
+	}
+	if rec := do(1, http.MethodPut, "/reviews/5/choices/E007", `{"choice":"maybe"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad choice: %d", rec.Code)
+	}
+	if rec := do(1, http.MethodGet, "/reviews/5/precedents", ""); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"change_id":"E002"`) || !strings.Contains(rec.Body.String(), `"text":"15 дней"`) ||
+		!strings.Contains(rec.Body.String(), `"same":true`) {
+		t.Fatalf("precedents: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(1, http.MethodGet, "/reviews/5/law", ""); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"article":"511"`) || !strings.Contains(rec.Body.String(), `"point":"3"`) {
+		t.Fatalf("law: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(1, http.MethodGet, "/reviews/5/wordings", ""); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"review_id":9`) || !strings.Contains(rec.Body.String(), `"clause":"3.1"`) {
+		t.Fatalf("wordings: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := do(1, http.MethodPost, "/reviews/5/answer", `{"author":"Иванова А."}`)
+	if rec.Code != http.StatusOK || rec.Body.String() != "PKanswer" || svc.author != "Иванова А." ||
+		!strings.Contains(rec.Header().Get("Content-Disposition"), "pravki_answer_5.docx") || rec.Header().Get("X-Pravki-reject") != "2" ||
+		rec.Header().Get("X-Pravki-untracked") != "1" {
+		t.Fatalf("answer: %d %q %v", rec.Code, svc.author, rec.Header())
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodGet, "/reviews/5/choices", ""},
+		{http.MethodPut, "/reviews/5/choices/E007", `{"choice":"accept"}`},
+		{http.MethodPost, "/reviews/5/answer", `{}`},
+		{http.MethodGet, "/reviews/5/precedents", ""},
+		{http.MethodGet, "/reviews/5/law", ""},
+		{http.MethodGet, "/reviews/5/wordings", ""},
+	} {
+		if rec := do(2, c.method, c.path, c.body); rec.Code != http.StatusNotFound {
+			t.Errorf("someone else's %s %s: %d, want 404", c.method, c.path, rec.Code)
+		}
 	}
 }

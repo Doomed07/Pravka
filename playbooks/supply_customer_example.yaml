@@ -1,0 +1,190 @@
+# ПРИМЕР плейбука для отладки — зеркальный к supply_example.yaml (там мы — Поставщик).
+# Это не юридическая позиция: замените значения своими. Нужен зеркальному тесту tests/test_mirror_supply.py:
+# одна и та же правка не должна получать «принять» сразу за обе стороны.
+name: Поставка (мы — Покупатель) — пример
+contract_type: supply
+our_role: Покупатель
+priority_topics:
+  - возмещение убытков
+  - ограничение ответственности
+  - расторжение и отказ от договора
+rules:
+  - id: SB-01
+    title: Неустойка Поставщика за просрочку поставки
+    topic: неустойка и штрафы
+    match: ['Поставщик\w*\s+уплачива', 'нарушени\w+\s+срока\s+поставк']
+    preferred: не менее 0,1% в день
+    fallback: не менее 0,05% в день
+    red_line: ниже 0,05% в день или отказ от неустойки
+    escalate_to: Директор по правовым вопросам
+    norms: ['ст. 330 ГК РФ', 'ст. 521 ГК РФ']
+    checks:
+      - {type: number, unit: percent, label: Ставка неустойки Поставщика, direction: min, preferred: 0.1, fallback: 0.05,
+         context: 'Поставщик|поставк', not_lead: 'не\s+более'}
+      - {type: require, patterns: ['Поставщик\w*\s+уплачива[^.;]*неустойк'],
+         message: Удалено условие о неустойке Поставщика за просрочку поставки}
+
+  - id: SB-02
+    title: Предельный размер неустойки Поставщика
+    topic: неустойка и штрафы
+    match: ['Поставщик\w*\s+уплачива[^.;]*не\s+более\s+\d+\s*%']
+    preferred: предел не ниже 10% от стоимости Товара
+    fallback: предел не ниже 5%
+    red_line: предел ниже 5%
+    checks:
+      - {type: number, unit: percent, label: Предел неустойки Поставщика, direction: min, preferred: 10, fallback: 5,
+         context: 'Поставщик\w*\s+уплачива|срок\w*\s+поставк', lead: 'не\s+более\s*$'}
+
+  - id: SB-03
+    title: Наша неустойка за просрочку оплаты
+    topic: неустойка и штрафы
+    match: ['Покупател\w*\s+уплачива', 'нарушени\w+\s+срока\s+оплат']
+    preferred: 0,1% в день
+    fallback: до 0,2% в день
+    red_line: больше 0,2% в день
+    checks:
+      - {type: number, unit: percent, label: Ставка нашей неустойки, direction: max, preferred: 0.1, fallback: 0.2,
+         context: 'Покупател|оплат', not_lead: 'не\s+более'}
+
+  - id: SB-04
+    title: Ограничение ответственности Поставщика
+    topic: ограничение ответственности
+    match: ['ограничен\w*\s+(?:\w+\s+){0,3}ответственност', 'совокупн\w+\s+ответственност']
+    preferred: без ограничения ответственности Поставщика
+    fallback: предел не ниже 2× стоимости Товара
+    red_line: предел ниже стоимости Товара
+    escalate_to: Директор по правовым вопросам
+    norms: ['ст. 15 ГК РФ', 'ст. 400 ГК РФ']
+    checks:
+      - {type: number, unit: multiple, label: Предел ответственности Поставщика, direction: min, preferred: 2, fallback: 1}
+
+  - id: SB-05
+    title: Упущенная выгода
+    topic: ограничение ответственности
+    match: ['упущенн\w+\s+выгод']
+    preferred: Поставщик возмещает убытки, включая упущенную выгоду
+    note: Исключение упущенной выгоды — на усмотрение юриста.
+
+  - id: SB-06
+    title: Срок окончательной оплаты Товара
+    topic: порядок и сроки оплаты
+    match: ['Покупатель\s+оплачива', 'оставш\w+\s+част\w+\s+стоимост']
+    preferred: не менее 30 дней с даты накладной
+    fallback: не менее 10 рабочих дней
+    red_line: меньше 10 дней
+    escalate_to: Финансовый директор
+    checks:
+      - {type: number, unit: days, label: Срок оплаты, direction: min, preferred: 30, fallback: 10, context: 'оплачива|оплат'}
+
+  - id: SB-07
+    title: Аванс
+    topic: порядок и сроки оплаты
+    match: ['аванс']
+    preferred: без аванса или аванс до 10%
+    fallback: аванс до 30%
+    red_line: аванс больше 30%
+    escalate_to: Финансовый директор
+    checks:
+      - {type: number, unit: percent, label: Размер аванса, direction: max, preferred: 10, fallback: 30, context: 'аванс'}
+
+  - id: SB-08
+    title: Цена Товара
+    topic: цена и сумма договора
+    match: ['стоимост\w+\s+(?:\w+\s+){0,2}составля']
+    preferred: цена по коммерческому предложению
+    fallback: рост до 3%
+    red_line: рост цены больше 3%
+    escalate_to: Коммерческий директор
+    checks:
+      - {type: change, unit: money, label: Цена, unfavorable: up, preferred_pct: 0, fallback_pct: 3}
+
+  - id: SB-09
+    title: НДС и налоговые условия
+    topic: налоги
+    match: ['\bндс\b', 'налог']
+    preferred: НДС выделен, счёт-фактура в срок
+    note: Нужна проверка бухгалтерии.
+
+  - id: SB-10
+    title: Срок поставки
+    topic: сроки исполнения
+    match: ['поставля\w*\s+Товар\s+в\s+течение', 'срок\w*\s+поставк']
+    preferred: не более 30 календарных дней
+    fallback: до 40 дней
+    red_line: больше 40 дней
+    escalate_to: Руководитель отдела снабжения
+    checks:
+      - {type: number, unit: days, label: Срок поставки, direction: max, preferred: 30, fallback: 40, context: 'поставля|поставк'}
+
+  - id: SB-11
+    title: Приёмка Товара по качеству
+    topic: приёмка и качество
+    match: ['принима\w+\s+Товар', 'по\s+качеству']
+    preferred: не менее 10 рабочих дней с даты получения
+    fallback: не менее 5 рабочих дней
+    red_line: меньше 5 дней
+    checks:
+      - {type: number, unit: days, label: Срок приёмки по качеству, direction: min, preferred: 10, fallback: 5,
+         context: 'качеств|принима'}
+
+  - id: SB-12
+    title: Переход права собственности и риска
+    topic: переход права собственности и риска
+    match: ['риск\w*\s+случайн\w+\s+гибел', 'прав\w*\s+собственност\w*\s+(?:\w+\s+){0,6}переход']
+    preferred: с даты подписания товарной накладной на нашем складе
+    red_line: переход риска до передачи Товара нам
+    escalate_to: Директор по правовым вопросам
+    norms: ['ст. 459 ГК РФ']
+    checks:
+      - {type: forbid, patterns: ['с\s+(?:даты|момента)\s+(?:отгрузк|передачи\s+перевозчик|сдачи\s+перевозчик)'],
+         message: Риск переходит до получения Товара}
+
+  - id: SB-13
+    title: Гарантийный срок
+    topic: приёмка и качество
+    match: ['гарантийн\w+\s+срок']
+    preferred: не менее 12 месяцев
+    fallback: не менее 6 месяцев
+    red_line: меньше 6 месяцев
+    checks:
+      - {type: number, unit: months, label: Гарантийный срок, direction: min, preferred: 12, fallback: 6}
+
+  - id: SB-14
+    title: Срок устранения недостатков
+    topic: приёмка и качество
+    match: ['устраня\w+\s+недостатк']
+    preferred: не более 10 рабочих дней
+    fallback: до 20 рабочих дней
+    red_line: больше 20 дней
+    checks:
+      - {type: number, unit: days, label: Срок устранения недостатков, direction: max, preferred: 10, fallback: 20,
+         context: 'недостатк|устраня'}
+
+  - id: SB-15
+    title: Наш отказ от договора при просрочке поставки
+    topic: расторжение и отказ от договора
+    match: ['отказаться\s+от\s+договор']
+    preferred: при просрочке поставки более 10 календарных дней
+    fallback: более 30 дней
+    red_line: больше 30 дней
+    escalate_to: Директор по правовым вопросам
+    norms: ['ст. 523 ГК РФ']
+    checks:
+      - {type: number, unit: days, label: Допустимая просрочка поставки, direction: max, preferred: 10, fallback: 30}
+
+  - id: SB-16
+    title: Подсудность и применимое право
+    topic: разрешение споров
+    match: ['арбитражн\w+\s+суд', 'подсудн']
+    preferred: Арбитражный суд города Москвы
+    note: Автоматической проверки нет — решает юрист.
+
+  - id: SB-17
+    title: Срок ответа на претензию
+    topic: разрешение споров
+    match: ['ответ\w*\s+на\s+претензи']
+    preferred: 10 календарных дней
+    fallback: до 30 дней
+    checks:
+      - {type: number, unit: days, label: Срок ответа на претензию, direction: max, preferred: 10, fallback: 30,
+         context: 'ответ\w*\s+на\s+претензи'}

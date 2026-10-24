@@ -3,6 +3,7 @@ package core_domain
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,6 +26,7 @@ type ContractReview struct {
 	Playbook     string
 	PlaybookName string
 	OurRole      string
+	ContractType string // тип договора по плейбуку: supply, services…
 	Side         string
 	Counts       map[string]int
 	Warnings     []string
@@ -110,3 +112,66 @@ type Playbook struct {
 	Name string
 	Role string
 }
+
+// Решения юриста по правке в пошаговом просмотре.
+const (
+	ChoiceAccept  = "accept"  // принять правку контрагента
+	ChoiceReject  = "reject"  // отклонить
+	ChoiceCounter = "counter" // встречная редакция: текст пишет юрист
+	ChoiceReply   = "reply"   // ответ на комментарий контрагента: текст пишет юрист
+)
+
+// MaxChoiceText — предел текста встречной редакции.
+const MaxChoiceText = 5000
+
+// ReviewChoice — решение юриста по одной правке разбора. Пустой Choice — решение снято.
+type ReviewChoice struct {
+	ChangeID string
+	Choice   string
+	Text     string
+}
+
+// Validate: номер правки как в разборе (E001, S002), известный выбор, текст не длиннее предела.
+func (c ReviewChoice) Validate() error {
+	if !changeIDRe.MatchString(c.ChangeID) {
+		return fmt.Errorf("номер правки %q: %w", c.ChangeID, core_errors.ErrInvalidArgument)
+	}
+	switch c.Choice {
+	case "", ChoiceAccept, ChoiceReject, ChoiceCounter, ChoiceReply:
+	default:
+		return fmt.Errorf("неизвестное решение %q: %w", c.Choice, core_errors.ErrInvalidArgument)
+	}
+	if utf8.RuneCountInString(c.Text) > MaxChoiceText {
+		return fmt.Errorf("текст длиннее %d символов: %w", MaxChoiceText, core_errors.ErrInvalidArgument)
+	}
+	return nil
+}
+
+var changeIDRe = regexp.MustCompile(`^[A-Z]\d{3,5}$`)
+
+// Precedent — «как решали раньше»: похожая правка из прошлого разбора того же юриста (тот же тип договора и наша роль)
+// и его решение по ней. Только подсказка: решение по текущей правке принимает плейбук и юрист.
+type Precedent struct {
+	ChangeID     string // правка текущего разбора, к которой подобрана подсказка
+	ReviewID     int
+	PastChangeID string // номер правки в прошлом разборе
+	TheirsName   string
+	CreatedAt    time.Time
+	Clause       string
+	Topic        string
+	Before       string
+	After        string
+	Choice       string  // решение юриста: accept, reject или counter
+	Text         string  // текст встречной редакции
+	Same         bool    // та же правка: «было» и «стало» совпадают
+	Semantic     bool    // найдена по смыслу (вектор), а не по словам
+	Score        float64 // похожесть от 0 до 1
+}
+
+// MaxPrecedents — сколько прошлых решений показывать к одной правке.
+const MaxPrecedents = 3
+
+// SemanticPrecedentMaxDistance — «как решали раньше» по смыслу: дальше этого прошлая правка не показывается.
+// На учебных договорах та же правка — не дальше 0,134 (199 из 199), правка другого пункта той же темы и стороны —
+// не ближе 0,168.
+const SemanticPrecedentMaxDistance = 0.15

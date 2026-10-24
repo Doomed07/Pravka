@@ -78,6 +78,180 @@ function noteBy(ch) {
   return html`<p class="note__by"><span class="note__mark" aria-hidden="true">П</span>Правки · ${by}</p>`;
 }
 
+// ---------- Решение юриста по правке (пошаговый просмотр) ----------
+
+// Решения, сохранённые на сервере: id правки → {choice, text}. Загружаются до отрисовки.
+const CHOICES = new Map();
+
+const DECISIONS = [
+  ['accept', 'Принять'],
+  ['reject', 'Отклонить'],
+  ['counter', 'Встречная редакция'],
+];
+
+// Подсказка программы: какое решение соответствует выводу плейбука. Юрист выбирает сам.
+function hinted(ch) {
+  if (ch.lawyer_decision_needed) return '';
+  if (ch.level === 'accept' || ch.level === 'fallback') return 'accept';
+  if (ch.level === 'reject') return ch.suggested ? 'counter' : 'reject';
+  return '';
+}
+
+// Ответ на комментарий контрагента: попадёт в Word в ту же ветку примечаний. Пустой ответ — решения нет.
+function replyBlock(ch) {
+  const cur = CHOICES.get(ch.id) || {};
+  return html`
+    <div class="decide decide--reply" data-change="${ch.id}">
+      <label class="decide__label" for="reply-${ch.id}">Ваш ответ на комментарий</label>
+      <textarea class="decide__text form__input" id="reply-${ch.id}" rows="3" maxlength="5000"
+        placeholder="Попадёт в Word ответом в той же ветке комментариев">${cur.choice === 'reply' ? cur.text : ''}</textarea>
+      <p class="decide__status" role="status"></p>
+    </div>`;
+}
+
+// ---------- Как решали раньше ----------
+
+// Прошлые решения юриста по похожим правкам: id правки → список. Только подсказка: решает юрист.
+const PRECEDENTS = new Map();
+
+const PAST_CHOICE = { accept: 'приняли', reject: 'отклонили', counter: 'встречная редакция' };
+
+function precedentItem(p) {
+  const kind = p.same ? 'Та же правка' : p.semantic ? 'Похожая по смыслу' : 'Похожая правка';
+  return html`
+    <li class="past__item">
+      <p class="past__head"><b>${kind}</b> · <a href="/reviews/${p.review_id}#c-${p.past_change}">${short(p.theirs_name, 40)}</a>, ${fmtDate(p.created_at)}</p>
+      <p class="past__diff">было «${short(p.before, 60) || '—'}», стало «${short(p.after, 60) || '—'}»</p>
+      <p class="past__choice">Решение: ${PAST_CHOICE[p.choice] || p.choice}${p.choice === 'counter' && p.text ? html` — «${short(p.text, 160)}»` : ''}</p>
+      ${p.choice === 'counter' && p.text ? html`<button class="past__use" type="button" data-text="${p.text}">Взять эту формулировку</button>` : ''}
+    </li>`;
+}
+
+function precedentsBlock(ch) {
+  const list = PRECEDENTS.get(ch.id);
+  if (!list || !list.length || ch.kind === 'comment') return '';
+  return html`
+    <details class="past"${list[0].same ? ' open' : ''}>
+      <summary class="past__title">Как решали раньше: ${list.length}</summary>
+      <ul class="past__list">${list.map(precedentItem)}</ul>
+      <p class="past__foot">Из ваших прошлых разборов того же вида договора. Подсказка, решаете вы.</p>
+    </details>`;
+}
+
+// ---------- Что говорит ГК ----------
+
+function lawRef(h) {
+  return `ст. ${h.article}${h.point ? ` п. ${h.point}` : ''} ГК РФ`;
+}
+
+function lawBlock(hints) {
+  return html`
+    <details class="law">
+      <summary class="law__title">Что говорит ГК: ${hints.map(lawRef).join('; ')}</summary>
+      <ul class="law__list">
+        ${hints.map((h) => html`
+          <li class="law__item">
+            <p class="law__head"><b>${lawRef(h)}</b> · ${h.title}${h.edited ? html` <span class="law__ed">(ред. от ${fmtDate(h.edited)})</span>` : ''}</p>
+            <p class="law__text">${h.text}</p>
+          </li>`)}
+      </ul>
+      <p class="law__foot">Подобрано по смыслу из ГК РФ (pravo.gov.ru). Подсказка: применимость нормы оценивает юрист.</p>
+    </details>`;
+}
+
+// ---------- Ваши прошлые формулировки ----------
+
+function wordingsBlock(list) {
+  return html`
+    <details class="past past--wording">
+      <summary class="past__title">Ваши прошлые формулировки: ${list.length}</summary>
+      <ul class="past__list">
+        ${list.map((w) => html`
+          <li class="past__item">
+            <p class="past__head">${w.clause ? `п. ${w.clause} · ` : ''}<a href="/reviews/${w.review_id}">${short(w.theirs_name, 40)}</a>, ${fmtDate(w.created_at)}</p>
+            <p>«${w.text}»</p>
+            <button class="past__use" type="button" data-text="${w.text}">Взять эту формулировку</button>
+          </li>`)}
+      </ul>
+      <p class="past__foot">Пункты вашей редакции из прошлых разборов того же вида договора. Подсказка, решаете вы.</p>
+    </details>`;
+}
+
+// Кнопка «Взять эту формулировку»: встречная редакция с этим текстом, юрист может поправить. Блоки с кнопками
+// приходят и после отрисовки (формулировки), поэтому обработчик — один на документ.
+function wireUse(id, refresh) {
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest && e.target.closest('.past__use');
+    if (!btn) return;
+    e.stopPropagation();
+    const box = btn.closest('.note')?.querySelector('.decide');
+    if (!box) return;
+    const text = box.querySelector('.decide__text');
+    text.value = btn.dataset.text;
+    text.hidden = false;
+    box.querySelectorAll('.decide__btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.choice === 'counter')));
+    await saveChoice(id, box, 'counter', text.value);
+    refresh();
+    text.focus();
+  });
+}
+
+async function loadWordings(id) {
+  let list = [];
+  try {
+    list = (await reviews.wordings(id)) || [];
+  } catch {
+    return;
+  }
+  const by = new Map();
+  for (const w of list) {
+    if (!by.has(w.change_id)) by.set(w.change_id, []);
+    by.get(w.change_id).push(w);
+  }
+  for (const [change, items] of by) {
+    const slot = document.querySelector(`.wording-slot[data-change="${CSS.escape(change)}"]`);
+    if (slot) mount(slot, wordingsBlock(items));
+  }
+}
+
+// Подсказки по ГК приходят после отрисовки страницы: место для них — пустой блок в карточке правки.
+async function loadLaw(id) {
+  let hints = [];
+  try {
+    hints = (await reviews.law(id)) || [];
+  } catch {
+    return; // без подсказок по ГК страница работает как раньше
+  }
+  const by = new Map();
+  for (const h of hints) {
+    if (!by.has(h.change_id)) by.set(h.change_id, []);
+    by.get(h.change_id).push(h);
+  }
+  for (const [change, list] of by) {
+    const slot = document.querySelector(`.law-slot[data-change="${CSS.escape(change)}"]`);
+    if (slot) mount(slot, lawBlock(list));
+  }
+}
+
+function decideBlock(ch) {
+  if (ch.kind === 'comment') return replyBlock(ch);
+  const cur = CHOICES.get(ch.id) || {};
+  const hint = hinted(ch);
+  const party = ch.rule_id === 'PARTY' && !(ch.revs || []).length; // сверка сторон: правится в тексте вручную
+  return html`
+    <div class="decide" data-change="${ch.id}">
+      <div class="decide__buttons" role="group" aria-label="Решение по правке">
+        ${DECISIONS.map(([k, label]) => html`
+          <button class="decide__btn${k === hint ? ' decide__btn--hint' : ''}" type="button" data-choice="${k}"
+            aria-pressed="${cur.choice === k ? 'true' : 'false'}"${k === hint ? html` title="Совпадает с выводом программы"` : ''}>${label}</button>`)}
+      </div>
+      <textarea class="decide__text form__input" rows="3" maxlength="5000"${cur.choice === 'counter' ? '' : ' hidden'}
+        placeholder="${ch.suggested ? `Ваша редакция. Позиция плейбука: ${ch.suggested}` : 'Ваша редакция'}">${cur.text || ''}</textarea>
+      ${party ? html`<p class="decide__note">Это итог сверки сторон: решение сохранится, а реквизиты в ответе правьте вручную.</p>` : ''}
+      <p class="decide__status" role="status"></p>
+    </div>`;
+}
+
 function note(ch, order) {
   const v = verdict(ch);
   const diff = ch.replaced_para
@@ -103,6 +277,10 @@ function note(ch, order) {
       ${ch.suggested ? html`<p class="note__suggest">Наша позиция: ${ch.suggested}</p>` : ''}
       ${ch.escalate_to ? html`<p class="note__foot">Согласовать: ${ch.escalate_to}</p>` : ''}
       ${ch.rule_id && ch.rule_id !== 'PARTY' || isSilent(ch) ? html`<p class="note__foot">${[ch.rule_id && ch.rule_id !== 'PARTY' ? `правило ${ch.rule_id}` : '', isSilent(ch) ? 'найдено сравнением редакций' : ''].filter(Boolean).join(' · ')}</p>` : ''}
+      ${precedentsBlock(ch)}
+      <div class="wording-slot" data-change="${ch.id}"></div>
+      <div class="law-slot" data-change="${ch.id}"></div>
+      ${decideBlock(ch)}
     </article>`;
 }
 
@@ -296,6 +474,37 @@ function head(r, hasDocx) {
     </header>`;
 }
 
+// Сколько правок и комментариев уже решено (у комментария решение — ответ).
+function decidedCount(changes) {
+  return [changes.filter((c) => CHOICES.has(c.id)).length, changes.length];
+}
+
+const AUTHOR_KEY = 'pravki.answer.author';
+
+function defaultAuthor() {
+  try {
+    const saved = localStorage.getItem(AUTHOR_KEY);
+    if (saved) return saved;
+    const memo = JSON.parse(localStorage.getItem('pravki.form') || '{}');
+    return (memo.our_authors || '').split(',')[0].trim();
+  } catch {
+    return '';
+  }
+}
+
+function answerPanel(changes) {
+  const [done, total] = decidedCount(changes);
+  return html`
+    <section class="answer" aria-labelledby="answer-title">
+      <h2 class="answer__title" id="answer-title">Ответ контрагенту</h2>
+      <p class="answer__progress" id="answer-progress">Решено ${done} из ${total}</p>
+      <label class="form__label" for="answer-author">Автор наших правок в Word</label>
+      <input class="form__input" id="answer-author" maxlength="100" value="${defaultAuthor()}" placeholder="как вы подписаны в Word">
+      <button class="button button--cta" type="button" id="answer-build">Собрать ответ в Word</button>
+      <p class="answer__status" id="answer-status" role="status"></p>
+    </section>`;
+}
+
 function unifiedView(r, doc, changes) {
   const order = new Map(changes.map((c, i) => [c.id, i + 1]));
   const warnings = r.warnings || [];
@@ -303,6 +512,7 @@ function unifiedView(r, doc, changes) {
     ${head(r, true)}
     <div class="rv">
       <aside class="rv-side">
+        ${answerPanel(changes)}
         ${summary(changes)}
         ${changes.length ? list(changes, order) : html`<p class="empty-state">Правок не найдено.</p>`}
         <p class="legend">
@@ -351,6 +561,88 @@ function select(id, scroll) {
   if (scroll === 'list' && item) item.scrollIntoView({ block: 'nearest' });
 }
 
+function setStatus(el, text) {
+  if (el) el.textContent = text;
+}
+
+async function saveChoice(id, box, choice, text) {
+  const status = box.querySelector('.decide__status');
+  setStatus(status, 'Сохраняю…');
+  try {
+    await reviews.saveChoice(id, box.dataset.change, choice, choice === 'counter' || choice === 'reply' ? text : '');
+    if (choice) CHOICES.set(box.dataset.change, { choice, text });
+    else CHOICES.delete(box.dataset.change);
+    setStatus(status, choice ? 'Сохранено' : 'Решение снято');
+  } catch (err) {
+    setStatus(status, err instanceof ApiError && err.status === 400 ? 'Не сохранено: проверьте текст' : 'Не сохранено, попробуйте ещё раз');
+  }
+}
+
+function wireDecisions(id, changes) {
+  const progress = $('#answer-progress');
+  const refresh = () => {
+    const [done, total] = decidedCount(changes);
+    setStatus(progress, `Решено ${done} из ${total}`);
+  };
+  document.querySelectorAll('.decide').forEach((box) => {
+    const text = box.querySelector('.decide__text');
+    box.addEventListener('click', (e) => e.stopPropagation()); // клик по решению не прокручивает страницу
+    box.querySelectorAll('.decide__btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const again = btn.getAttribute('aria-pressed') === 'true'; // повторное нажатие снимает решение
+        const choice = again ? '' : btn.dataset.choice;
+        box.querySelectorAll('.decide__btn').forEach((b) => b.setAttribute('aria-pressed', String(b === btn && !again)));
+        text.hidden = choice !== 'counter';
+        if (choice === 'counter') text.focus();
+        await saveChoice(id, box, choice, text.value);
+        refresh();
+      });
+    });
+    let timer;
+    const reply = box.classList.contains('decide--reply');
+    text.addEventListener('input', () => {
+      clearTimeout(timer);
+      // у комментария решение — сам ответ: пустое поле снимает решение
+      const choice = reply ? (text.value.trim() ? 'reply' : '') : 'counter';
+      timer = setTimeout(async () => {
+        await saveChoice(id, box, choice, text.value);
+        refresh();
+      }, 700);
+    });
+  });
+
+  wireUse(id, refresh);
+
+  const build = $('#answer-build');
+  const author = $('#answer-author');
+  const status = $('#answer-status');
+  build.addEventListener('click', async () => {
+    try {
+      localStorage.setItem(AUTHOR_KEY, author.value.trim());
+    } catch {
+      /* приватный режим */
+    }
+    build.disabled = true;
+    setStatus(status, 'Собираю…');
+    try {
+      const { blob, stats } = await reviews.answer(id, author.value.trim());
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `Ответ_контрагенту_${id}.docx`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      const skipped = stats.untracked ? ` Не вошли в файл (правки без отметки): ${stats.untracked}.` : '';
+      setStatus(status, `Готово: принято ${stats.accept}, отклонено ${stats.reject}, встречных редакций ${stats.counter}, ответов на комментарии ${stats.reply}.${skipped} Черновик — проверьте перед отправкой, дисклеймер в конце отклоните.`);
+    } catch (err) {
+      setStatus(status, err instanceof ApiError && err.status === 404
+        ? 'Для этого разбора ответ собрать нельзя: загрузите договор заново.'
+        : 'Не удалось собрать ответ. Попробуйте ещё раз.');
+    } finally {
+      build.disabled = false;
+    }
+  });
+}
+
 function wire(id) {
   document.querySelectorAll('.rv-list__item').forEach((el) => {
     el.addEventListener('click', () => select(el.dataset.change, 'doc'));
@@ -386,13 +678,29 @@ async function load() {
     return;
   }
   const id = pathID();
-  const [r, doc, changes] = await Promise.all([reviews.get(id), reviews.document(id), reviews.changes(id)]);
+  const [r, doc, changes, choices, precedents] = await Promise.all([reviews.get(id), reviews.document(id), reviews.changes(id),
+    reviews.choices(id).catch(() => []), reviews.precedents(id).catch(() => [])]);
+  PRECEDENTS.clear();
+  for (const p of precedents || []) {
+    if (!PRECEDENTS.has(p.change_id)) PRECEDENTS.set(p.change_id, []);
+    PRECEDENTS.get(p.change_id).push(p);
+  }
+  CHOICES.clear();
+  for (const c of choices || []) CHOICES.set(c.change_id, { choice: c.choice, text: c.text });
   setTitle(r.theirs_name);
   const box = $('#review');
   box.classList.add('container--wide');
   const body = doc && doc.length ? unifiedView(r, doc, changes || []) : legacyView(r);
   mount(box, body);
   wire(id);
+  if (doc && doc.length) {
+    wireDecisions(id, changes || []);
+    loadWordings(id);
+    loadLaw(id);
+  }
+  // ссылка из «как решали раньше» ведёт к правке прошлого разбора: /reviews/3#c-E001
+  const target = decodeURIComponent(location.hash.slice(1));
+  if (target.startsWith('c-') && document.getElementById(target)) select(target.slice(2), 'doc');
 }
 
 load().catch((err) => {

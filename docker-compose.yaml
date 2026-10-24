@@ -42,6 +42,7 @@ services:
       - ENGINE_TOKEN=${ENGINE_TOKEN}
       - PRAVKI_LLM_URL=${PRAVKI_LLM_URL}
       - PRAVKI_LLM_MODEL=${PRAVKI_LLM_MODEL}
+      - PRAVKI_EMBED_MODEL=${PRAVKI_EMBED_MODEL:-bge-m3}  # модель для поиска по смыслу (векторы), тот же Ollama
       - PRAVKI_LLM_TRUSTED_HOSTS=ollama,host.docker.internal
     volumes:
       - ./playbooks/private:/app/playbooks/private:ro
@@ -51,7 +52,7 @@ services:
     # порт не публикуется: движок доступен только веб-сервису внутри сети Docker
 
   pravki-postgres:
-    image: postgres:18.6-bookworm
+    image: pgvector/pgvector:0.8.1-pg18-bookworm  # PostgreSQL 18 с pgvector: поиск по смыслу (шаг 3)
     container_name: pravki-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}

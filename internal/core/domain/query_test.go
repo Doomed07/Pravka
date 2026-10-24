@@ -145,3 +145,21 @@ func TestNormalizeTopQueryParam(t *testing.T) {
 		})
 	}
 }
+
+func TestVectorChange_EmbedText(t *testing.T) {
+	cases := []struct {
+		c    VectorChange
+		want string
+	}{
+		{VectorChange{Kind: "replace", Topic: "неустойка и штрафы", Context: "0,1%", ContextAfter: "0,5%"}, "неустойка и штрафы. 0,5%"},
+		// удаление: условие было в прежнем абзаце
+		{VectorChange{Kind: "delete", Topic: "ограничение ответственности", Context: "Не возмещает упущенную выгоду.",
+			ContextAfter: ""}, "ограничение ответственности. Не возмещает упущенную выгоду."},
+		{VectorChange{Kind: "para_insert", Topic: "прочее", ContextAfter: "Новый пункт."}, "Новый пункт."},
+	}
+	for _, c := range cases {
+		if got := c.c.EmbedText(); got != c.want {
+			t.Errorf("EmbedText(%+v) = %q, want %q", c.c, got, c.want)
+		}
+	}
+}

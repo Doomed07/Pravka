@@ -6,10 +6,12 @@ import json
 import os
 import sys
 
+import yaml
+
 from . import journal
 from .anonymize import Anonymizer, anonymize_docx, learn_docx, residual_candidates, scan_leaks
 from .docx_reader import DocxError
-from .evaluate import print_report, run_synthetic
+from .evaluate import print_golden, print_report, run_golden, run_synthetic
 from .annotate import annotate_docx
 from .llm import Explainer, LLMError, OpenAICompatClient
 from .parties import PartiesError, RoleCheckError, SideConfig, canon_role, profile_from_args
@@ -84,9 +86,15 @@ def cmd_history(a) -> int:
 
 
 def cmd_eval(a) -> int:
+    if a.golden:
+        with open(a.config, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+        print(print_golden(run_golden(a.golden, a.anon, config)))
+        return 0
     pbs = {
         "services": load_playbook(os.path.join(PLAYBOOK_DIR, "services_example.yaml")),
         "rent": load_playbook(os.path.join(PLAYBOOK_DIR, "rent_example.yaml")),
+        "supply": load_playbook(os.path.join(PLAYBOOK_DIR, "supply_example.yaml")),
     }
     res = run_synthetic(a.pairs, a.seed, pbs)
     print(print_report(res, a.errors))
@@ -197,6 +205,17 @@ def cmd_labels(a) -> int:
     return 0
 
 
+def cmd_law(a) -> int:
+    from .law import build_gk, fetch_gk
+
+    if a.fetch:
+        print("Скачиваю ГК РФ с pravo.gov.ru:", ", ".join(fetch_gk(a.html)))
+    arts = build_gk(a.html, a.out)
+    live = [x for x in arts if not x.lost]
+    print(f"Статей: {len(arts)}, действующих: {len(live)}, пунктов: {sum(len(x.points) for x in live)}. Сохранено: {a.out}")
+    return 0
+
+
 def cmd_web(a) -> int:
     from .web import serve
     serve(a.port, not a.no_browser)
@@ -248,6 +267,10 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--pairs", type=int, default=40)
     e.add_argument("--seed", type=int, default=1000)
     e.add_argument("--errors", type=int, default=20)
+    e.add_argument("--golden", help="разметка юриста (labels_*.json): сравнить с ней, а не с синтетикой")
+    e.add_argument("--anon", default="data/golden/anon", help="папка с обезличенными договорами разметки")
+    e.add_argument("--config", default="data/golden/golden.yaml",
+                   help="плейбук, роль и наши авторы для каждого файла контрагента")
     e.set_defaults(fn=cmd_eval)
 
     z = sub.add_parser("anonymize", help="обезличить договоры (названия, ФИО, реквизиты, авторы правок, свойства файла)")
@@ -274,6 +297,12 @@ def build_parser() -> argparse.ArgumentParser:
     lb.add_argument("--out")
     lb.set_defaults(fn=cmd_labels)
 
+    lw = sub.add_parser("law", help="ГК РФ для подсказок: скачать с pravo.gov.ru и разобрать на статьи и пункты")
+    lw.add_argument("html", help="папка с частями ГК (part1.html … part4.html)")
+    lw.add_argument("--fetch", action="store_true", help="сначала скачать действующую редакцию в эту папку")
+    lw.add_argument("--out", default="pravki/law/gk.jsonl")
+    lw.set_defaults(fn=cmd_law)
+
     wb = sub.add_parser("web", help="веб-приложение на этом компьютере: загрузить договор в браузере и получить отчёт")
     wb.add_argument("--port", type=int, default=8765)
     wb.add_argument("--no-browser", action="store_true", help="не открывать браузер")
@@ -286,7 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("synth", help="создать пример: наша версия + версия контрагента с правками")
     s.add_argument("out")
-    s.add_argument("--template", choices=["services", "rent"], default="services")
+    s.add_argument("--template", choices=["supply", "services", "rent"], default="supply")
     s.add_argument("--seed", type=int, default=1)
     s.add_argument("--numbering", choices=["auto", "manual"])
     s.set_defaults(fn=cmd_synth)
