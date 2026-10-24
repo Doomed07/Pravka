@@ -63,6 +63,7 @@ function header({ nav = '', navDetail = false }) {
         </a>
         <nav class="main-nav" aria-label="Основное меню">${links}</nav>
         <div class="auth-nav" id="auth-nav"></div>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Сменить тему" title="Светлая / тёмная тема"></button>
       </div>
     </header>`;
 }
@@ -79,6 +80,43 @@ function footer() {
       </div>
     </footer>`;
 }
+
+// ---------- Тема ----------
+
+// Светлая или тёмная тема: выбор запоминается в браузере (если он недоступен — работает по настройке системы).
+const THEME_KEY = 'pravki-theme';
+
+function storedTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function isDark() {
+  const set = document.documentElement.dataset.theme;
+  if (set) return set === 'dark';
+  return matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function paintToggle() {
+  const button = document.getElementById('theme-toggle');
+  if (button) button.textContent = isDark() ? '☀' : '☾';
+}
+
+function toggleTheme() {
+  const next = isDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* выбор не запомнится — не страшно */
+  }
+  paintToggle();
+}
+
+if (['light', 'dark'].includes(storedTheme())) document.documentElement.dataset.theme = storedTheme();
 
 // ---------- Аккаунт ----------
 
@@ -147,6 +185,9 @@ export function safeNext(raw, fallback) {
 export function renderLayout(options = {}) {
   mount($('#site-header'), header(options));
   mount($('#site-footer'), footer());
+  const toggle = $('#theme-toggle');
+  if (toggle) toggle.addEventListener('click', toggleTheme);
+  paintToggle();
   currentUser().then((user) => showAccount(user, options.nav));
 }
 
