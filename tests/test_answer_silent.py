@@ -129,23 +129,28 @@ def test_reject_everything_restores_our_version_on_synthetic_contracts(tmp_path)
                 os.remove(out)
 
 
-def test_first_version_clause_decisions_reach_the_file(tmp_path):
-    """Первая версия: положения без отметок в рецензировании. Решения юриста (отклонить, встречная редакция) должны
-    попасть в файл нашей правкой; «принять» и нерешённое оставляют текст как есть."""
+def test_first_version_clause_decisions_become_word_comments(tmp_path):
+    """Первая версия: ответ юриста на положение — примечание Word к абзацу от его имени; текст контрагента не меняется."""
     from pravki.intake import clause_changes
     body = (p(r("1.1. Акт подписывается в течение 5 рабочих дней со дня получения.")) +
             p(r("2.1. Оплата производится в течение 30 дней после подписания акта.")) +
             p(r("3.1. Исполнитель отвечает за нарушение сроков неустойкой в размере 1% в день.")))
     src = str(make_docx(tmp_path / "first.docx", body))
-    changes = [c.to_dict() for c in clause_changes(read_docx(src))]
+    unified = str(tmp_path / "u.docx")
+    chs = clause_changes(read_docx(src))
+    annotate_docx(src, unified, chs, [])  # как в сервисе: единая версия содержит примечания
+    changes = [c.to_dict() for c in chs]
     assert len(changes) == 3
-    choices = {changes[0]["id"]: {"choice": "counter", "text": "2.3.5. Акт подписывается в течение 7 рабочих дней."},
+    choices = {changes[0]["id"]: {"choice": "counter", "text": "Давайте сочтемся на 7 рабочих днях"},
                changes[1]["id"]: {"choice": "reject"}, changes[2]["id"]: {"choice": "accept"}}
     out = str(tmp_path / "answer.docx")
-    stats = build_answer(src, out, changes, choices, AUTHOR, None)
+    stats = build_answer(unified, out, changes, choices, AUTHOR, None)
     assert stats["counter"] == 1 and stats["reject"] == 1 and stats["accept"] == 1 and stats["без отметки"] == 0
+    import zipfile
+    z = zipfile.ZipFile(out)
+    comments = z.read("word/comments.xml").decode()
+    assert "Давайте сочтемся на 7 рабочих днях" in comments and AUTHOR in comments and "Не согласны" in comments
+    assert ANNOTATOR not in comments
     doc = read_docx(out)
-    ours = _ours(doc)
-    assert ("ins", "2.3.5. Акт подписывается в течение 7 рабочих дней.") in ours
-    assert any(k == "del" and "Оплата производится" in t for k, t in ours)
-    assert not any("неустойкой" in t for _, t in ours)  # принятое не тронуто
+    assert _ours(doc) == []  # текст договора не тронут: ни вставок, ни удалений
+    assert z.read("word/document.xml").decode().count("commentReference") == 2

@@ -116,6 +116,31 @@ def _our_insert(text: str, author: str, date: str, rev_id: int):
     return ins
 
 
+CLAUSE_REJECT = "Не согласны с этим положением."
+
+
+def _add_comment(comments_root, p, text: str, author: str, date: str, last_id: int) -> int:
+    """Примечание юриста к абзацу p; возвращает его номер."""
+    cid = last_id + 1
+    c = etree.SubElement(comments_root, q("comment"))
+    for k, v in (("id", str(cid)), ("author", author), ("date", date), ("initials", author[:1].upper())):
+        c.set(q(k), v)
+    for line in text.splitlines() or [text]:
+        r = etree.SubElement(etree.SubElement(c, q("p")), q("r"))
+        t = etree.SubElement(r, q("t"))
+        t.set(f"{{{XML_NS}}}space", "preserve")
+        t.text = line
+    start = etree.Element(q("commentRangeStart"))
+    start.set(q("id"), str(cid))
+    ppr = p.find(q("pPr"))
+    p.insert(p.index(ppr) + 1 if ppr is not None else 0, start)
+    end = etree.SubElement(p, q("commentRangeEnd"))
+    end.set(q("id"), str(cid))
+    ref = etree.SubElement(etree.SubElement(p, q("r")), q("commentReference"))
+    ref.set(q("id"), str(cid))
+    return cid
+
+
 def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dict[str, dict], author: str,
                  document: list[dict] | None = None) -> dict:
     """Собрать ответ. changes — правки разбора (to_dict, с полем revs), choices — {id: {"choice", "text"}},
@@ -149,6 +174,8 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
     paras = paragraphs(doc_root)  # один раз, до изменений: номера абзацев правок указывают сюда
     if comments_root is not None:
         comments_root = with_w14(comments_root)  # ответы в ветке: w14:paraId с объявленным пространством имён
+    max_cid = max([int(c.get(q("id"))) for c in comments_root.findall(q("comment")) if (c.get(q("id")) or "").isdigit()],
+                  default=0) if comments_root is not None else 0
     replies = Replies(doc_root, comments_root, ext_root, date) if comments_root is not None else None
 
     for ch in changes:
@@ -160,11 +187,23 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
             continue
         if choice not in CHOICES:
             continue
+        if ch.get("source") == "clause":
+            # положение первой версии: текста контрагента в рецензировании нет, ответ юриста — примечание к абзацу
+            note = (sel.get("text") or "").strip() or (CLAUSE_REJECT if choice == "reject" else "")
+            idx = ch.get("paragraph_index", -1)
+            if choice == "accept":
+                stats["accept"] += 1
+            elif note and comments_root is not None and 0 <= idx < len(paras):
+                max_cid = _add_comment(comments_root, paras[idx], note, author, date, max_cid)
+                stats[choice] += 1
+            else:
+                stats["без отметки"] += 1
+            continue
         text = sel.get("text") or ""  # как написал юрист: ведущий пробел отделяет вставку от текста перед ней
         els = [e for r in ch.get("revs") or [] for e in by_id.get(r, []) if e.getparent() is not None]
         if not els:
             # правка без отметки в рецензировании: текст контрагента становится нашей правкой (answer_silent)
-            silent = ch.get("source") in ("silent", "diff", "clause") and ch.get("rule_id") != "PARTY"  # clause — положение первой версии
+            silent = ch.get("source") in ("silent", "diff") and ch.get("rule_id") != "PARTY"
             if silent and (choice != "counter" or text.strip()):
                 writer = Writer(author, date, max_id)
                 done = apply_silent(paras, ch, choice, text, writer, document)
