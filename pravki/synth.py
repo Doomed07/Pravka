@@ -53,6 +53,24 @@ SERVICES = [
     (1, "8.2", "Изменения и дополнения к договору оформляются письменным соглашением сторон"),
 ]
 
+# Приложение № 1 к договору услуг: маркированный список и таблица (заголовок, пункты списка «item», строки таблицы «row»).
+# Метки пунктов и ячеек — только для генератора (find_clause); в разборе это «Приложение 1».
+SERVICES_APPENDIX = [
+    ("head", "Приложение № 1 к договору. Перечень и стоимость Услуг"),
+    ("item", "Разработка модуля учёта заявок."),
+    ("item", "Внедрение и настройка программного обеспечения."),
+    ("item", "Обучение сотрудников Заказчика работе с программным обеспечением."),
+    ("row", ["№", "Услуга", "Срок", "Стоимость, руб."]),
+    ("row", ["1", "Разработка модуля учёта заявок", "3 месяца", "700 000"]),
+    ("row", ["2", "Внедрение и настройка", "1 месяц", "300 000"]),
+    ("row", ["3", "Обучение сотрудников", "2 недели", "200 000"]),
+]
+APPENDIX_CLAUSE = "Приложение 1"
+# Наш комментарий в отправленной версии (он остаётся и в файле контрагента): правкой контрагента не считается.
+OUR_AUTHOR = "Альфа Софт (Петров П.)"
+OUR_COMMENTS = {"services": ("3.2", "Срок 5 рабочих дней — наше стандартное условие приёмки.")}
+APPENDICES = {"services": SERVICES_APPENDIX}
+
 RENT = [
     (0, "1", "Предмет договора"),
     (1, "1.1", "Арендодатель передаёт, а Арендатор принимает во временное владение и пользование нежилое помещение площадью 120 кв. м, расположенное по адресу: г. Москва, ул. Тверская, д. 1 (далее – Помещение)."),
@@ -166,7 +184,7 @@ SERVICES_EDITS = [
     EditSpec("pay7", "2.2", "replace", "10 рабочих дней", "7 рабочих дней", "порядок и сроки оплаты", True, "accept", "2.2"),
     EditSpec("date31", "3.1", "replace", "31.12.2026", "31.03.2027", "сроки исполнения", True, "review"),
     EditSpec("acc15", "3.2", "replace", "5 рабочих дней", "15 рабочих дней", "приёмка и качество", True, "reject"),
-    EditSpec("deemed", "3.3", "delete_para", topic="приёмка и качество", expect="reject"),
+    EditSpec("deemed", "3.3", "delete_para", topic="приёмка и качество", expect="reject", excl="3.3"),
     EditSpec("pen001", "4.1", "replace", "0,1%", "0,01%", "неустойка и штрафы", True, "reject"),
     EditSpec("pen05", "4.2", "replace", "0,1%", "0,5%", "неустойка и штрафы", True, "reject", "4.2"),
     EditSpec("pen005", "4.2", "replace", "0,1%", "0,05%", "неустойка и штрафы", True, "accept", "4.2"),
@@ -198,6 +216,14 @@ SERVICES_EDITS = [
     EditSpec("typo", "1.1", "replace", "разработке", "разроботке", "", False, "reject", excl="w1.1"),
     EditSpec("noun_form", "1.1", "replace", "разработке", "разработки", "", True, "review", excl="w1.1"),
     EditSpec("punct", "8.2", "append", new=".", topic="", important=False, expect="accept", excl="8.2p"),
+    # приложение: список услуг и таблица стоимости; замена пункта новой редакцией; ответ на наш комментарий
+    EditSpec("scope_add", "П1.3", "insert_item", new="Техническая поддержка программного обеспечения в течение 12 месяцев.",
+             topic="предмет договора", expect="review"),
+    EditSpec("scope_del", "П1.3", "delete_para", topic="предмет договора", expect="review", excl="П1.3"),
+    EditSpec("cell_price", "T1.1.3", "replace", "700 000", "500 000", "цена и сумма договора", True, "reject"),
+    EditSpec("replace33", "3.3", "replace_para", new="Услуги считаются принятыми только после подписания Акта Заказчиком.",
+             topic="приёмка и качество", expect="review", excl="3.3"),
+    EditSpec("reply32", "3.2", "comment", new="Не согласны: нужен срок 15 рабочих дней.", topic="приёмка и качество", expect="review"),
 ]
 
 RENT_EDITS = [
@@ -280,18 +306,31 @@ class GPara:
     segs: list[GSeg]
     heading: bool = False
     mark: str = ""
-    comment: int | None = None
-    plain: bool = False  # абзац без нумерации и стиля заголовка (преамбула)
+    comments: list[int] = field(default_factory=list)  # номера комментариев к абзацу (наши и контрагента)
+    plain: bool = False  # абзац без нумерации и стиля заголовка (преамбула, приложение)
+    bullet: bool = False  # пункт маркированного списка
+    cell: tuple[int, int] | None = None  # (строка, столбец) ячейки таблицы приложения
 
     def text(self) -> str:
         return "".join(s.text for s in self.segs if s.kind in ("equal", "ins"))
 
 
-def build_paragraphs(tpl, numbering: str, preamble: list[str] | None = None) -> list[GPara]:
+def build_paragraphs(tpl, numbering: str, preamble: list[str] | None = None, appendix=()) -> list[GPara]:
     out = [GPara(level=0, label="", segs=[GSeg("equal", t)], plain=True) for t in (preamble or [])]
     for level, label, text in tpl:
         body = text if numbering == "auto" else (f"{label}. {text}" if level == 0 else f"{label}. {text}")
         out.append(GPara(level=level, label=label, segs=[GSeg("equal", body)], heading=(level == 0)))
+    items = rows = 0
+    for kind, value in appendix:
+        if kind == "head":
+            out.append(GPara(level=0, label="П1", segs=[GSeg("equal", value)], plain=True))
+        elif kind == "item":
+            items += 1
+            out.append(GPara(level=0, label=f"П1.{items}", segs=[GSeg("equal", value)], plain=True, bullet=True))
+        else:
+            for col, text in enumerate(value):
+                out.append(GPara(level=0, label=f"T1.{rows}.{col}", segs=[GSeg("equal", text)], plain=True, cell=(rows, col)))
+            rows += 1
     return out
 
 
@@ -326,8 +365,29 @@ def apply_edit(paras: list[GPara], e: EditSpec, tracked: bool, numbering: str, c
         paras.insert(last + 1, gp)
         return {"clause": label, "kind": "para_insert", "before": "", "after": e.new}
 
+    if e.op == "insert_item":  # новый пункт списка приложения сразу после указанного
+        i = find_clause(paras, e.clause)
+        kind = "ins" if tracked else "equal"
+        paras.insert(i + 1, GPara(level=0, label=e.clause + "+", segs=[GSeg(kind, e.new)], plain=True, bullet=True,
+                                  mark="ins" if tracked else ""))
+        return {"clause": APPENDIX_CLAUSE, "kind": "para_insert", "before": "", "after": e.new}
+    if e.op == "replace_para":  # пункт заменён новой редакцией: прежний удалён, новый с тем же номером вставлен на его место
+        i = find_clause(paras, e.clause)
+        p = paras[i]
+        old_text = p.text()
+        body = e.new if numbering == "auto" else f"{e.clause}. {e.new}"
+        if tracked:
+            p.segs = [GSeg("del", x.text) for x in p.segs if x.kind != "ins"]
+            p.mark = "del"
+            paras.insert(i + 1, GPara(level=p.level, label=e.clause, segs=[GSeg("ins", body)], mark="ins"))
+        else:
+            p.segs = [GSeg("equal", body)]
+        before = old_text.split(". ", 1)[1] if numbering != "auto" and ". " in old_text else old_text
+        return {"clause": e.clause, "kind": "replace", "before": before, "after": e.new}
+
     i = find_clause(paras, e.clause)
     p = paras[i]
+    clause = APPENDIX_CLAUSE if p.label.startswith(("П1", "T1")) else e.clause
     if e.op == "delete_para":
         text = p.text()
         if tracked:
@@ -336,13 +396,13 @@ def apply_edit(paras: list[GPara], e: EditSpec, tracked: bool, numbering: str, c
         else:
             paras.pop(i)
         body = text
-        if numbering != "auto":
+        if numbering != "auto" and not p.plain:
             body = text.split(". ", 1)[1] if ". " in text else text
-        return {"clause": e.clause, "kind": "para_delete", "before": body, "after": ""}
+        return {"clause": clause, "kind": "para_delete", "before": body, "after": ""}
     if e.op == "comment":
         idx = len(comments)
         comments.append((AUTHOR, e.new))
-        p.comment = idx
+        p.comments.append(idx)
         return {"clause": e.clause, "kind": "comment", "before": "", "after": e.new}
     if e.op == "append":
         if tracked:
@@ -379,7 +439,7 @@ def apply_edit(paras: list[GPara], e: EditSpec, tracked: bool, numbering: str, c
             merged.append(GSeg(s.kind, s.text))
     p.segs = merged
     kind = "replace" if e.op == "replace" else "delete"
-    return {"clause": e.clause, "kind": kind, "before": e.old.strip(), "after": e.new.strip()}
+    return {"clause": clause, "kind": kind, "before": e.old.strip(), "after": e.new.strip()}
 
 
 # --------------------------------------------------------------------------------------
@@ -421,7 +481,11 @@ NUMBERING = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
 <w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2."/></w:lvl>
 </w:abstractNum>
+<w:abstractNum w:abstractNumId="1">
+<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/></w:lvl>
+</w:abstractNum>
 <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
 </w:numbering>"""
 
 
@@ -455,11 +519,14 @@ def _para_xml(p: GPara, ids: _Ids, rng: random.Random, numbering: str, noise: bo
         ppr += '<w:pStyle w:val="Heading1"/>'
     if numbering == "auto" and not p.plain:
         ppr += f'<w:numPr><w:ilvl w:val="{p.level}"/><w:numId w:val="1"/></w:numPr>'
+    if p.bullet:
+        ppr += '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr>'
     if p.mark:
         ppr += f'<w:rPr><w:{p.mark} w:id="{ids.next()}" w:author="{AUTHOR}" w:date="{DATE}"/></w:rPr>'
     body = ""
-    if p.comment is not None:
-        body += f'<w:commentRangeStart w:id="{p.comment}"/>'
+    for c in p.comments:
+        body += f'<w:commentRangeStart w:id="{c}"/>'
+
     for s in p.segs:
         if s.kind == "equal":
             for ch in _chunks(s.text, rng) if noise else [s.text]:
@@ -470,15 +537,34 @@ def _para_xml(p: GPara, ids: _Ids, rng: random.Random, numbering: str, noise: bo
             body += f'<w:ins w:id="{ids.next()}" w:author="{AUTHOR}" w:date="{DATE}"><w:r>{_t(s.text)}</w:r></w:ins>'
         else:
             body += f'<w:del w:id="{ids.next()}" w:author="{AUTHOR}" w:date="{DATE}"><w:r>{_t(s.text, True)}</w:r></w:del>'
-    if p.comment is not None:
-        body += f'<w:commentRangeEnd w:id="{p.comment}"/><w:r><w:commentReference w:id="{p.comment}"/></w:r>'
+    for c in p.comments:
+        body += f'<w:commentRangeEnd w:id="{c}"/><w:r><w:commentReference w:id="{c}"/></w:r>'
     return f"<w:p><w:pPr>{ppr}</w:pPr>{body}</w:p>"
+
+
+def _body_xml(paras: list[GPara], ids: _Ids, rng: random.Random, numbering: str, noise: bool) -> str:
+    """Абзацы и таблица приложения: подряд идущие ячейки собираются в w:tbl по строкам."""
+    out, row, rows = [], -1, []
+    for p in paras:
+        if p.cell is None:
+            if rows:
+                out.append("<w:tbl>" + "".join(f"<w:tr>{''.join(r)}</w:tr>" for r in rows) + "</w:tbl>")
+                rows, row = [], -1
+            out.append(_para_xml(p, ids, rng, numbering, noise))
+            continue
+        if p.cell[0] != row:
+            rows.append([])
+            row = p.cell[0]
+        rows[-1].append(f"<w:tc>{_para_xml(p, ids, rng, numbering, noise)}</w:tc>")
+    if rows:
+        out.append("<w:tbl>" + "".join(f"<w:tr>{''.join(r)}</w:tr>" for r in rows) + "</w:tbl>")
+    return "".join(out)
 
 
 def write_docx(path: str, paras: list[GPara], comments: list[tuple[str, str]], numbering: str, rng: random.Random,
                noise: bool = True) -> None:
     ids = _Ids()
-    body = "".join(_para_xml(p, ids, rng, numbering, noise) for p in paras)
+    body = _body_xml(paras, ids, rng, numbering, noise)
     if noise and rng.random() < 0.5:
         body = '<w:p><w:pPr/></w:p>' + body  # пустой абзац в начале, как часто бывает
     doc = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {W_NS}><w:body>{body}<w:sectPr/></w:body></w:document>'
@@ -514,24 +600,36 @@ def pick_edits(edits: list[EditSpec], rng: random.Random, p: float = 0.6) -> lis
 
 
 def generate_case(out_dir: str, template: str, seed: int, numbering: str | None = None, p: float = 0.6,
-                  silent_share: float = 0.25) -> dict:
+                  silent_share: float = 0.25, appendix: bool = True) -> dict:
+    """Пара учебных договоров. appendix=False — без приложения (список и таблица) и правок в нём: для проверок форматов,
+    в которых таблицу не построить (учебный odt из docx, PDF)."""
     rng = random.Random(seed)
     tpl, catalog = TEMPLATES[template]
     numbering = numbering or rng.choice(["auto", "manual"])
+    if not appendix:
+        catalog = [e for e in catalog if not e.clause.startswith(("П1", "T1"))]
     chosen = pick_edits(catalog, rng, p)
     if len(chosen) < 4:
         chosen = pick_edits(catalog, rng, 0.9)
     delivery = {e.key: ("silent" if (e.op != "comment" and rng.random() < silent_share) else "tracked") for e in chosen}
 
     pre = PREAMBLES.get(template)
-    base = build_paragraphs(tpl, numbering, pre)
-    tracked = build_paragraphs(tpl, numbering, pre)
-    clean = build_paragraphs(tpl, numbering, pre)
+    app = APPENDICES.get(template, ()) if appendix else ()
+    base = build_paragraphs(tpl, numbering, pre, app)
+    tracked = build_paragraphs(tpl, numbering, pre, app)
+    clean = build_paragraphs(tpl, numbering, pre, app)
+    c_base: list[tuple[str, str]] = []
     c_tracked: list[tuple[str, str]] = []
     c_clean: list[tuple[str, str]] = []
+    if template in OUR_COMMENTS:  # наш комментарий из отправленной версии остаётся и в файле контрагента
+        clause, text = OUR_COMMENTS[template]
+        for paras, comments in ((base, c_base), (tracked, c_tracked)):
+            paras[find_clause(paras, clause)].comments.append(len(comments))
+            comments.append((OUR_AUTHOR, text))
     truth_edits = []
     # применяем в порядке документа
     order = {lbl: i for i, (_, lbl, _) in enumerate(tpl)}
+    order.update({p.label: len(tpl) + i for i, p in enumerate(base) if p.label.startswith(("П1", "T1"))})
     for e in sorted(chosen, key=lambda x: (order.get(x.clause, 0), x.key)):
         d = delivery[e.key]
         info = apply_edit(tracked, e, tracked=(d == "tracked"), numbering=numbering, comments=c_tracked)
@@ -550,7 +648,7 @@ def generate_case(out_dir: str, template: str, seed: int, numbering: str | None 
         "clean": os.path.join(out_dir, "theirs_clean.docx"),
         "truth": os.path.join(out_dir, "truth.json"),
     }
-    write_docx(paths["base"], base, [], numbering, random.Random(seed + 1))
+    write_docx(paths["base"], base, c_base, numbering, random.Random(seed + 1))
     write_docx(paths["tracked"], tracked, c_tracked, numbering, random.Random(seed + 2))
     write_docx(paths["clean"], clean, [], numbering, random.Random(seed + 3))
     truth = {"template": template, "seed": seed, "numbering": numbering, "edits": truth_edits}

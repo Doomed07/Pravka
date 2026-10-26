@@ -98,17 +98,18 @@ def test_table_cells_keep_coordinates_and_empty_cells(tmp_path):
     theirs = make_docx(tmp_path / "theirs.docx", doc("500 000"))  # цену поменяли без отметки
     rv = review_files(str(theirs), str(base))
     cells = [d for d in rv.document if d["table"]]
-    assert len(cells) == 9  # 3 + 3 + 2 ячейки, включая пустую, и старое значение цены в её ячейке
+    assert len(cells) == 8  # 3 + 3 + 2 ячейки, включая пустую; старое значение цены — в той же ячейке
     assert {tuple(d["table"][:3]) for d in cells} == {(0, 0, 0), (0, 0, 1), (0, 0, 2), (0, 1, 0), (0, 1, 1), (0, 1, 2),
                                                       (0, 2, 0), (0, 2, 2)}
     itogo = next(d for d in cells if d["table"][1] == 2 and d["table"][2] == 0)
     assert itogo["table"][3] == 2  # объединённая ячейка шириной в два столбца
     price = [s for d in cells if d["table"][1] == 1 and d["table"][2] == 2 for s in d["segments"]]
-    # тихая правка цены видна в своей ячейке: было 475 000, стало 500 000
+    # тихая правка цены видна в своей ячейке: было 475 000, стало 500 000 (одна правка, а не удалённый и вставленный абзац)
     assert {(s["k"], s["t"]) for s in price} == {("silent_del", "475 000"), ("silent_ins", "500 000")}
+    assert [(c.kind, c.before, c.after) for c in rv.changes] == [("replace", "475 000", "500 000")]
     # таблица идёт одним куском: между её ячейками нет абзацев вне таблицы
     flags = [bool(d["table"]) for d in rv.document]
-    assert flags == [False] + [True] * 9 + [False]
+    assert flags == [False] + [True] * 8 + [False]
     outside = [d for d in rv.document if not d["table"]]
     assert all(d["table"] is None for d in outside) and len(outside) == 2
 

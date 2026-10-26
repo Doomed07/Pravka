@@ -50,6 +50,24 @@ class Review:
         }
 
 
+def _mark_cells(changes: list[Change], doc) -> None:
+    """Правке в ячейке таблицы — заголовок её столбца и текст строки: по ним классификатор узнаёт, о чём значение."""
+    cells = {}
+    for para in doc.paragraphs:
+        if para.table:
+            text = "".join(s.text for s in para.segments if s.kind in ("equal", "ins")).strip()
+            key = (para.table[0], para.table[1], para.table[2])
+            cells[key] = (cells[key] + " " + text).strip() if key in cells else text
+    for c in changes:
+        para = doc.paragraphs[c.paragraph_index] if 0 <= c.paragraph_index < len(doc.paragraphs) else None
+        if para is None or not para.table or c.kind == "comment":
+            continue
+        t, row, col = para.table[0], para.table[1], para.table[2]
+        if row > 0:
+            c.detail["cell_head"] = cells.get((t, 0, col), "")
+        c.detail["cell_row"] = " | ".join(v for (tt, rr, _), v in sorted(cells.items()) if tt == t and rr == row)
+
+
 def review_files(
     theirs_path: str,
     base_path: str | None = None,
@@ -124,6 +142,7 @@ def review_files(
             warnings.append(f"Найдено правок без отметки в рецензировании: {n_silent}. Проверьте их в первую очередь.")
 
     regular = [c for c in changes if c.topic != PARTY_TOPIC]
+    _mark_cells(regular, theirs)
     for c in regular:
         classify(c)
     mark_head_changes(regular, head_indices(theirs))

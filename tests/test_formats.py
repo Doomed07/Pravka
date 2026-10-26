@@ -28,7 +28,8 @@ def _key(rv, with_body=True):
 
 @pytest.mark.parametrize("tpl,seed", CASES)
 def test_odt_gives_the_same_review_as_docx(tmp_path, tpl, seed):
-    case = generate_case(str(tmp_path / "c"), tpl, seed)
+    # без приложения: учебный odt здесь собирается из абзацев docx без таблиц (таблицы odt проверяет tests/test_odt.py)
+    case = generate_case(str(tmp_path / "c"), tpl, seed, appendix=False)
     for variant in ("tracked", "clean"):  # с рецензированием и без: во втором все отличия найдены сравнением
         a = review_files(case["paths"][variant], case["paths"]["base"], _pb(tpl), side=side_config(case))
         theirs = odt_from_doc(tmp_path / f"{variant}.odt", read_docx(case["paths"][variant]))
@@ -40,7 +41,8 @@ def test_odt_gives_the_same_review_as_docx(tmp_path, tpl, seed):
 
 @pytest.mark.parametrize("tpl,seed", CASES)
 def test_pdf_gives_the_same_changes_as_docx_compared_to_our_docx(tmp_path, tpl, seed):
-    case = generate_case(str(tmp_path / "c"), tpl, seed)
+    # без приложения: в PDF таблица — просто строки, их абзацы не восстановить (известное ограничение, см. STATUS)
+    case = generate_case(str(tmp_path / "c"), tpl, seed, appendix=False)
     ref = review_files(case["paths"]["clean"], case["paths"]["base"], _pb(tpl), side=side_config(case))
     pdf = pdf_from_docx(tmp_path / "t.pdf", case["paths"]["clean"])
     got = review_files(str(pdf), case["paths"]["base"], _pb(tpl), side=side_config(case))

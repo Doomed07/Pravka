@@ -10,7 +10,7 @@ import re
 from collections import Counter
 
 from .classify import _known
-from .compare import _align, _our_rework, _pair_reworked, label_policy, new_ours, paired_views
+from .compare import _align, _our_rework, _pair_cells, _pair_reworked, label_policy, new_ours, paired_views
 from .docx_reader import view_paragraphs
 from .extract import _net_zero
 from .model import ANNOTATOR, Change, DocxDoc, Paragraph
@@ -166,6 +166,7 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
         pairs = _align([t for _, t in base_view], [t for _, t in their_view])
         if theirs.reworked:
             pairs = _pair_reworked(pairs, base_view, their_view, theirs.reworked, ours)
+        pairs = _pair_cells(pairs, base_view, their_view)
         for i, j in pairs:
             if j is not None:
                 tp, ttext = their_view[j]

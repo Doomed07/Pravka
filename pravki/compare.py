@@ -164,6 +164,40 @@ def paired_views(base: DocxDoc, theirs: DocxDoc, ours, mode: str = "rejected"):
     return view(base, strip_base), view(theirs, strip_theirs)
 
 
+def _pair_cells(pairs, base_view, their_view):
+    """Ячейки таблицы на одном месте (строка, столбец) — одна ячейка, даже если текст изменился целиком («700 000» →
+    «500 000» по словам непохожи). Среди несопоставленных абзацев между двумя сопоставленными связываем по порядку."""
+    out, run = [], []
+
+    def cell(view, k):
+        t = view[k][0].table
+        return (t[1], t[2]) if t else None
+
+    def flush():
+        used: set[int] = set()
+        matched: dict[int, int] = {}
+        for i, j in run:
+            if i is None and cell(their_view, j) is not None:
+                k = next((d for d, e in run if e is None and d not in used and cell(base_view, d) == cell(their_view, j)), None)
+                if k is not None:
+                    used.add(k)
+                    matched[j] = k
+        for i, j in run:
+            if j is None and i in used:
+                continue
+            out.append((matched[j], j) if i is None and j in matched else (i, j))
+        run.clear()
+
+    for x in pairs:
+        if x[0] is not None and x[1] is not None:
+            flush()
+            out.append(x)
+        else:
+            run.append(x)
+    flush()
+    return out
+
+
 def _our_rework(bp, tp, reworked, ours) -> bool:
     """Отличие абзаца — наша же переработка после отправки, а не «тихая» правка контрагента.
 
@@ -247,6 +281,7 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
     pairs = _align([t for _, t in base_view], [t for _, t in their_view])
     if theirs.reworked:
         pairs = _pair_reworked(pairs, base_view, their_view, theirs.reworked, ours)
+    pairs = _pair_cells(pairs, base_view, their_view)
     changes: list[Change] = []
     last_order = -1.0
     for i, j in pairs:
@@ -339,23 +374,39 @@ def merge_replaced(changes: list[Change], judge=None) -> list[Change]:
     объединение только меняет вид отчёта, а такая правка всегда уходит юристу (pipeline).
     """
     out: list[Change] = []
-    i = 0
-    while i < len(changes):
-        a = changes[i]
-        b = changes[i + 1] if i + 1 < len(changes) else None
+    done: set[int] = set()
+    for i, a in enumerate(changes):
+        if i in done:
+            continue
+        # следующая правка, не считая комментариев: комментарий к пункту стоит между удалённым и вставленным абзацем
+        k = next((k for k in range(i + 1, len(changes)) if changes[k].kind != "comment"), None)
+        b = changes[k] if k is not None and k not in done else None
         if b is not None and {a.kind, b.kind} == {"para_delete", "para_insert"} and a.source == b.source \
                 and a.author == b.author and a.detail.get("move") is None and b.detail.get("move") is None:
             d, n = (a, b) if a.kind == "para_delete" else (b, a)
             # номер свой у обоих абзацев (а не ближайший выше) и совпадает
-            same = bool(d.clause) and d.clause == n.clause and d.detail.get("labeled") and n.detail.get("labeled")
+            same = bool(d.clause) and d.detail.get("labeled") and n.detail.get("labeled") and (
+                d.clause == n.clause or _next_auto_label(d, n))
             by_model = not same and judge is not None and _same_topic(d.before, n.after) and judge(d.before, n.after)
             if same or by_model:
-                out.append(_replaced(d, n, by_model))
-                i += 2
+                merged = _replaced(d, n, by_model)
+                if same and d.clause != n.clause:
+                    merged.clause = d.clause  # автонумерация: после принятия правок у нового пункта номер прежнего
+                out.append(merged)
+                done.add(k)
                 continue
         out.append(a)
-        i += 1
     return out
+
+
+def _next_auto_label(d: Change, n: Change) -> bool:
+    """Автонумерация Word считает удалённый в рецензировании пункт, и вставленный сразу за ним получает следующий
+    номер (удалён 3.3, вставлен «3.4»): после принятия правок это тот же пункт 3.3."""
+    if d.source != "tracked" or n.paragraph_index != d.paragraph_index + 1:
+        return False
+    a, b = d.clause.rsplit(".", 1) if "." in d.clause else ("", d.clause), \
+        n.clause.rsplit(".", 1) if "." in n.clause else ("", n.clause)
+    return a[0] == b[0] and a[1].isdigit() and b[1].isdigit() and int(b[1]) == int(a[1]) + 1
 
 
 def compare_versions(base: DocxDoc | None, theirs: DocxDoc, our_authors: list[str] | None = None,

@@ -179,15 +179,24 @@ def _lead_in(change: Change, words: int = 4) -> str:
     return " ".join(out)
 
 
+# Название приложения или раздела с перечнем того, что входит в договор: «Перечень и стоимость Услуг», «Спецификация».
+_SCOPE_HEAD = re.compile(r"перечень|состав\s+(?:услуг|работ)|объ[её]м\s+(?:услуг|работ)|спецификаци|техническ\w+\s+задани",
+                         re.IGNORECASE)
+
+
 def topic_scores(change: Change) -> list[tuple[float, Topic]]:
     changed = _no_form(f"{change.before} {change.after}")
     ctx = _no_form(change.context or change.context_after)
+    # ячейка таблицы: о чём значение, говорят заголовок столбца и строка («Стоимость, руб.» → «700 000» — цена)
+    cell_head, cell_row = change.detail.get("cell_head", ""), change.detail.get("cell_row", "")
+    if cell_row:
+        ctx = f"{ctx} {_no_form(cell_row)}"
     focus = _no_form(_focus(change))
     # правка в числе, которая сама ни на какую тему не указывает («10 рабочих дней» → «45 календарных дней»,
     # «20%» → «0%»): слова прямо перед ней весят почти как сама правка
     lead = ""
     if re.search(r"\d", changed) and not any(r.search(changed) for _, regs in _COMPILED for r in regs):
-        lead = _no_form(_lead_in(change))
+        lead = _no_form(f"{_lead_in(change)} {cell_head}".strip())
     first_pos: dict[str, int] = {}
     parts_by_topic: dict[str, list[float]] = {}
     for topic, regs in _COMPILED:
@@ -428,6 +437,10 @@ def classify(change: Change) -> Change:
         change.topic = topic.name
         change.areas = list(topic.areas)
         base = topic.base
+    elif _SCOPE_HEAD.search(change.heading or ""):
+        # пункт перечня услуг, работ или товаров в приложении: своих слов темы у него нет, тема — предмет договора
+        topic = next(t for t, _ in _COMPILED if t.name == "предмет договора")
+        change.topic, change.areas, base = topic.name, list(topic.areas), topic.base
     else:
         change.topic = OTHER
         change.areas = [LEGAL]
