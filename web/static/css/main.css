@@ -2746,3 +2746,47 @@ select.form__input {
 .card-box__del {
   justify-self: start;
 }
+
+/* Правка текста в ячейке таблицы */
+.doc-table__p {
+  position: relative;
+  margin: 0;
+}
+
+.doc-table__p .doc__pen {
+  position: static;
+  display: inline-block;
+  margin: 0 0 0 6px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.doc-table__p:hover .doc__pen,
+.doc-table__p .doc__pen:focus-visible {
+  opacity: 1;
+}
+
+.doc-table__p.doc__text--edited {
+  background: var(--tint);
+  border-left: 0;
+  padding: 0;
+}
+
+.doc-table__p.is-editing > .doc__body,
+.doc-table__p.is-editing > .doc__pen,
+.doc-table__p.is-editing > .doc__mark {
+  display: none;
+}
+
+.doc-table__p .doc__area {
+  min-width: 140px;
+}
+
+.doc-table__p.doc__text--edited .doc__mark {
+  display: block;
+  width: max-content;
+  margin: 4px 0 0;
+  padding: 0 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}

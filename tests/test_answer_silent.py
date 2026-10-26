@@ -408,3 +408,20 @@ def test_comment_with_reasons_can_accompany_a_deleted_paragraph(tmp_path):
     accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip() and "Правки" not in t]
     assert accepted == ["1.1 Первый пункт.", "1.3 Последний пункт."]
     assert z.read("word/document.xml").decode().count("commentReference") >= 1
+
+
+def test_text_in_a_table_cell_is_edited_by_tracked_changes(tmp_path):
+    """Правка текста в ячейке таблицы: наша вставка и удаление в рецензировании внутри ячейки, остальные ячейки не тронуты."""
+    cell = lambda text: f"<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{p(r(text))}</w:tc>"
+    table = f"<w:tbl><w:tr>{cell('Участие в форуме')}{cell('1')}{cell('475 000')}</w:tr></w:tbl>"
+    body = p(r("1.2 Перечень услуг")) + table + p(r("Следующий абзац."))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    idx = next(d["index"] for d in document if d.get("table") and "475" in "".join(s["t"] for s in d["segments"]))
+    out = str(tmp_path / "a.docx")
+    stats = build_answer(src, out, [], {f"P{idx:03d}": {"choice": "edit", "text": "450 000"}}, AUTHOR, document)
+    assert stats["edit"] == 1 and stats["без отметки"] == 0
+    doc = read_docx(out)
+    assert ("del", "475") in _ours(doc) and ("ins", "450") in _ours(doc)
+    accepted = [t for _, t in view_paragraphs(doc, "accepted", set()) if t.strip()]
+    assert accepted == ["1.2 Перечень услуг", "Участие в форуме", "1", "450 000", "Следующий абзац."]

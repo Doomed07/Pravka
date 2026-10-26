@@ -624,6 +624,16 @@ function row(para, i, total, byID, order, shown) {
     </div>`;
 }
 
+// Абзац в ячейке таблицы: текст правится так же, как обычный абзац (кнопки «Удалить» и «Добавить» для ячейки не нужны:
+// в ячейке всегда должен остаться абзац)
+function cellPara(p) {
+  const edit = editable(p) ? html` data-edit="${editKey(p.index)}" data-orig="${plain(p)}" data-cell="1"` : '';
+  const mine = edit ? CHOICES.get(editKey(p.index)) : null;
+  const edited = mine && mine.choice === 'edit';
+  return html`
+        <div class="doc-table__p${edited ? ' doc__text--edited' : ''}" id="p-${p.index}" data-index="${p.index}" ${p.changes[0] ? html`data-change="${p.changes[0]}"` : ''}${edit}>${p.list === 'bullet' ? '• ' : ''}${p.label ? `${p.label} ` : ''}<span class="doc__body">${edited ? mine.text : p.segments.map(segment)}</span>${edit ? html`<button class="doc__pen" type="button" aria-label="Править текст ячейки" title="Править текст (или дважды щёлкните по тексту)">Править</button><span class="doc__mark">изменено вами</span>` : ''}${partyComments(p.comments)}${commentBlock(p)}</div>`;
+}
+
 // Таблица из Word собирается обратно по координатам ячеек (table = [номер, строка, столбец, ширина]):
 // один блок слева — вся таблица, справа — заметки ко всем её правкам.
 function tableRow(paras, i, total, byID, order, shown) {
@@ -648,8 +658,7 @@ function tableRow(paras, i, total, byID, order, shown) {
     const cells = rows.get(r);
     return html`<tr>${[...cells.keys()].sort((a, b) => a - b).map((c) => {
       const cell = cells.get(c);
-      return html`<td${cell.span > 1 ? html` colspan="${cell.span}"` : ''}>${cell.paras.map((p) => html`
-        <p class="doc-table__p" id="p-${p.index}" ${p.changes[0] ? html`data-change="${p.changes[0]}"` : ''}>${p.list === 'bullet' ? '• ' : ''}${p.label ? `${p.label} ` : ''}${p.segments.map(segment)}${partyComments(p.comments)}</p>`)}</td>`;
+      return html`<td${cell.span > 1 ? html` colspan="${cell.span}"` : ''}>${cell.paras.map((p) => cellPara(p))}</td>`;
     })}</tr>`;
   });
   return html`
@@ -1056,8 +1065,8 @@ function wireEditing(id) {
         <button class="button button--cta button--small" type="button" data-act="save">Сохранить</button>
         <button class="button button--ghost button--small" type="button" data-act="cancel">Отмена</button>
         ${saved ? html`<button class="button button--ghost button--small" type="button" data-act="reset">Вернуть исходный</button>` : ''}
-        <button class="button button--ghost button--small" type="button" data-act="delete">Удалить абзац</button>
-        <button class="button button--ghost button--small" type="button" data-act="add">Добавить абзац после</button>
+        ${box.dataset.cell ? '' : html`<button class="button button--ghost button--small" type="button" data-act="delete">Удалить абзац</button>
+        <button class="button button--ghost button--small" type="button" data-act="add">Добавить абзац после</button>`}
         <button class="button button--ghost button--small" type="button" data-act="note">Комментарий</button>
         <span class="doc__editstatus" role="status"></span>
       </div>`);
@@ -1108,7 +1117,7 @@ function wireEditing(id) {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ed.querySelector('[data-act="save"]').click();
     });
   };
-  doc.querySelectorAll('.doc__text[data-edit]').forEach((box) => {
+  doc.querySelectorAll('[data-edit]').forEach((box) => {
     box.dataset.html = box.querySelector('.doc__body').innerHTML; // исходный вид, если правку снимут
     box.querySelector('.doc__pen').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1117,7 +1126,7 @@ function wireEditing(id) {
     box.querySelector('.doc__body').addEventListener('dblclick', () => open(box));
   });
   // исходный вид абзаца — до подстановки правки юриста
-  doc.querySelectorAll('.doc__text--edited[data-edit]').forEach((box) => {
+  doc.querySelectorAll('[data-edit].doc__text--edited').forEach((box) => {
     box.dataset.html = box.dataset.orig.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   });
 }
