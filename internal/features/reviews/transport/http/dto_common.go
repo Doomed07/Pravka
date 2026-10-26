@@ -271,6 +271,7 @@ type RoundLinkDTO struct {
 	PastAfter    string `json:"past_after"`
 	Decision     string `json:"decision"`
 	DecisionText string `json:"decision_text"`
+	PastRemark   bool   `json:"past_remark"`
 }
 
 type RoundClosedDTO struct {
@@ -299,7 +300,7 @@ func reviewRoundsDTOFromDomain(v core_domain.ReviewRounds) ReviewRoundsDTO {
 	for i, l := range v.Comparison.Links {
 		out.Links[i] = RoundLinkDTO{ChangeID: l.ChangeID, Relation: l.Relation, Round: l.Round, ReviewID: l.ReviewID,
 			PastChangeID: l.PastChangeID, PastBefore: l.PastBefore, PastAfter: l.PastAfter, Decision: l.Decision,
-			DecisionText: l.DecisionText}
+			DecisionText: l.DecisionText, PastRemark: l.PastRemark}
 	}
 	for i, c := range v.Comparison.Closed {
 		out.Closed[i] = RoundClosedDTO{Round: c.Round, ReviewID: c.ReviewID, ChangeID: c.ChangeID, Clause: c.Clause, Topic: c.Topic,

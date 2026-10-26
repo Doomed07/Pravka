@@ -183,12 +183,17 @@ function replyBlock(ch) {
 const LINKS = new Map();
 let ROUNDS = null;
 
+const YOU_DID = { accept: 'приняли', reject: 'отклонили', counter: 'предложили встречную редакцию', reply: 'ответили' };
+
 function roundMark(ch) {
   const l = LINKS.get(ch.id);
   if (!l || l.relation === 'new') return '';
   const past = `/reviews/${l.review_id}#c-${l.past_change_id}`;
-  const decided = l.decision ? ` · вы ${PAST_CHOICE[l.decision] || l.decision}` : '';
+  const decided = l.decision ? ` · вы ${YOU_DID[l.decision] || l.decision}` : '';
   const text = l.decision === 'counter' && l.decision_text ? html` — «${short(l.decision_text, 120)}»` : '';
+  if (l.past_remark) {
+    return html`<p class="round-mark round-mark--returned"><b>Пункт, по которому было ваше замечание</b> · <a href="${past}">раунд ${l.round}</a>${decided}${text}</p>`;
+  }
   return l.relation === 'repeat'
     ? html`<p class="round-mark"><b>Повторная правка</b> · <a href="${past}">раунд ${l.round}</a>${decided}${text}</p>`
     : html`<p class="round-mark round-mark--returned"><b>Контрагент вернулся к пункту</b> · в <a href="${past}">раунде ${l.round}</a> было «${short(l.past_before, 50) || '—'}» → «${short(l.past_after, 50) || '—'}»${decided}${text}</p>`;
@@ -449,6 +454,7 @@ function styled(s, inner) {
 
 // Лишние пробелы («пять  тысяч»): в Word их убирает наша правка, на сайте место подсвечено.
 function gaps(s) {
+  if (s.ng) return s.t;
   const parts = s.t.split(/( {2,})/);
   if (parts.length === 1) return s.t;
   return parts.map((x, i) => (i % 2 ? html`<mark class="doc__gap" title="Лишние пробелы убраны">${' '}</mark>` : x));
@@ -551,6 +557,18 @@ function joinBroken(doc) {
 // Точка посреди предложения («право.   отказаться»): движок отдаёт позиции точек (stray_dots), сайт их подсвечивает, а в
 // Word точка убирается нашей правкой. Решение «не исправлять» — choice reject у D<абзац>.
 const dotKey = (index) => 'D' + String(index).padStart(3, '0');
+
+// Строка, где пробелы выравнивают части («г. Москва        01.10.2026»): лишними их не считаем (как unified.alignment_line)
+const isAlignment = (t) => {
+  const s = t.trim();
+  if (/ {20,}/.test(s)) return true;
+  const m = s.match(/ {4,}(\S)/);
+  return !!m && s.replace(/ /g, '').length < 60 && m[1] === m[1].toUpperCase();
+};
+
+function keepAlignment(doc) {
+  return doc.map((p) => (isAlignment(p.segments.map((s) => s.t).join('')) ? { ...p, segments: p.segments.map((s) => ({ ...s, ng: true })) } : p));
+}
 
 function markDots(doc) {
   return doc.map((p) => {
@@ -683,7 +701,7 @@ function blocks(doc) {
 }
 
 function documentView(doc, changes, order) {
-  doc = markDots(joinBroken(doc));
+  doc = markDots(joinBroken(keepAlignment(doc)));
   const byID = new Map(changes.map((c) => [c.id, c]));
   const placed = new Set(doc.flatMap((p) => p.changes));
   const orphans = changes.filter((c) => !placed.has(c.id));

@@ -99,11 +99,15 @@ func TestSummarizeRound_ClauseRemarksOfFirstVersion(t *testing.T) {
 	}
 }
 
-func TestParseRoundChanges_SkipsRemarksOfFirstVersion(t *testing.T) {
+func TestParseRoundChanges_MarksRemarksOfFirstVersion(t *testing.T) {
 	got, err := ParseRoundChanges([]byte(`[
 		{"id":"E001","source":"clause","kind":"para_insert","topic":"неустойка и штрафы","after":"Неустойка 1%","materiality":"высокая"},
 		{"id":"E002","source":"tracked","kind":"replace","topic":"неустойка и штрафы","before":"0,1%","after":"1%","materiality":"высокая"}]`))
-	if err != nil || len(got) != 1 || got[0].ID != "E002" {
-		t.Errorf("в раундах сравниваются только правки контрагента: %+v, %v", got, err)
+	// замечание остаётся с пометкой Remark (по нему вспоминается ваше решение), но правкой раунда не считается
+	if err != nil || len(got) != 2 || !got[0].Remark || got[1].Remark {
+		t.Fatalf("замечание помечено, правка контрагента — нет: %+v, %v", got, err)
+	}
+	if cmp := CompareRounds(got, nil); len(cmp.Links) != 1 || cmp.Links[0].ChangeID != "E002" {
+		t.Errorf("в раундах сравниваются только правки контрагента: %+v", cmp.Links)
 	}
 }

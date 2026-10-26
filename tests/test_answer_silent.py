@@ -425,3 +425,18 @@ def test_text_in_a_table_cell_is_edited_by_tracked_changes(tmp_path):
     assert ("del", "475") in _ours(doc) and ("ins", "450") in _ours(doc)
     accepted = [t for _, t in view_paragraphs(doc, "accepted", set()) if t.strip()]
     assert accepted == ["1.2 Перечень услуг", "Участие в форуме", "1", "450 000", "Следующий абзац."]
+
+
+def test_spaces_that_align_a_line_are_not_extra(tmp_path):
+    """«г. Москва            01.10.2026»: пробелы выравнивают строку по ширине — не лишние, не трогаем."""
+    from pravki.unified import alignment_line
+    assert alignment_line("Исполнитель:          Заказчик:") and alignment_line("г. Москва      «25» марта 2026 г.")
+    assert not alignment_line("2.2 Участник имеет право.            отказаться от участия.")  # ошибка, а не выравнивание
+    body = p(r("г. Москва" + " " * 60 + "01.10.2026")) + p(r("Цена пять  тысяч рублей, оплата в течение десяти дней со дня подписания акта."))
+    src = str(make_docx(tmp_path / "t.docx", body))
+    document = build_unified(None, read_docx(src), set(), [])
+    assert [d["index"] for d in document if d.get("extra_spaces")] == [1]
+    stats = build_answer(src, str(tmp_path / "a.docx"), [], {}, AUTHOR, document)
+    assert stats["spaces"] == 1
+    accepted = [t for _, t in view_paragraphs(read_docx(str(tmp_path / "a.docx")), "accepted", set()) if t.strip()]
+    assert accepted[0] == "г. Москва" + " " * 60 + "01.10.2026"

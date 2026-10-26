@@ -282,6 +282,17 @@ def mark_broken_paragraphs(out: list[dict]) -> int:
 _SPACES = re.compile(" {2,}")
 
 
+def alignment_line(text: str) -> bool:
+    """Строка, где пробелы выравнивают части по ширине страницы («г. Москва          01.10.2026», строка подписей):
+    короткая по буквам и с длинной серией пробелов. Такие пробелы не лишние — их не трогаем."""
+    t = text.strip()
+    if re.search(" {20,}", t):
+        return True  # такая длинная серия — только чтобы отодвинуть текст к правому краю
+    m = re.search(r" {4,}(\S)", t)
+    # короткая строка, и после пробелов не продолжение фразы со строчной буквы («право.      отказаться» — ошибка)
+    return m is not None and len(t.replace(" ", "")) < 60 and not m.group(1).islower()
+
+
 def mark_extra_spaces(out: list[dict]) -> int:
     """Лишние пробелы внутри абзаца («пять  тысяч», «право.            отказаться»): extra_spaces — сколько таких мест.
     Только абзацы без правок в тексте: в Word лишние пробелы убираются нашей правкой, на сайте место подсвечено."""
@@ -289,7 +300,8 @@ def mark_extra_spaces(out: list[dict]) -> int:
     for p in out:
         if p["index"] < 0 or any(x["k"] != "equal" for x in p["segments"]):
             continue
-        found = len(_SPACES.findall("".join(x["t"] for x in p["segments"]).strip()))
+        text = "".join(x["t"] for x in p["segments"])
+        found = 0 if alignment_line(text) else len(_SPACES.findall(text.strip()))
         if found:
             p["extra_spaces"] = found
             n += found

@@ -378,8 +378,11 @@ def collapse_spaces(p, w: Writer) -> int:
     правками в тексте не трогается. Возвращает число серий."""
     if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in p.iter()):
         return 0
+    from .unified import alignment_line
     _explode(p)
     full = "".join(t for _, _, t in _nodes(p))
+    if alignment_line(full):
+        return 0  # пробелы выравнивают строку («г. Москва      01.10.2026»)
     spans = [(m.start() + 1, m.end()) for m in re.finditer(" {2,}", full.rstrip()) if m.start() > 0 or full[:m.start()].strip()]
     done = 0
     for a, b in reversed(spans):
