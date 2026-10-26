@@ -402,6 +402,21 @@ def agreement(text: str) -> str:
     return AGREED_IF if _CONDITION.search(t) else AGREED
 
 
+# Слова, от которых зависит, кто, когда и насколько обязан: сторона, «обязан/вправе», «не», «только», «и/или» (_sensitive), а также
+# границы срока («до» → «с момента», «не позднее» → «не ранее»). Правка в таких словах важная, даже если тема не определилась.
+_BOUNDARY_WORDS = {"до", "с", "со", "после", "позднее", "ранее", "позже", "раньше", "свыше", "более", "менее", "момента"}
+
+
+def key_words(change: Change) -> list[str]:
+    """Слова условия, которые правка убирает или добавляет (см. _sensitive, _BOUNDARY_WORDS); для правок внутри абзаца."""
+    if change.kind not in ("replace", "insert", "delete"):
+        return []
+    was = re.findall(r"[^\W\d_]+", (change.before or "").lower())
+    now = re.findall(r"[^\W\d_]+", (change.after or "").lower())
+    changed = [w for w in was if w not in now] + [w for w in now if w not in was]
+    return sorted({w for w in changed if _sensitive(w) or w in _BOUNDARY_WORDS})
+
+
 def classify(change: Change) -> Change:
     scores = topic_scores(change)
     if change.kind == "comment":
@@ -439,6 +454,10 @@ def classify(change: Change) -> Change:
         level = _raise(level)
     if change.kind in ("para_insert", "para_delete") and change.topic == OTHER:
         level = "средняя"
+    words = key_words(change)
+    if words and level != "высокая":
+        level = "высокая"
+        change.notes.append("Правка в словах, от которых зависит, кто, когда и насколько обязан: " + ", ".join(words))
     if change.kind == "comment":
         level = "средняя" if base != "низкая" else "низкая"
         agreed = agreement(change.after)

@@ -80,3 +80,20 @@ def test_clause_number_in_answer_is_not_an_invented_number():
     ch = Change(kind="replace", source="tracked", clause="2.1", before="1 200 000", after="1 000 000",
                 context_after="Стоимость Услуг составляет 1 000 000 рублей.")
     assert check_output("В п. 2.1 цена снижена с 1 200 000 до 1 000 000 рублей.", ch, []) is None
+
+
+def test_deletion_described_with_new_text_is_rejected():
+    # удалено ограничение ответственности; соседняя фраза про упущенную выгоду была и раньше — модель выдала её за новую
+    ch = Change(kind="delete", source="tracked", clause="4.3", before="Ответственность ограничена ценой услуг.",
+                context="Ответственность ограничена ценой услуг. Упущенная выгода не возмещается.",
+                context_after="Упущенная выгода не возмещается.")
+    assert check_output("Удалено ограничение ответственности. Вместо этого добавлено, что упущенная выгода не возмещается.", ch, [])
+    assert check_output("Удалено ограничение ответственности. Теперь указано, что упущенная выгода не возмещается.", ch, [])
+    assert check_output("Контрагент удалил ограничение ответственности ценой услуг.", ch, []) is None
+
+
+def test_comment_described_as_done_edit_is_rejected():
+    ch = Change(kind="comment", source="tracked", clause="4.3", before="Ответственность ограничена ценой услуг.",
+                after="Просим исключить это положение.", context="Ответственность ограничена ценой услуг.")
+    assert check_output("Контрагент удалил из договора пункт об ограничении ответственности.", ch, [])
+    assert check_output("Контрагент просит исключить ограничение ответственности ценой услуг.", ch, []) is None
