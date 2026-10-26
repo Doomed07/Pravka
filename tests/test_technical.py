@@ -100,3 +100,20 @@ def test_two_real_words_or_unknown_words_are_not_typos():
 def test_role_word_and_noun_endings_are_not_typos():
     for before, after in [("Заказчика", "Заказчику"), ("услуги", "услуг"), ("оплаты", "оплате")]:
         assert _ch(before, after).materiality != "техническая", (before, after)
+
+
+def test_edit_in_key_condition_words_is_important():
+    # кто обязан, граница срока, «только», сторона в другом падеже: тема может не определиться, но правка важная
+    from pravki.classify import classify
+    from pravki.model import Change
+    cases = [("обязан", "вправе", "Исполнитель обязан уведомить Заказчика о приостановке."),
+             ("не позднее", "не ранее", "Поставка осуществляется не позднее 5 дней с даты заявки."),
+             ("до момента", "с момента", "Риск гибели Товара несёт Поставщик до момента передачи."),
+             ("только в письменной форме", "в письменной форме", "Изменения действительны только в письменной форме."),
+             ("Заказчика", "Заказчику", "Исполнитель передаёт документы представителю Заказчика.")]
+    for before, after, ctx in cases:
+        ch = classify(Change(kind="replace", before=before, after=after, context=ctx, context_after=ctx.replace(before, after, 1)))
+        assert ch.materiality == "высокая", (before, after, ch.materiality)
+    plain = classify(Change(kind="replace", before="о нижеследующем", after="о следующем",
+                            context="Стороны договорились о нижеследующем:", context_after="Стороны договорились о следующем:"))
+    assert plain.materiality != "высокая"

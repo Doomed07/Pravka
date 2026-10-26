@@ -119,6 +119,13 @@ _ARTICLE = re.compile(r"(?:ст\.|статьи|статья|статье)\s*\d+(
 # Направление правки: удаление описано как удаление, вставка — как вставка (а не «условия нет в текущей редакции»).
 _SAYS_REMOVED = re.compile(r"удал|исключ|убра|убир|снят|снима|отказ|отмен|вычеркн", re.IGNORECASE)
 _SAYS_ADDED = re.compile(r"добав|включ|введ|ввод|дополн|появ|предусм|устан|вставл", re.IGNORECASE)
+# Удаление описано как появление нового текста («вместо этого добавлено…», «теперь указано…»): модель выдаёт соседний
+# прежний текст за новый. Комментарий описан как сделанная правка («контрагент удалил пункт»), а он только просит.
+_SAYS_NEW = re.compile(r"вместо (?:этого|него|неё|нее)|теперь (?:указано|предусмотрено|установлено)|добавлен|добавил|"
+                       r"включен|включён|включил|введен|введён|ввёл|ввел", re.IGNORECASE)
+_SAYS_DONE = re.compile(r"\b(?:удалил[аио]?|удален[аоы]?|удалён|исключил[аио]?|исключен[аоы]?|исключён|убрал[аио]?|убран[аоы]?|"
+                        r"заменил[аио]?|заменен[аоы]?|заменён|добавил[аио]?|добавлен[аоы]?|изменил[аио]?|изменен[аоы]?|изменён)\b",
+                        re.IGNORECASE)
 _REMOVALS = ("delete", "para_delete")
 _ADDITIONS = ("insert", "para_insert")
 
@@ -167,6 +174,10 @@ def check_output(text: str, ch: Change, allowed_norms: list[str], neighbours=())
         return "удаление не описано как удаление"
     if ch.kind in _ADDITIONS and ch.source != "clause" and not ch.detail.get("replaced_para") and not _SAYS_ADDED.search(text):
         return "вставка не описана как добавление"
+    if ch.kind in _REMOVALS and not ch.detail.get("replaced_para") and _SAYS_NEW.search(text):
+        return "у удаления описан новый текст, которого контрагент не добавлял"
+    if ch.kind == "comment" and _SAYS_DONE.search(text):
+        return "комментарий описан как сделанная правка, а контрагент только пишет о ней"
     own = " ".join([ch.before, ch.after, ch.context, ch.context_after, ch.explanation, ch.suggested, ch.escalate_to,
                     ch.action, ch.rule_title, ch.topic, ch.clause])
     for rx in _AUTHORITIES:
