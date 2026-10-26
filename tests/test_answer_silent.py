@@ -440,3 +440,29 @@ def test_spaces_that_align_a_line_are_not_extra(tmp_path):
     assert stats["spaces"] == 1
     accepted = [t for _, t in view_paragraphs(read_docx(str(tmp_path / "a.docx")), "accepted", set()) if t.strip()]
     assert accepted[0] == "г. Москва" + " " * 60 + "01.10.2026"
+
+
+def test_table_row_deleted_and_added_on_the_site(tmp_path):
+    """Строку таблицы удаляют (R<первый абзац строки>, reject) и добавляют после (N<…>, edit, ячейки через табуляцию):
+    в Word — строка помечена удалённой / вставленной, текст ячеек — нашими правками. Правки в удалённой строке не делаются."""
+    import zipfile
+    from lxml import etree
+    cell = lambda text: f"<w:tc><w:tcPr><w:tcW w:w=\"2000\" w:type=\"dxa\"/></w:tcPr>{p(r(text))}</w:tc>"
+    row = lambda *texts: "<w:tr>" + "".join(cell(t) for t in texts) + "</w:tr>"
+    table = "<w:tbl>" + row("№", "Услуга", "Цена") + row("1", "Участие в форуме", "475  000") + row("2", "Стенд", "100 000") + "</w:tbl>"
+    src = str(make_docx(tmp_path / "t.docx", p(r("Перечень услуг")) + table + p(r("Конец."))))
+    document = build_unified(None, read_docx(src), set(), [])
+    first = {d["table"][1]: d["index"] for d in reversed(document) if d.get("table")}  # строка → её первый абзац
+    out = str(tmp_path / "a.docx")
+    choices = {f"R{first[2]:03d}": {"choice": "reject"}, f"N{first[1]:03d}": {"choice": "edit", "text": "1а\tПроживание\t50 000"},
+               f"P{first[1] + 2:03d}": {"choice": "edit", "text": "450 000"}}
+    stats = build_answer(src, out, [], choices, AUTHOR, document)
+    assert stats["rows_deleted"] == 1 and stats["rows_added"] == 1 and stats["edit"] == 1 and stats["без отметки"] == 0
+    accepted = [t for _, t in view_paragraphs(read_docx(out), "accepted", set()) if t.strip()]
+    assert accepted == ["Перечень услуг", "№", "Услуга", "Цена", "1", "Участие в форуме", "450 000", "1а", "Проживание", "50 000", "Конец."]
+    rejected = [t for _, t in view_paragraphs(read_docx(out), "rejected", set()) if t.strip()]
+    assert "Стенд" in rejected and "Проживание" not in rejected
+    root = etree.fromstring(zipfile.ZipFile(out).read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    trs = root.findall(".//w:tr", ns)
+    assert len(trs) == 4 and trs[2].find("w:trPr/w:ins", ns) is not None and trs[3].find("w:trPr/w:del", ns) is not None

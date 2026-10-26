@@ -23,7 +23,7 @@ from lxml import etree
 
 from .docx_reader import XML_NS, DocxError, _read_part, q
 from .answer_replies import EXT_PART, REL_NS, Replies, with_w14
-from .answer_silent import Writer, _explode, _nodes, _unique, apply_edit, apply_silent, collapse_spaces, delete_paragraph, insert_paragraphs_after, paragraphs, remove_dots
+from .answer_silent import Writer, _explode, _nodes, _unique, apply_edit, apply_silent, collapse_spaces, delete_paragraph, delete_row, insert_paragraphs_after, insert_row_after, paragraphs, remove_dots, row_of
 from .model import ANNOTATOR
 from .unified import mark_extra_spaces
 
@@ -164,7 +164,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         rels_root = _read_part(zin, "word/_rels/document.xml.rels")
         raw = {n: zin.read(n) for n in names}
 
-    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "spaces": 0, "dots": 0, "delete": 0, "add": 0, "comment": 0, "без отметки": 0, "наших примечаний убрано": 0}
+    stats = {"accept": 0, "reject": 0, "counter": 0, "reply": 0, "edit": 0, "join": 0, "spaces": 0, "dots": 0, "delete": 0, "add": 0, "comment": 0, "rows_deleted": 0, "rows_added": 0, "без отметки": 0, "наших примечаний убрано": 0}
     stats["наших примечаний убрано"] = _strip_annotations(doc_root, comments_root)
     by_id: dict[str, list] = {}
     max_id = 0
@@ -189,6 +189,16 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
     gone = {i for i in range(len(paras)) if (choices.get(f"X{i:03d}") or {}).get("choice") == "reject"}
     removed = gone | {i + 1 for i in gone if i in joins}
     joins -= gone
+    # строки таблиц, удалённые юристом (R<первый абзац строки>, reject): в их абзацах другие правки не делаются
+    at = {id(p): i for i, p in enumerate(paras)}
+    dead_rows = []
+    for key, sel in choices.items():
+        if key.startswith("R") and key[1:].isdigit() and sel.get("choice") == "reject" and int(key[1:]) < len(paras):
+            tr = row_of(paras[int(key[1:])])
+            if tr is not None and tr not in dead_rows:
+                dead_rows.append(tr)
+    in_dead = {at[id(p)] for tr in dead_rows for p in tr.iter(q("p")) if id(p) in at}
+    removed |= in_dead
 
     for ch in changes:
         sel = choices.get(ch.get("id", "")) or {}
@@ -315,7 +325,7 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
             stats["dots"] += 1
 
     # удаление абзацев и новые абзацы, сделанные юристом на сайте
-    for idx in sorted(removed):
+    for idx in sorted(removed - in_dead):
         writer = Writer(author, date, max_id)
         if delete_paragraph(paras[idx], writer):
             stats["delete"] += 1
@@ -333,6 +343,25 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
         writer = Writer(author, date, max_id)
         stats["add"] += insert_paragraphs_after(paras[idx], sel["text"], writer)
         max_id = writer.max_id
+
+    # строки таблиц: удаление и новая строка после (N<первый абзац строки>, edit: ячейки через табуляцию)
+    for tr in dead_rows:
+        writer = Writer(author, date, max_id)
+        if delete_row(tr, writer):
+            stats["rows_deleted"] += 1
+            max_id = writer.max_id
+        else:
+            stats["без отметки"] += 1
+    for key, sel in sorted(choices.items()):
+        if not (key.startswith("N") and key[1:].isdigit() and sel.get("choice") == EDIT and (sel.get("text") or "").strip()):
+            continue
+        tr = row_of(paras[int(key[1:])]) if int(key[1:]) < len(paras) else None
+        writer = Writer(author, date, max_id)
+        if tr is not None and insert_row_after(tr, sel["text"].split("\t"), writer):
+            stats["rows_added"] += 1
+            max_id = writer.max_id
+        else:
+            stats["без отметки"] += 1
 
     # комментарии юриста к абзацам (C<абзац>): примечание Word от его имени, в том числе к удалённому абзацу — обоснование
     for key, sel in sorted(choices.items()):

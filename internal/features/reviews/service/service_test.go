@@ -305,6 +305,8 @@ func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
 		{ChangeID: "X012", Choice: "edit", Text: "x"},
 		{ChangeID: "C012", Choice: "reject"},
 		{ChangeID: "C012", Choice: "edit", Text: " "},
+		{ChangeID: "R012", Choice: "accept"},
+		{ChangeID: "N012", Choice: "reject"},
 	}
 	for _, c := range bad {
 		if err := s.SaveChoice(context.Background(), 1, 1, c); !errors.Is(err, core_errors.ErrInvalidArgument) {
@@ -317,7 +319,8 @@ func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
 	for _, c := range []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}, {ChangeID: "S002", Choice: ""},
 		{ChangeID: "E003", Choice: "reply", Text: "Согласны."}, {ChangeID: "P012", Choice: "edit", Text: "Новый текст абзаца."}, {ChangeID: "A012", Choice: "edit", Text: "Новый абзац."},
 		{ChangeID: "X012", Choice: "reject"}, {ChangeID: "X012", Choice: ""},
-		{ChangeID: "C012", Choice: "edit", Text: "Обоснование удаления."},
+		{ChangeID: "C012", Choice: "edit", Text: "Обоснование удаления."}, {ChangeID: "R012", Choice: "reject"},
+		{ChangeID: "N012", Choice: "edit", Text: "2\tСтенд\t100 000"},
 		{ChangeID: "P012", Choice: ""}} {
 		if err := s.SaveChoice(context.Background(), 1, 1, c); err != nil {
 			t.Fatalf("%+v: %v", c, err)

@@ -166,15 +166,15 @@ func (c ReviewChoice) Validate() error {
 	}
 	switch c.Choice {
 	case "", ChoiceAccept, ChoiceReject, ChoiceCounter, ChoiceReply:
-		if (strings.HasPrefix(c.ChangeID, "P") || strings.HasPrefix(c.ChangeID, "A") || strings.HasPrefix(c.ChangeID, "C")) && c.Choice != "" {
+		if textOnly(c.ChangeID) && c.Choice != "" {
 			return fmt.Errorf("номер %q — правка текста абзаца, у неё только решение %q: %w", c.ChangeID, ChoiceEdit, core_errors.ErrInvalidArgument)
 		}
-		if strings.HasPrefix(c.ChangeID, "X") && c.Choice != "" && c.Choice != ChoiceReject {
+		if (strings.HasPrefix(c.ChangeID, "X") || strings.HasPrefix(c.ChangeID, "R")) && c.Choice != "" && c.Choice != ChoiceReject {
 			return fmt.Errorf("номер %q — удаление абзаца: только решение %q: %w", c.ChangeID, ChoiceReject, core_errors.ErrInvalidArgument)
 		}
 	case ChoiceEdit:
-		if !(strings.HasPrefix(c.ChangeID, "P") || strings.HasPrefix(c.ChangeID, "A") || strings.HasPrefix(c.ChangeID, "C")) || strings.TrimSpace(c.Text) == "" {
-			return fmt.Errorf("правка абзаца: номер вида P012, A012 или C012 и непустой текст: %w", core_errors.ErrInvalidArgument)
+		if !textOnly(c.ChangeID) || strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("правка абзаца: номер вида P012, A012, C012 или N012 и непустой текст: %w", core_errors.ErrInvalidArgument)
 		}
 	default:
 		return fmt.Errorf("неизвестное решение %q: %w", c.Choice, core_errors.ErrInvalidArgument)
@@ -186,6 +186,12 @@ func (c ReviewChoice) Validate() error {
 }
 
 var changeIDRe = regexp.MustCompile(`^[A-Z]\d{3,5}$`)
+
+// textOnly — номера, у которых решение только «edit» с текстом юриста: P — текст абзаца, A — новый абзац после,
+// C — комментарий к абзацу, N — новая строка таблицы после (ячейки через табуляцию).
+func textOnly(id string) bool {
+	return id != "" && strings.ContainsRune("PACN", rune(id[0]))
+}
 
 // Precedent — «как решали раньше»: похожая правка из прошлого разбора того же юриста (тот же тип договора и наша роль)
 // и его решение по ней. Только подсказка: решение по текущей правке принимает плейбук и юрист.

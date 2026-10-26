@@ -2797,3 +2797,24 @@ select.form__input {
     align-content: start;
   }
 }
+
+/* Строки таблиц, удалённые и добавленные на сайте */
+/* зачёркивается только текст ячеек: подпись «строка удалена вами» остаётся читаемой */
+.doc-table__gone .doc__body {
+  color: var(--del);
+  text-decoration: line-through;
+}
+
+.doc-table__added td {
+  background: var(--chip);
+}
+
+.doc-table__added td:first-child {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+
+.doc__rowcells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
+}

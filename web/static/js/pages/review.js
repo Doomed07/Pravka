@@ -512,6 +512,10 @@ function commentBlock(para) {
       <button class="doc__unjoin" type="button" data-noteact="remove">Убрать</button></span></div>`;
 }
 
+// Строки таблицы: удалить — reject у R<первый абзац строки>, новая строка после — edit у N<…> (ячейки через табуляцию)
+const rowDelKey = (index) => 'R' + String(index).padStart(3, '0');
+const rowAddKey = (index) => 'N' + String(index).padStart(3, '0');
+
 const isDeleted = (para) => CHOICES.get(delKey(para.index))?.choice === 'reject';
 
 // После сохранения страница перерисовывается, а прокрутка остаётся на месте
@@ -674,10 +678,19 @@ function tableRow(paras, i, total, byID, order, shown) {
   const first = changes[0];
   const body = [...rows.keys()].sort((a, b) => a - b).map((r) => {
     const cells = rows.get(r);
-    return html`<tr>${[...cells.keys()].sort((a, b) => a - b).map((c) => {
+    const keys = [...cells.keys()].sort((a, b) => a - b);
+    const lead = Math.min(...keys.flatMap((c) => cells.get(c).paras.map((p) => p.index)).filter((x) => x >= 0));
+    const gone = CHOICES.get(rowDelKey(lead))?.choice === 'reject';
+    const added = CHOICES.get(rowAddKey(lead));
+    const line = html`<tr class="${gone ? 'doc-table__gone' : ''}" data-row="${lead}" data-cols="${keys.length}">${keys.map((c, k) => {
       const cell = cells.get(c);
-      return html`<td${cell.span > 1 ? html` colspan="${cell.span}"` : ''}>${cell.paras.map((p) => cellPara(p))}</td>`;
+      const note = gone && k === keys.length - 1
+        ? html`<span class="doc__fixnote">строка удалена вами <button class="doc__unjoin" type="button" data-rowrestore="${rowDelKey(lead)}">Вернуть</button></span>` : '';
+      return html`<td${cell.span > 1 ? html` colspan="${cell.span}"` : ''}>${cell.paras.map((p) => cellPara(p))}${note}</td>`;
     })}</tr>`;
+    if (!added || added.choice !== 'edit') return line;
+    const texts = added.text.split('\t');
+    return html`${line}<tr class="doc-table__added" data-addrow="${rowAddKey(lead)}" data-after="${lead}" data-cols="${keys.length}">${keys.map((c, k) => html`<td${cells.get(c).span > 1 ? html` colspan="${cells.get(c).span}"` : ''}>${texts[k] || ''}${k === keys.length - 1 ? html`<span class="doc__fixnote">строка добавлена вами <button class="doc__unjoin" type="button" data-rowact="edit">Изменить</button> <button class="doc__unjoin" type="button" data-rowact="remove">Убрать</button></span>` : ''}</td>`)}</tr>`;
   });
   return html`
     <div class="doc__row">
@@ -1047,6 +1060,44 @@ function wireEditing(id) {
       }
     });
   };
+  // Новая строка таблицы после данной: поле на каждую ячейку
+  const openRowAdd = (tr) => {
+    const table = tr.closest('.doc__text');
+    if (table.querySelector('.doc__roweditor')) return;
+    const key = rowAddKey(tr.dataset.row);
+    const cur = (CHOICES.get(key)?.text || '').split('\t');
+    const ed = document.createElement('div');
+    ed.className = 'doc__editor doc__roweditor';
+    mount(ed, html`
+      <p class="doc__editlabel">Новая строка после выбранной — текст ячеек слева направо:</p>
+      <div class="doc__rowcells">${Array.from({ length: Number(tr.dataset.cols) }, (_, k) => html`<input class="form__input" type="text" maxlength="1000" aria-label="Ячейка ${k + 1}" value="${cur[k] || ''}">`)}</div>
+      <div class="doc__editbar">
+        <button class="button button--cta button--small" type="button" data-act="save">Добавить строку</button>
+        <button class="button button--ghost button--small" type="button" data-act="cancel">Отмена</button>
+        <span class="doc__editstatus" role="status"></span>
+      </div>`);
+    table.append(ed);
+    ed.querySelector('input').focus();
+    ed.addEventListener('click', (e) => {
+      const act = e.target.dataset?.act;
+      if (act === 'cancel') ed.remove();
+      else if (act === 'save') {
+        const values = [...ed.querySelectorAll('input')].map((i) => i.value.replace(/\t/g, ' ').trim());
+        if (!values.some(Boolean)) ed.querySelector('.doc__editstatus').textContent = 'Заполните хотя бы одну ячейку';
+        else saveThenReload(key, 'edit', values.join('\t'), ed.querySelector('.doc__editstatus'));
+      }
+    });
+  };
+  doc.querySelectorAll('[data-rowrestore]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    saveThenReload(b.dataset.rowrestore, '', '', null);
+  }));
+  doc.querySelectorAll('[data-addrow] [data-rowact]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const row = b.closest('[data-addrow]');
+    if (b.dataset.rowact === 'remove') saveThenReload(row.dataset.addrow, '', '', null);
+    else openRowAdd(row.previousElementSibling);
+  }));
   doc.querySelectorAll('[data-notenew]').forEach((b) => b.addEventListener('click', (e) => {
     e.stopPropagation();
     openNote(b.closest('.doc__text'));
@@ -1083,6 +1134,8 @@ function wireEditing(id) {
         <button class="button button--cta button--small" type="button" data-act="save">Сохранить</button>
         <button class="button button--ghost button--small" type="button" data-act="cancel">Отмена</button>
         ${saved ? html`<button class="button button--ghost button--small" type="button" data-act="reset">Вернуть исходный</button>` : ''}
+        ${box.dataset.cell ? html`<button class="button button--ghost button--small" type="button" data-act="rowdel">Удалить строку</button>
+        <button class="button button--ghost button--small" type="button" data-act="rowadd">Добавить строку после</button>` : ''}
         ${box.dataset.cell ? '' : html`<button class="button button--ghost button--small" type="button" data-act="delete">Удалить абзац</button>
         <button class="button button--ghost button--small" type="button" data-act="add">Добавить абзац после</button>`}
         <button class="button button--ghost button--small" type="button" data-act="note">Комментарий</button>
@@ -1121,6 +1174,11 @@ function wireEditing(id) {
       else if (act === 'add') {
         close(box);
         openAdd(box);
+      } else if (act === 'rowdel') {
+        saveThenReload(rowDelKey(box.closest('tr').dataset.row), 'reject', '', status);
+      } else if (act === 'rowadd') {
+        close(box);
+        openRowAdd(box.closest('tr'));
       } else if (act === 'note') {
         close(box);
         openNote(box);

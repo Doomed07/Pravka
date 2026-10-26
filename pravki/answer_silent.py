@@ -444,3 +444,64 @@ def insert_paragraphs_after(anchor, text: str, w: Writer) -> int:
         prev = p
         n += 1
     return n
+
+
+def row_of(p):
+    """Строка таблицы (w:tr), в которой стоит абзац; None — абзац не в таблице."""
+    for a in p.iterancestors():
+        if a.tag == q("tr"):
+            return a
+    return None
+
+
+def _row_mark(tr, el) -> None:
+    trpr = tr.find(q("trPr"))
+    if trpr is None:
+        trpr = etree.Element(q("trPr"))
+        tcs = tr.find(q("tblPrEx"))
+        (tcs.addnext if tcs is not None else (lambda x: tr.insert(0, x)))(trpr)
+    trpr.append(el)
+
+
+def delete_row(tr, w: Writer) -> bool:
+    """Строка таблицы удаляется нашей правкой: текст ячеек зачёркнут, строка помечена удалённой (w:trPr/w:del)."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in tr.iter() if e.getparent() is not None
+           and e.getparent().tag != q("trPr")):
+        return False
+    for p in tr.iter(q("p")):
+        _explode(p)
+        runs = _unique([r for r, _, t in _nodes(p) if t])
+        if runs:
+            w.delete_runs(runs)
+    _row_mark(tr, w.track("del"))
+    return True
+
+
+def insert_row_after(tr, cells: list[str], w: Writer) -> bool:
+    """Новая строка после tr нашей вставкой: та же разметка ячеек (ширины, границы), в каждой ячейке — свой текст."""
+    new = copy.deepcopy(tr)
+    trpr = new.find(q("trPr"))
+    if trpr is not None:
+        for old in [x for x in trpr if x.tag in (q("ins"), q("del"))]:
+            trpr.remove(old)
+    tcs = new.findall(q("tc"))
+    if not tcs:
+        return False
+    for k, tc in enumerate(tcs):
+        ps = tc.findall(q("p"))
+        for extra in ps[1:]:
+            tc.remove(extra)
+        for other in [x for x in tc if x.tag not in (q("tcPr"), q("p"))]:
+            tc.remove(other)  # вложенные таблицы и прочее — не копируем
+        p = ps[0] if ps else etree.SubElement(tc, q("p"))
+        for child in [x for x in p if x.tag != q("pPr")]:
+            p.remove(child)
+        text = cells[k].strip() if k < len(cells) else ""
+        if text:
+            ins = w.track("ins")
+            ins.append(_ins_run(text))
+            p.append(ins)
+        w.mark_paragraph(p, "ins")
+    _row_mark(new, w.track("ins"))
+    tr.addnext(new)
+    return True
