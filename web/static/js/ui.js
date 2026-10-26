@@ -44,7 +44,7 @@ export const $ = (selector) => document.querySelector(selector);
 // ---------- Шапка и подвал ----------
 
 const NAV = [
-  { key: 'home', href: '/', label: 'Разборы' },
+  { key: 'home', href: '/', label: 'Контрагенты' },
   { key: 'about', href: '/about', label: 'О сервисе' },
 ];
 
@@ -63,22 +63,66 @@ function header({ nav = '', navDetail = false }) {
         </a>
         <nav class="main-nav" aria-label="Основное меню">${links}</nav>
         <div class="auth-nav" id="auth-nav"></div>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Сменить тему" title="Светлая / тёмная тема"></button>
       </div>
     </header>`;
 }
 
-function footer() {
+// Нижнее меню на телефоне: те же ссылки, что в шапке, под большой палец (на широком экране скрыто стилями)
+function tabbar(nav, navDetail) {
+  return html`<nav class="tabbar" aria-label="Меню">${NAV.map((item) => html`<a href="${item.href}"${item.key === nav ? html` aria-current="${navDetail ? 'true' : 'page'}"` : ''}>${item.label}</a>`)}</nav>`;
+}
+
+function footer(nav, navDetail) {
   return html`
+    ${tabbar(nav, navDetail)}
     <footer class="site-footer">
       <div class="container site-footer__inner">
         <nav class="footer-nav" aria-label="Ссылки в подвале">
-          <a href="/">Разборы</a>
+          <a href="/">Контрагенты</a>
           <a href="/about">О сервисе</a>
         </nav>
         <p>Правки — разбор правок контрагента. Решения принимает плейбук, сомнения — юрист.</p>
       </div>
     </footer>`;
 }
+
+// ---------- Тема ----------
+
+// Светлая или тёмная тема: выбор запоминается в браузере (если он недоступен — работает по настройке системы).
+const THEME_KEY = 'pravki-theme';
+
+function storedTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function isDark() {
+  const set = document.documentElement.dataset.theme;
+  if (set) return set === 'dark';
+  return matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function paintToggle() {
+  const button = document.getElementById('theme-toggle');
+  if (button) button.textContent = isDark() ? '☀' : '☾';
+}
+
+function toggleTheme() {
+  const next = isDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* выбор не запомнится — не страшно */
+  }
+  paintToggle();
+}
+
+if (['light', 'dark'].includes(storedTheme())) document.documentElement.dataset.theme = storedTheme();
 
 // ---------- Аккаунт ----------
 
@@ -146,7 +190,10 @@ export function safeNext(raw, fallback) {
 // и, когда станет известно, кто вошёл, — ссылки аккаунта в шапку.
 export function renderLayout(options = {}) {
   mount($('#site-header'), header(options));
-  mount($('#site-footer'), footer());
+  mount($('#site-footer'), footer(options.nav, options.navDetail));
+  const toggle = $('#theme-toggle');
+  if (toggle) toggle.addEventListener('click', toggleTheme);
+  paintToggle();
   currentUser().then((user) => showAccount(user, options.nav));
 }
 

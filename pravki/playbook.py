@@ -159,7 +159,7 @@ def _find_numbers(ch: Change, unit: str, check: dict) -> list[float]:
     else:
         text_scope = text
     spans: list[tuple[int, int]] = []
-    if ch.after:
+    if ch.after and ch.source != "clause":  # положение первой версии: проверяются все числа абзаца, а не вставленный кусок
         spans = _after_spans(text_scope, ch.after)
         if not spans:  # изменённое место не в выбранных предложениях или оно часть другого числа («5%» внутри «0,5%»)
             return []
@@ -431,6 +431,7 @@ def _analyze_one(ch: Change, pb: Playbook) -> None:
         return
 
     rule, res = chosen if chosen else first_review  # type: ignore[misc]
+    ch.detail["rule_applied"] = chosen is not None  # правило сработало, а не «не применимо к этой правке»
     ch.rule_id, ch.rule_title = rule.id, rule.title
     ch.suggested = rule.preferred
     if chosen:
@@ -442,10 +443,10 @@ def _analyze_one(ch: Change, pb: Playbook) -> None:
 
     # страховки: сомнительное — всегда юристу
     if level == "accept":
-        if "отрицание" in ch.flags:
+        if "отрицание" in ch.flags and ch.source != "clause":  # у положения «не» — не признак изменения смысла
             level = "review"
             reason += " Меняется отрицание — смысл мог измениться, проверьте вручную."
-        elif ch.source != "tracked":
+        elif ch.source not in ("tracked", "clause"):  # положение первой версии правкой без отметки не является
             level = "review"
             reason += " Правка не отмечена в рецензировании — не принимайте без проверки."
 

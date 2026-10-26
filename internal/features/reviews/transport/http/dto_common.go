@@ -7,27 +7,29 @@ import (
 )
 
 type ReviewDTO struct {
-	ID           int            `json:"id"`
-	CreatedAt    time.Time      `json:"created_at"`
-	ProjectID    int            `json:"project_id"`
-	ProjectName  string         `json:"project_name"`
-	Round        int            `json:"round"`
-	HasDocx      bool           `json:"has_docx"`
-	TheirsName   string         `json:"theirs_name"`
-	BaseName     string         `json:"base_name"`
-	Playbook     string         `json:"playbook"`
-	PlaybookName string         `json:"playbook_name"`
-	OurRole      string         `json:"our_role"`
-	Side         string         `json:"side"`
-	Counts       map[string]int `json:"counts"`
-	Warnings     []string       `json:"warnings"`
+	ID               int            `json:"id"`
+	CreatedAt        time.Time      `json:"created_at"`
+	ProjectID        int            `json:"project_id"`
+	ProjectName      string         `json:"project_name"`
+	CounterpartyID   int            `json:"counterparty_id"`
+	CounterpartyName string         `json:"counterparty_name"`
+	Round            int            `json:"round"`
+	HasDocx          bool           `json:"has_docx"`
+	TheirsName       string         `json:"theirs_name"`
+	BaseName         string         `json:"base_name"`
+	Playbook         string         `json:"playbook"`
+	PlaybookName     string         `json:"playbook_name"`
+	OurRole          string         `json:"our_role"`
+	Side             string         `json:"side"`
+	Counts           map[string]int `json:"counts"`
+	Warnings         []string       `json:"warnings"`
 }
 
 func reviewDTOFromDomain(r core_domain.ContractReview) ReviewDTO {
 	if r.Warnings == nil {
 		r.Warnings = []string{}
 	}
-	return ReviewDTO{ID: r.ID, CreatedAt: r.CreatedAt, ProjectID: r.ProjectID, ProjectName: r.ProjectName, Round: r.Round, HasDocx: r.HasDocx,
+	return ReviewDTO{ID: r.ID, CreatedAt: r.CreatedAt, ProjectID: r.ProjectID, ProjectName: r.ProjectName, CounterpartyID: r.CounterpartyID, CounterpartyName: r.CounterpartyName, Round: r.Round, HasDocx: r.HasDocx,
 		TheirsName: r.TheirsName, BaseName: r.BaseName, Playbook: r.Playbook,
 		PlaybookName: r.PlaybookName, OurRole: r.OurRole, Side: r.Side, Counts: r.Counts, Warnings: r.Warnings}
 }
@@ -212,11 +214,16 @@ type ProjectDTO struct {
 	PlaybookName string    `json:"playbook_name"`
 	OurRole      string    `json:"our_role"`
 	ContractType string    `json:"contract_type"`
+
+	CounterpartyID   int    `json:"counterparty_id"`
+	CounterpartyName string `json:"counterparty_name"`
+	HasFolder        bool   `json:"has_folder"` // файлы раундов лежат в папке на диске
 }
 
 func projectDTOFromDomain(p core_domain.ProjectSummary) ProjectDTO {
 	return ProjectDTO{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt, Rounds: p.Rounds, LastReviewID: p.LastReviewID,
-		LastAt: p.LastAt, Playbook: p.Playbook, PlaybookName: p.PlaybookName, OurRole: p.OurRole, ContractType: p.ContractType}
+		LastAt: p.LastAt, Playbook: p.Playbook, PlaybookName: p.PlaybookName, OurRole: p.OurRole, ContractType: p.ContractType,
+		CounterpartyID: p.CounterpartyID, CounterpartyName: p.CounterpartyName, HasFolder: p.Dir != ""}
 }
 
 func projectsDTOFromDomain(list []core_domain.ProjectSummary) []ProjectDTO {
@@ -264,6 +271,7 @@ type RoundLinkDTO struct {
 	PastAfter    string `json:"past_after"`
 	Decision     string `json:"decision"`
 	DecisionText string `json:"decision_text"`
+	PastRemark   bool   `json:"past_remark"`
 }
 
 type RoundClosedDTO struct {
@@ -292,11 +300,76 @@ func reviewRoundsDTOFromDomain(v core_domain.ReviewRounds) ReviewRoundsDTO {
 	for i, l := range v.Comparison.Links {
 		out.Links[i] = RoundLinkDTO{ChangeID: l.ChangeID, Relation: l.Relation, Round: l.Round, ReviewID: l.ReviewID,
 			PastChangeID: l.PastChangeID, PastBefore: l.PastBefore, PastAfter: l.PastAfter, Decision: l.Decision,
-			DecisionText: l.DecisionText}
+			DecisionText: l.DecisionText, PastRemark: l.PastRemark}
 	}
 	for i, c := range v.Comparison.Closed {
 		out.Closed[i] = RoundClosedDTO{Round: c.Round, ReviewID: c.ReviewID, ChangeID: c.ChangeID, Clause: c.Clause, Topic: c.Topic,
 			Before: c.Before, After: c.After, Decision: c.Decision, DecisionText: c.DecisionText}
+	}
+	return out
+}
+
+type CounterpartyDTO struct {
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	INN       string    `json:"inn"`
+	CreatedAt time.Time `json:"created_at"`
+	Contracts int       `json:"contracts"`
+	Rounds    int       `json:"rounds"`
+	LastAt    time.Time `json:"last_at"`
+	HasFolder bool      `json:"has_folder"`
+}
+
+func counterpartyDTOFromDomain(c core_domain.CounterpartySummary) CounterpartyDTO {
+	return CounterpartyDTO{ID: c.ID, Name: c.Name, INN: c.INN, CreatedAt: c.CreatedAt, Contracts: c.Contracts, Rounds: c.Rounds,
+		LastAt: c.LastAt, HasFolder: c.Dir != ""}
+}
+
+func counterpartiesDTOFromDomain(list []core_domain.CounterpartySummary) []CounterpartyDTO {
+	out := make([]CounterpartyDTO, len(list))
+	for i, c := range list {
+		out[i] = counterpartyDTOFromDomain(c)
+	}
+	return out
+}
+
+type CounterpartyViewDTO struct {
+	Counterparty CounterpartyDTO `json:"counterparty"`
+	Projects     []ProjectDTO    `json:"projects"`
+}
+
+func counterpartyViewDTOFromDomain(v core_domain.CounterpartyView) CounterpartyViewDTO {
+	return CounterpartyViewDTO{Counterparty: counterpartyDTOFromDomain(v.Counterparty), Projects: projectsDTOFromDomain(v.Projects)}
+}
+
+type PartyDTO struct {
+	Role string `json:"role"`
+	Name string `json:"name"`
+	INN  string `json:"inn"`
+}
+
+// DetectedPartiesDTO — стороны договора и контрагент (null, если нашу сторону определить не удалось).
+type DetectedPartiesDTO struct {
+	Parties      []PartyDTO `json:"parties"`
+	Counterparty *PartyDTO  `json:"counterparty"`
+	Ours         *PartyDTO  `json:"ours"`
+	Title        string     `json:"title"`
+	ContractType string     `json:"contract_type"`
+	Playbook     string     `json:"playbook"`
+	Source       string     `json:"source"`
+}
+
+func detectedPartiesDTOFromDomain(d core_domain.DetectedParties) DetectedPartiesDTO {
+	out := DetectedPartiesDTO{Parties: make([]PartyDTO, len(d.Parties)), Title: d.Title, ContractType: d.ContractType,
+		Playbook: d.Playbook, Source: d.Source}
+	for i, p := range d.Parties {
+		out.Parties[i] = PartyDTO{Role: p.Role, Name: p.Name, INN: p.INN}
+	}
+	if d.Counterparty != nil {
+		out.Counterparty = &PartyDTO{Role: d.Counterparty.Role, Name: d.Counterparty.Name, INN: d.Counterparty.INN}
+	}
+	if d.Ours != nil {
+		out.Ours = &PartyDTO{Role: d.Ours.Role, Name: d.Ours.Name, INN: d.Ours.INN}
 	}
 	return out
 }

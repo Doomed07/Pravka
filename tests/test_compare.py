@@ -186,3 +186,93 @@ def test_model_cannot_merge_paragraphs_on_different_topics(tmp_path):
     theirs = p(r("Вводный абзац.")) + p(r("Стоимость услуг включает НДС 20%.")) + p(r("Заключительный абзац."))
     b, t = _docs(tmp_path, base, theirs)
     assert [c.kind for c in compare_versions(b, t, judge=lambda x, y: True)] == ["para_delete", "para_insert"]
+
+
+# ---------------------------------------------------------------- юрист начал отвечать прямо в файле контрагента
+def _at(tag, text, n, author, date):
+    t = "delText" if tag == "del" else "t"
+    return f'<w:{tag} w:id="{n}" w:author="{author}" w:date="{date}"><w:r><w:{t} xml:space="preserve">{text}</w:{t}></w:r></w:{tag}>'
+
+
+def _answered_in_their_file(tmp_path):
+    """Отправили версию с нашей правкой от 27.03; контрагент вставил «не позднее 8 апреля», а мы 01.04 прямо в его
+    файле заменили «8» на «12» и дописали ОГРНИП."""
+    sent = "2026-03-27T16:00:00Z"
+    later = "2026-04-01T10:00:00Z"
+    base = p(r("1.1. Оплата по счёту"), _at("ins", " Организатора", 1, "Мы", sent), r(".")) + p(r("Реквизиты: ИНН 123."))
+    nested_del = ('<w:ins w:id="5" w:author="Admin" w:date="2026-03-30T10:00:00Z"><w:del w:id="6" w:author="Мы" '
+                  f'w:date="{later}"><w:r><w:delText xml:space="preserve">8</w:delText></w:r></w:del></w:ins>')
+    theirs = (p(r("1.1. Оплата по счёту"), _at("ins", " Организатора", 1, "Мы", sent),
+                _at("ins", ", но не позднее ", 4, "Admin", "2026-03-30T10:00:00Z"), _at("ins", "12", 7, "Мы", later),
+                nested_del, _at("ins", " апреля", 8, "Admin", "2026-03-30T10:00:00Z"), r(".")) +
+              p(r("Реквизиты: ИНН 123."), _at("ins", " ОГРНИП 456.", 9, "Мы", later)))
+    return str(make_docx(tmp_path / "base.docx", base)), str(make_docx(tmp_path / "theirs.docx", theirs))
+
+
+def test_our_edits_made_after_sent_version_are_not_theirs(tmp_path):
+    from pravki.pipeline import review_files
+    b, t = _answered_in_their_file(tmp_path)
+    rv = review_files(t, base_path=b, our_authors=["Мы"])
+    assert [c for c in rv.changes if c.source != "tracked"] == []  # «12» и ОГРНИП — не «тихие» правки контрагента
+    assert [(c.author, c.after) for c in rv.changes] == [("Admin", ", но не позднее 8 апреля")]  # «8» контрагента на месте
+    assert any("ваши правки, сделанные после отправленной версии (мест: 3, пункты: 1.1)" in w for w in rv.warnings)
+
+
+def test_our_old_edits_left_in_their_file_stay_ours(tmp_path):
+    from pravki.compare import without_new_ours
+    b, t = _answered_in_their_file(tmp_path)
+    doc, n = without_new_ours(read_docx(b), read_docx(t), {"Мы"})
+    first = "".join(s.text for s in doc.paragraphs[0].segments if s.author == "Мы")
+    assert n == 3 and first == " Организатора"  # правка из отправленной версии осталась нашей
+
+
+def test_our_later_rework_of_our_own_insertion_is_not_silent(tmp_path):
+    # 27.03 мы вписали абзац; 31.03 переписали свою же вставку прямо в файле контрагента: часть старого текста
+    # исчезла без отметки (свою вставку Word удаляет без следа). Это наша правка, а не «тихая» правка контрагента
+    from pravki.pipeline import review_files
+    sent, later = "2026-03-27T16:00:00Z", "2026-03-31T15:00:00Z"
+    base = p(r("1.4. Права.")) + p(_at("ins", "Список направляется на почту за 1 день.", 1, "Мы", sent))
+    theirs = p(r("1.4. Права.")) + p(_at("ins", "Список", 1, "Мы", sent), _at("ins", " заполняется на сайте", 2, "Мы", later),
+                                      _at("ins", " за 5 дней.", 3, "Мы", sent))
+    b, t = str(make_docx(tmp_path / "b.docx", base)), str(make_docx(tmp_path / "t.docx", theirs))
+    rv = review_files(t, base_path=b, our_authors=["Мы"])
+    assert rv.changes == []
+    # а «тихая» правка контрагента в том же абзаце видна
+    theirs2 = p(r("1.4. Права ИЗМЕНЕНЫ.")) + p(_at("ins", "Список", 1, "Мы", sent),
+                                                _at("ins", " заполняется на сайте", 2, "Мы", later))
+    t2 = str(make_docx(tmp_path / "t2.docx", theirs2))
+    silent = [c.after for c in review_files(t2, base_path=b, our_authors=["Мы"]).changes if c.source == "silent"]
+    assert len(silent) == 1 and "ИЗМЕНЕНЫ" in silent[0]
+
+
+def test_restored_text_is_silent_even_where_we_edited_later(tmp_path):
+    # мы удалили фразу 27.03; контрагент отклонил удаление (фраза вернулась без отметки), а мы 31.03 поправили пункт
+    from pravki.pipeline import review_files
+    sent, later = "2026-03-27T16:00:00Z", "2026-03-31T15:00:00Z"
+    base = p(r("6.1. Срок договора."), _at("del", " Организатор вправе расторгнуть без убытков.", 1, "Мы", sent))
+    theirs = p(r("6.1. Срок договора."), _at("ins", " Год.", 2, "Мы", later), r(" Организатор вправе расторгнуть без убытков."))
+    b, t = str(make_docx(tmp_path / "b.docx", base)), str(make_docx(tmp_path / "t.docx", theirs))
+    silent = [c.after for c in review_files(t, base_path=b, our_authors=["Мы"]).changes if c.source != "tracked"]
+    assert len(silent) == 1 and "расторгнуть" in silent[0]
+
+
+def test_site_shows_our_later_edits_as_plain_text(tmp_path):
+    # на сайте договор как в Word: наши новые правки — обычный текст, а не «правки без отметки» контрагента
+    from pravki.pipeline import review_files
+    b, t = _answered_in_their_file(tmp_path)
+    doc = review_files(t, base_path=b, our_authors=["Мы"]).document
+    kinds = {s["k"] for para in doc for s in para["segments"]}
+    text = " ".join("".join(s["t"] for s in para["segments"] if s["k"] in ("equal", "ins")) for para in doc)
+    assert not kinds & {"silent_ins", "silent_del", "own"}
+    assert "12" in text and "ОГРНИП 456" in text
+
+
+def test_site_marks_their_silent_edit_but_not_ours_in_the_same_clause(tmp_path):
+    from pravki.pipeline import review_files
+    sent, later = "2026-03-27T16:00:00Z", "2026-04-01T10:00:00Z"
+    base = p(r("Реквизиты: ИНН 123, счёт 40702."), _at("ins", " Банк А.", 1, "Мы", sent))
+    theirs = p(r("Реквизиты: ИНН 123, счёт 99999."), _at("ins", " Банк А.", 1, "Мы", sent), _at("ins", " ОГРНИП 456.", 2, "Мы", later))
+    b, t = str(make_docx(tmp_path / "b.docx", base)), str(make_docx(tmp_path / "t.docx", theirs))
+    doc = review_files(t, base_path=b, our_authors=["Мы"]).document
+    silent = "".join(s["t"] for para in doc for s in para["segments"] if s["k"] == "silent_ins")
+    assert "99999" in silent and "ОГРНИП" not in silent

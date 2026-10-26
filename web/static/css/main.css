@@ -35,9 +35,14 @@
 
 :root {
   color-scheme: light;
-  --bg: #f7f7f4;
+  --bg: #f5f5f2;
   --paper: #fdfdfb;
+  --surface: #ffffff;
+  --tint: #fff7f3;
+  --chip: #e6e6e1;
   --ink: #141414;
+  --ink-hover: #2d2d2b;
+  --on-current: #c9c9c3;
   --muted: #5e5e5a;
   --line: #d6d6d0;
   --line-soft: #e8e8e3;
@@ -47,11 +52,66 @@
   --silent-bg: #fbd9cc;
   --silent-ink: #7a2510;
   --ok: #1f6b4a;
+  --shadow: 0 1px 2px rgba(20, 20, 20, 0.05), 0 8px 24px rgba(20, 20, 20, 0.06);
+  --glass: rgba(245, 245, 242, 0.72);
+  --radius: 14px;
+  --radius-s: 10px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --container: 1120px;
   --wide: 1480px;
   --gutter: 16px;
   --font-display: "Unbounded", "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   --font-sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* Тёмная тема: по настройке системы, если человек не выбрал сам (переключатель в шапке пишет data-theme). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121214;
+    --paper: #1c1c1f;
+    --surface: #232327;
+    --tint: #2b1f1a;
+    --chip: #333338;
+    --ink: #f4f4f6;
+    --ink-hover: #dcdce0;
+    --on-current: #3a3a3f;
+    --muted: #a3a3aa;
+    --line: #3b3b41;
+    --line-soft: #2c2c31;
+    --accent: #ff6a3d;
+    --accent-ink: #ff8f68;
+    --del: #8e8e95;
+    --silent-bg: #4a2418;
+    --silent-ink: #ffd5c5;
+    --ok: #5fd39a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+    --glass: rgba(18, 18, 20, 0.72);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121214;
+  --paper: #1c1c1f;
+  --surface: #232327;
+  --tint: #2b1f1a;
+  --chip: #333338;
+  --ink: #f4f4f6;
+  --ink-hover: #dcdce0;
+  --on-current: #3a3a3f;
+  --muted: #a3a3aa;
+  --line: #3b3b41;
+  --line-soft: #2c2c31;
+  --accent: #ff6a3d;
+  --accent-ink: #ff8f68;
+  --del: #8e8e95;
+  --silent-bg: #4a2418;
+  --silent-ink: #ffd5c5;
+  --ok: #5fd39a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35);
+  --glass: rgba(18, 18, 20, 0.72);
 }
 
 *,
@@ -260,7 +320,7 @@ a:hover {
 }
 
 .button--cta:hover {
-  background: #2d2d2b;
+  background: var(--ink-hover);
   color: var(--paper);
 }
 
@@ -701,7 +761,7 @@ a:hover {
   width: 100%;
   min-height: 75vh;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
 }
 
 /* ---------- Экран разбора: единая версия ---------- */
@@ -999,7 +1059,7 @@ a:hover {
 }
 
 .rv-list__item.is-current .rv-list__level {
-  color: #c9c9c3;
+  color: var(--on-current);
 }
 
 .legend {
@@ -1079,7 +1139,7 @@ a:hover {
 }
 
 .doc__text.is-current {
-  background: #fff7f3;
+  background: var(--tint);
 }
 
 .doc__notes {
@@ -1211,7 +1271,7 @@ del + ins {
   height: 22px;
   padding: 0 7px 0 5px;
   border-radius: 11px;
-  background: #e6e6e1;
+  background: var(--chip);
   color: var(--ink);
   font-size: 11px;
   font-weight: 800;
@@ -1262,8 +1322,8 @@ del + ins {
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 10px 30px rgba(20, 20, 20, 0.14);
+  background: var(--surface);
+  box-shadow: var(--shadow);
   font-size: 14px;
 }
 
@@ -1306,8 +1366,8 @@ del + ins {
 }
 
 .note.is-current {
-  background: #fff7f3;
-  box-shadow: -10px 0 0 #fff7f3, 10px 0 0 #fff7f3;
+  background: var(--tint);
+  box-shadow: -10px 0 0 var(--tint), 10px 0 0 var(--tint);
 }
 
 .note__head {
@@ -1605,4 +1665,1156 @@ del + ins {
 .decide__label {
   font-size: 12px;
   font-weight: 700;
+}
+
+/* ---------- Оформление 2: стекло, скругления, плавные переходы ---------- */
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-size: 17px;
+  line-height: 1.6;
+  transition: background-color 0.3s var(--ease), color 0.3s var(--ease);
+}
+
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Шапка — «стекло»: остаётся сверху, текст под ней размыт */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--glass);
+  -webkit-backdrop-filter: saturate(180%) blur(18px);
+  backdrop-filter: saturate(180%) blur(18px);
+  border-bottom: 1px solid var(--line);
+}
+
+.logo__mark {
+  border-radius: 5px;
+  transition: transform 0.4s var(--spring);
+}
+
+.logo:hover .logo__mark {
+  transform: rotate(45deg) scale(1.1);
+}
+
+.main-nav {
+  gap: 4px;
+}
+
+.main-nav a {
+  padding: 6px 14px;
+  border-radius: 999px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.main-nav a:hover {
+  background: var(--line-soft);
+}
+
+.main-nav a[aria-current="page"] {
+  background: var(--ink);
+  color: var(--paper);
+  text-decoration: none;
+}
+
+.theme-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.4s var(--spring), background-color 0.2s, color 0.2s;
+}
+
+.theme-toggle:hover {
+  background: var(--line-soft);
+  color: var(--ink);
+  transform: rotate(20deg);
+}
+
+/* Кнопки: скругление, «проседание» при нажатии */
+.button {
+  border-radius: 999px;
+  transition: transform 0.25s var(--spring), background-color 0.2s, border-color 0.2s, box-shadow 0.25s;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+}
+
+.button:active {
+  transform: scale(0.96);
+  transition-duration: 0.08s;
+}
+
+.button--cta:hover {
+  box-shadow: 0 6px 18px rgba(228, 87, 46, 0.28);
+}
+
+/* Поля форм */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+select,
+textarea {
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  transition: border-color 0.2s, box-shadow 0.25s;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(228, 87, 46, 0.18);
+  outline: none;
+}
+
+/* Карточки и таблицы */
+.alert,
+.error-page {
+  border-radius: var(--radius);
+}
+
+.table-wrap {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.table th,
+.table td {
+  padding: 14px 16px;
+}
+
+.table tbody tr {
+  transition: background-color 0.2s;
+}
+
+.table tbody tr:hover {
+  background: var(--tint);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.section-heading {
+  border-bottom-width: 1px;
+}
+
+.steps {
+  border-top-width: 1px;
+}
+
+/* Появление страницы и блоков: лёгкий сдвиг и проявление */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+#app > *,
+.page > *,
+.table tbody tr {
+  animation: rise 0.55s var(--ease) backwards;
+}
+
+.page > :nth-child(2) { animation-delay: 0.05s; }
+.page > :nth-child(3) { animation-delay: 0.1s; }
+.page > :nth-child(4) { animation-delay: 0.15s; }
+.page > :nth-child(n+5) { animation-delay: 0.2s; }
+
+.table tbody tr:nth-child(2) { animation-delay: 0.04s; }
+.table tbody tr:nth-child(3) { animation-delay: 0.08s; }
+.table tbody tr:nth-child(4) { animation-delay: 0.12s; }
+.table tbody tr:nth-child(n+5) { animation-delay: 0.16s; }
+
+/* Для тех, у кого в системе включено «уменьшить движение» */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Главная: зоны загрузки, карточки договоров ---------- */
+
+.drop {
+  min-height: 150px;
+  justify-items: center;
+  border-radius: var(--radius);
+  text-align: center;
+  background: var(--surface);
+  transition: transform 0.3s var(--spring), border-color 0.2s, background-color 0.2s, box-shadow 0.3s;
+}
+
+.drop:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  background: var(--surface);
+}
+
+.drop.is-over {
+  transform: scale(1.02);
+  border-color: var(--accent);
+  background: var(--tint);
+}
+
+.drop__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--line-soft);
+  color: var(--accent-ink);
+  font-size: 22px;
+  transition: transform 0.4s var(--spring), background-color 0.2s;
+}
+
+.drop:hover .drop__icon,
+.drop.is-over .drop__icon {
+  transform: translateY(-3px);
+  background: var(--tint);
+}
+
+.drop.has-file .drop__icon {
+  background: var(--accent);
+  color: #fff;
+}
+
+.drop.has-file .drop__icon::before {
+  content: "✓";
+}
+
+.drop.has-file .drop__icon {
+  font-size: 0;
+}
+
+.drop.has-file .drop__icon::before {
+  font-size: 22px;
+}
+
+.more {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.more[open] {
+  padding-bottom: 18px;
+}
+
+.more > :not(summary) {
+  margin: 0 18px;
+}
+
+.more > .form__row {
+  margin-bottom: 18px;
+}
+
+.more__summary {
+  padding: 14px 18px;
+  color: var(--muted);
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.more__summary::-webkit-details-marker {
+  display: none;
+}
+
+.more__summary::before {
+  content: "›";
+  display: inline-block;
+  width: 18px;
+  transition: transform 0.25s var(--ease);
+}
+
+.more[open] > .more__summary::before {
+  transform: rotate(90deg);
+}
+
+.search {
+  margin: 18px 0 16px;
+  max-width: 420px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+  transition: transform 0.3s var(--spring), box-shadow 0.3s, border-color 0.2s;
+}
+
+.card[hidden] {
+  display: none;
+}
+
+.card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+
+.card:active {
+  transform: scale(0.98);
+}
+
+.card__title {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.card__meta {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.card__date {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cards .card-box .card,
+.cards > .card {
+  animation: rise 0.5s var(--ease) backwards;
+}
+
+.cards .card:nth-child(2) { animation-delay: 0.04s; }
+.cards .card:nth-child(3) { animation-delay: 0.08s; }
+.cards .card:nth-child(n+4) { animation-delay: 0.12s; }
+
+/* ---------- Страница разбора: карточки, выезжающая панель ответа ---------- */
+
+.round--fold {
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.round--fold > .round__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 14px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.round--fold > .round__head::-webkit-details-marker {
+  display: none;
+}
+
+.round--fold > .round__head::after {
+  content: "›";
+  order: 3;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 22px;
+  transition: transform 0.25s var(--ease);
+}
+
+.round--fold[open] > .round__head::after {
+  transform: rotate(90deg);
+}
+
+.round--fold > .round__topic {
+  margin: 0 18px;
+}
+
+.round--fold[open] {
+  padding-bottom: 12px;
+}
+
+.round-bar {
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.rv-sum {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 4px 14px;
+}
+
+.rv-sum__row:last-child {
+  border-bottom: 0;
+}
+
+/* список правок слева: цветная полоска по выводу плейбука */
+.rv-list__item {
+  border-radius: var(--radius-s);
+  border-left: 4px solid var(--line);
+  background: var(--surface);
+  transition: transform 0.2s var(--ease), border-color 0.2s, background-color 0.2s;
+}
+
+.rv-list__item:hover {
+  transform: translateX(3px);
+}
+
+.rv-list__item--reject { border-left-color: var(--accent-ink); }
+.rv-list__item--lawyer { border-left-color: var(--accent); }
+.rv-list__item--accept,
+.rv-list__item--agreed { border-left-color: var(--ok); }
+.rv-list__item--fallback { border-left-color: var(--muted); }
+
+/* карточки правок на полях: полоска слева и мягкие углы */
+.note {
+  padding: 14px 16px;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  transition: box-shadow 0.25s, border-color 0.2s;
+}
+
+.note--reject { border-left-color: var(--accent-ink); }
+.note--lawyer { border-left-color: var(--accent); }
+.note--accept,
+.note--agreed { border-left-color: var(--ok); }
+.note--fallback { border-left-color: var(--muted); }
+
+.note--silent {
+  border-top-color: var(--line);
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.note.is-current {
+  box-shadow: var(--shadow);
+  border-color: var(--accent);
+}
+
+.rv-list__item.is-current {
+  transform: translateX(3px);
+}
+
+/* кнопка «Ответ контрагенту» и выезжающая панель */
+.fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  padding: 14px 22px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: 800 15px/1.2 var(--font-sans);
+  box-shadow: 0 8px 24px rgba(228, 87, 46, 0.4);
+  cursor: pointer;
+  transition: transform 0.3s var(--spring), box-shadow 0.3s;
+}
+
+.fab:hover {
+  transform: translateY(-2px) scale(1.03);
+}
+
+.fab:active {
+  transform: scale(0.95);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: fade 0.25s var(--ease) both;
+}
+
+.scrim[hidden] {
+  display: none;
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.drawer {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 50;
+  align-content: start;
+  gap: 12px;
+  width: min(380px, calc(100vw - 24px));
+  padding: 24px 22px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--glass);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  backdrop-filter: saturate(180%) blur(24px);
+  box-shadow: var(--shadow);
+  transform: translateX(calc(100% + 24px));
+  visibility: hidden;
+  transition: transform 0.45s var(--ease), visibility 0s 0.45s;
+}
+
+.drawer.is-open {
+  transform: none;
+  visibility: visible;
+  transition: transform 0.45s var(--ease);
+}
+
+.drawer__close {
+  justify-self: end;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--line-soft);
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 0.3s var(--spring);
+}
+
+.drawer__close:hover {
+  transform: rotate(90deg);
+}
+
+/* Все поля и выпадающие списки — со скруглением и мягкой подсветкой при фокусе */
+.form__input {
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  transition: border-color 0.2s, box-shadow 0.25s;
+}
+
+.form__input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(228, 87, 46, 0.18);
+}
+
+select.form__input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 40px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 22px) 50%, calc(100% - 16px) 50%;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+
+/* ---------- Контрагенты и первая версия договора ---------- */
+
+.drop--big {
+  min-height: 220px;
+  border-width: 2px;
+}
+
+.drop--big .drop__icon {
+  width: 60px;
+  height: 60px;
+  font-size: 30px;
+}
+
+.drop--big .drop__title {
+  font-size: 20px;
+}
+
+.drop--big .drop__file {
+  font-size: 15px;
+}
+
+.confirm {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  animation: rise 0.45s var(--ease) backwards;
+}
+
+.confirm[hidden],
+.form__field[hidden] {
+  display: none;
+}
+
+.confirm__title {
+  font: 700 18px/1.3 var(--font-display);
+}
+
+.confirm .more {
+  background: var(--paper);
+}
+
+.eyebrow a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.eyebrow a:hover {
+  text-decoration: underline;
+}
+
+/* Карточки сразу под заголовком раздела: при наведении приподнимаются и не должны задевать линию заголовка */
+.section-heading + .cards {
+  margin-top: 22px;
+}
+
+/* Кнопки выбора контрагента среди найденных сторон */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -6px 0 6px;
+}
+
+.chips[hidden] {
+  display: none;
+}
+
+/* Абзац не растягивается вслед за высокой карточкой на полях: подсветка и полоса правки — только по тексту абзаца */
+.doc {
+  background: var(--paper);
+}
+
+.doc__text {
+  align-self: start;
+  min-height: 0;
+}
+
+/* Длинные подсказки в карточке (прошлые формулировки, ГК, решения) прокручиваются внутри карточки, а не раздвигают договор */
+.note .past__list,
+.note .law__list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* Широкий экран: карточки на полях не задают высоту строки (раскладывает review.js: layoutNotes) */
+@media (min-width: 1181px) {
+  .doc {
+    position: relative;
+  }
+
+  .doc__row > .doc__notes {
+    position: absolute;
+    top: 0;
+    padding: 0;
+    z-index: 1;
+  }
+
+  .doc__row > .doc__notes:empty {
+    display: none;
+  }
+
+  /* карточка вышла из сетки: номер и текст сами держатся своих столбцов, иначе строки «съезжают» */
+  .doc__row > .doc__num {
+    grid-column: 1;
+  }
+
+  .doc__row > .doc__text {
+    grid-column: 2;
+  }
+}
+
+
+/* Правка текста абзаца на сайте */
+.doc__hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 28px;
+  color: var(--muted);
+  font-size: 13px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.doc__text {
+  position: relative;
+}
+
+.doc__pen {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.doc__text:hover > .doc__pen,
+.doc__pen:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .doc__pen {
+    opacity: 1;
+  }
+}
+
+.doc__mark {
+  display: none;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--chip);
+  font-size: 12px;
+}
+
+.doc__text--edited {
+  border-left-color: var(--accent);
+}
+
+.doc__text--edited .doc__mark {
+  display: inline-block;
+}
+
+.doc__text.is-editing .doc__body,
+.doc__text.is-editing .doc__pen,
+.doc__text.is-editing .doc__mark {
+  display: none;
+}
+
+.doc__area {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.doc__editbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.doc__editstatus {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Склеенное предложение: исправление вёрстки файла контрагента, подсвечено */
+.doc__fixed {
+  background: var(--chip);
+  box-shadow: 0 0 0 2px var(--chip);
+  border-radius: 3px;
+  color: inherit;
+}
+
+.doc__fixnote {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.doc__unjoin {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Убранные лишние пробелы */
+.doc__gap {
+  display: inline-block;
+  width: 0.6em;
+  height: 1em;
+  vertical-align: text-bottom;
+  border-radius: 3px;
+  background: var(--chip);
+  white-space: pre;
+}
+
+/* Точка посреди предложения */
+.doc__dot {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--silent-bg);
+  color: var(--silent-ink);
+  text-decoration: line-through;
+}
+
+
+/* ---------- Телефон и планшет ---------- */
+
+.tabbar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --gutter: 16px;
+  }
+
+  body {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+
+  /* шапка в одну строку: логотип слева, учётная запись и тема справа; меню уходит вниз */
+  .site-header__inner {
+    flex-wrap: nowrap;
+    gap: 10px;
+    min-height: 56px;
+  }
+
+  .main-nav {
+    display: none;
+  }
+
+  .auth-nav {
+    margin-left: auto;
+  }
+
+  .tabbar {
+    position: fixed;
+    right: 12px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    left: 12px;
+    z-index: 35;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 6px;
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    background: var(--glass);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    backdrop-filter: saturate(180%) blur(18px);
+    box-shadow: var(--shadow);
+  }
+
+  .tabbar a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    border-radius: 16px;
+    color: var(--muted);
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .tabbar a[aria-current] {
+    background: var(--ink);
+    color: var(--bg);
+  }
+
+  .footer-nav {
+    display: none;
+  }
+
+  /* кнопка «Ответ контрагенту» над нижним меню */
+  .fab {
+    right: 16px;
+    bottom: calc(86px + env(safe-area-inset-bottom));
+  }
+
+  .drawer {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: calc(100vw - 16px);
+  }
+
+  /* крупные цели нажатия */
+  .button,
+  .button--small,
+  .decide__btn,
+  .form__input,
+  select,
+  input[type="text"],
+  input[type="search"] {
+    min-height: 46px;
+  }
+
+  .decide__btn {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .doc__pen {
+    min-height: 36px;
+    padding: 6px 14px;
+    font-size: 13px;
+  }
+
+  .doc__unjoin {
+    padding: 8px 4px;
+  }
+
+  .decide__text,
+  .doc__area,
+  textarea {
+    font-size: 16px; /* меньше 16px — iPhone приближает страницу при вводе */
+  }
+
+  h1,
+  .page-title {
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .doc__pen {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  /* текст договора на всю ширину: отступы списков из Word на телефоне не нужны, иначе остаётся узкая полоска */
+  .doc {
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .doc__text,
+  .doc__text[style] {
+    padding-right: 6px;
+    padding-left: 12px !important;
+    font-size: 16px;
+  }
+
+  .doc__hint {
+    padding: 8px 12px;
+  }
+
+  .doc__num {
+    font-size: 11px;
+  }
+}
+
+/* Планшет и телефон: «Править» не накладывается на текст, а стоит под абзацем справа */
+@media (max-width: 1024px), (hover: none) {
+  .doc__pen {
+    position: static;
+    display: block;
+    margin: 6px 0 0 auto;
+    opacity: 1;
+  }
+}
+
+.doc__pen {
+  font: 400 12px/1.2 var(--font-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Широкий экран: под кнопку «Править» оставлено место справа, она не закрывает текст */
+@media (min-width: 1025px) and (hover: hover) {
+  .doc__text[data-edit] {
+    padding-right: 92px;
+  }
+
+  .doc__text[data-edit] .doc__pen {
+    top: 10px;
+    right: 14px;
+  }
+}
+
+/* Удалённый и добавленный на сайте абзацы */
+.doc__text--deleted .doc__body {
+  color: var(--del);
+  text-decoration: line-through;
+}
+
+.doc__added {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-left: 3px solid var(--ok);
+  background: var(--chip);
+  border-radius: 6px;
+}
+
+.doc__added p {
+  margin: 4px 0;
+}
+
+.doc__editlabel {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.doc__comment {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--tint);
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.doc__comment p {
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+
+/* Кнопка «Показать все» под таблицей разборов: не вплотную к таблице */
+.table-wrap + p {
+  margin-top: 24px;
+}
+
+/* Карточка договора с кнопкой «Удалить» под ней */
+.card-box {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+}
+
+.card-box__del {
+  justify-self: start;
+}
+
+/* Правка текста в ячейке таблицы */
+.doc-table__p {
+  position: relative;
+  margin: 0;
+}
+
+.doc-table__p .doc__pen {
+  position: static;
+  display: inline-block;
+  margin: 0 0 0 6px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.doc-table__p:hover .doc__pen,
+.doc-table__p .doc__pen:focus-visible {
+  opacity: 1;
+}
+
+.doc-table__p.doc__text--edited {
+  background: var(--tint);
+  border-left: 0;
+  padding: 0;
+}
+
+.doc-table__p.is-editing > .doc__body,
+.doc-table__p.is-editing > .doc__pen,
+.doc-table__p.is-editing > .doc__mark {
+  display: none;
+}
+
+.doc-table__p .doc__area {
+  min-width: 140px;
+}
+
+.doc-table__p.doc__text--edited .doc__mark {
+  display: block;
+  width: max-content;
+  margin: 4px 0 0;
+  padding: 0 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Высоту договора под карточки на полях добавляет layoutNotes (min-height): лишнее место — внизу, а не между абзацами */
+@media (min-width: 1181px) {
+  .doc {
+    align-content: start;
+  }
+}
+
+/* Строки таблиц, удалённые и добавленные на сайте */
+/* зачёркивается только текст ячеек: подпись «строка удалена вами» остаётся читаемой */
+.doc-table__gone .doc__body {
+  color: var(--del);
+  text-decoration: line-through;
+}
+
+.doc-table__added td {
+  background: var(--chip);
+}
+
+.doc-table__added td:first-child {
+  box-shadow: inset 3px 0 0 var(--ok);
+}
+
+.doc__rowcells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 6px;
 }

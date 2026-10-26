@@ -178,6 +178,31 @@ class Writer:
         rpr.append(self.track(tag))
 
 
+def _near_span(text: str, after: str, deleted: str = "") -> tuple[int, int] | None:
+    """Текст правки в абзаце, из которого уже удалено в рецензировании несколько слов: юрист правил этот пункт прямо
+    в файле контрагента. Каждый недостающий кусок должен найтись среди удалённого в этом абзаце (deleted), иначе
+    это другое место. Только длинный текст: короткое «10» так не ищем."""
+    if len(after) < 40 or not deleted:
+        return None
+    blocks = [b for b in SequenceMatcher(None, text, after, autojunk=False).get_matching_blocks() if b.size >= 8]
+    if not blocks:
+        return None
+    gone = normalize(deleted)
+    pos = 0
+    for blk in blocks + [type(blocks[0])(len(text), len(after), 0)]:
+        gap = after[pos:blk.b].strip(" .,;:")
+        if gap and normalize(gap) not in gone:
+            return None
+        pos = blk.b + blk.size
+    a, b = blocks[0].a, blocks[-1].a + blocks[-1].size
+    end = after.rstrip()[-1:]
+    if end in ".;," and text[b:b + 1] == end:
+        b += 1  # точка в конце правки стоит после удалённого куска
+    if b - a > len(after) * 1.2:
+        return None
+    return a, b
+
+
 def _best_span(p, ch: dict) -> tuple[int, int] | None:
     """Где в абзаце текст контрагента «стало»: при нескольких совпадениях — ближайший к нашей редакции результат."""
     text = "".join(t for _, _, t in _nodes(p))
@@ -186,8 +211,11 @@ def _best_span(p, ch: dict) -> tuple[int, int] | None:
     left = r"(?<![\w\d])" if after[:1].isalnum() else ""
     right = r"(?![\d])" if after[-1:].isdigit() else ""
     spans = [m.span() for m in re.finditer(left + pattern(after) + right, text)] if after else []
-    if len(spans) <= 1:
-        return spans[0] if spans else None
+    if not spans:
+        deleted = "".join(t.text or "" for t in p.iter(q("delText")))
+        return _near_span(text, after, deleted)
+    if len(spans) == 1:
+        return spans[0]
     ours = normalize(ch.get("context", ""))
     return max(spans, key=lambda s: SequenceMatcher(None, normalize(text[:s[0]] + ch.get("before", "") + text[s[1]:]),
                                                    ours, autojunk=False).ratio())
@@ -320,4 +348,188 @@ def _restore_paragraph(paras: list, ch: dict, new: str, w: Writer, document: lis
     ins.append(_ins_run(new))
     p.append(ins)
     anchor.addnext(p)
+    return True
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"\s+|\w+|[^\w\s]", text)
+
+
+def apply_edit(p, new_text: str, w: Writer) -> bool:
+    """Правка текста абзаца юристом на сайте: разница между текстом в файле и новым текстом оформляется нашими
+    вставками и удалениями в рецензировании (по словам). Абзац с правками контрагента не трогается (False): его
+    текст в файле неоднозначен, там юрист отвечает решением по правке. Одинаковый текст — ничего не делает (True)."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in p.iter()):
+        return False
+    _explode(p)
+    old = "".join(t for _, _, t in _nodes(p))
+    if "\t" in old or "\n" in old:
+        return False  # табуляция и переносы режут слова непредсказуемо: правка вручную в Word
+    new_text = " ".join(new_text.split()) if "\n" in new_text else new_text
+    a, b = _tokens(old), _tokens(new_text)
+    ops = [o for o in SequenceMatcher(None, a, b, autojunk=False).get_opcodes() if o[0] != "equal"]
+    if not ops:
+        return True
+    pos = [0]
+    for tok in a:
+        pos.append(pos[-1] + len(tok))
+    for tag, i1, i2, j1, j2 in reversed(ops):  # с конца: ранние смещения не меняются
+        start, end, ins = pos[i1], pos[i2], "".join(b[j1:j2])
+        if end > start:
+            _split_at(p, end)
+            _split_at(p, start)
+            runs = _unique(_runs_in(p, start, end))
+            if not runs:
+                return False
+            d = w.delete_runs(runs)
+            if ins:
+                w.insert_after(d, ins, d[0] if len(d) else None)
+            continue
+        _split_at(p, start)  # чистая вставка
+        off, placed = 0, False
+        for r, _el, t in _nodes(p):
+            if off == start and t:
+                w.insert_before(r, ins, r)
+                placed = True
+                break
+            off += len(t)
+        if not placed:
+            nodes = _nodes(p)
+            if not nodes:
+                return False
+            w.insert_after(nodes[-1][0], ins, nodes[-1][0])
+    return True
+
+
+def collapse_spaces(p, w: Writer) -> int:
+    """Лишние пробелы в абзаце: из каждой серии пробелов остаётся первый, остальные удаляются нашей правкой. Абзац с
+    правками в тексте не трогается. Возвращает число серий."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in p.iter()):
+        return 0
+    from .unified import alignment_line
+    _explode(p)
+    full = "".join(t for _, _, t in _nodes(p))
+    if alignment_line(full):
+        return 0  # пробелы выравнивают строку («г. Москва      01.10.2026»)
+    spans = [(m.start() + 1, m.end()) for m in re.finditer(" {2,}", full.rstrip()) if m.start() > 0 or full[:m.start()].strip()]
+    done = 0
+    for a, b in reversed(spans):
+        _split_at(p, b)
+        _split_at(p, a)
+        runs = _unique(_runs_in(p, a, b))
+        if runs:
+            w.delete_runs(runs)
+            done += 1
+    return done
+
+
+def remove_dots(p, w: Writer) -> int:
+    """Точка посреди предложения (`unified.find_stray_dots`) удаляется нашей правкой в рецензировании."""
+    from .unified import find_stray_dots
+    _explode(p)
+    full = "".join(t for _, _, t in _nodes(p))
+    done = 0
+    for a in reversed(find_stray_dots(full)):
+        _split_at(p, a + 1)
+        _split_at(p, a)
+        runs = _unique(_runs_in(p, a, a + 1))
+        if runs:
+            w.delete_runs(runs)
+            done += 1
+    return done
+
+
+def delete_paragraph(p, w: Writer) -> bool:
+    """Абзац удаляется нашей правкой в рецензировании: текст зачёркнут, знак абзаца удалён. Абзац с правками в тексте
+    не трогается (False): его текст в файле неоднозначен."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in p.iter()):
+        return False
+    _explode(p)
+    runs = _unique([r for r, _, t in _nodes(p) if t])
+    if runs:
+        w.delete_runs(runs)
+    w.mark_paragraph(p, "del")
+    return True
+
+
+def insert_paragraphs_after(anchor, text: str, w: Writer) -> int:
+    """Новые абзацы (каждая строка текста — абзац) после anchor нашей вставкой в рецензировании; вид (стиль, нумерация,
+    отступы) берётся у anchor. Возвращает число вставленных абзацев."""
+    n, prev = 0, anchor
+    for line in [x.strip() for x in text.splitlines() if x.strip()]:
+        p = etree.Element(q("p"))
+        ppr = anchor.find(q("pPr"))
+        if ppr is not None:
+            ppr = copy.deepcopy(ppr)
+            for old in ppr.findall(q("rPr")):
+                ppr.remove(old)
+            p.append(ppr)
+        w.mark_paragraph(p, "ins")
+        ins = w.track("ins")
+        ins.append(_ins_run(line))
+        p.append(ins)
+        prev.addnext(p)
+        prev = p
+        n += 1
+    return n
+
+
+def row_of(p):
+    """Строка таблицы (w:tr), в которой стоит абзац; None — абзац не в таблице."""
+    for a in p.iterancestors():
+        if a.tag == q("tr"):
+            return a
+    return None
+
+
+def _row_mark(tr, el) -> None:
+    trpr = tr.find(q("trPr"))
+    if trpr is None:
+        trpr = etree.Element(q("trPr"))
+        tcs = tr.find(q("tblPrEx"))
+        (tcs.addnext if tcs is not None else (lambda x: tr.insert(0, x)))(trpr)
+    trpr.append(el)
+
+
+def delete_row(tr, w: Writer) -> bool:
+    """Строка таблицы удаляется нашей правкой: текст ячеек зачёркнут, строка помечена удалённой (w:trPr/w:del)."""
+    if any(e.tag in (q("ins"), q("del"), q("moveFrom"), q("moveTo")) for e in tr.iter() if e.getparent() is not None
+           and e.getparent().tag != q("trPr")):
+        return False
+    for p in tr.iter(q("p")):
+        _explode(p)
+        runs = _unique([r for r, _, t in _nodes(p) if t])
+        if runs:
+            w.delete_runs(runs)
+    _row_mark(tr, w.track("del"))
+    return True
+
+
+def insert_row_after(tr, cells: list[str], w: Writer) -> bool:
+    """Новая строка после tr нашей вставкой: та же разметка ячеек (ширины, границы), в каждой ячейке — свой текст."""
+    new = copy.deepcopy(tr)
+    trpr = new.find(q("trPr"))
+    if trpr is not None:
+        for old in [x for x in trpr if x.tag in (q("ins"), q("del"))]:
+            trpr.remove(old)
+    tcs = new.findall(q("tc"))
+    if not tcs:
+        return False
+    for k, tc in enumerate(tcs):
+        ps = tc.findall(q("p"))
+        for extra in ps[1:]:
+            tc.remove(extra)
+        for other in [x for x in tc if x.tag not in (q("tcPr"), q("p"))]:
+            tc.remove(other)  # вложенные таблицы и прочее — не копируем
+        p = ps[0] if ps else etree.SubElement(tc, q("p"))
+        for child in [x for x in p if x.tag != q("pPr")]:
+            p.remove(child)
+        text = cells[k].strip() if k < len(cells) else ""
+        if text:
+            ins = w.track("ins")
+            ins.append(_ins_run(text))
+            p.append(ins)
+        w.mark_paragraph(p, "ins")
+    _row_mark(new, w.track("ins"))
+    tr.addnext(new)
     return True

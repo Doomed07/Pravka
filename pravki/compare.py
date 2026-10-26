@@ -7,10 +7,11 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from difflib import SequenceMatcher
 
 from .classify import topic_scores
-from .docx_reader import view_paragraphs
+from .docx_reader import segment_included, view_paragraphs
 from .extract import _short, extract_tracked
 from .model import ANNOTATOR, Change, DocxDoc
 from .textdiff import diff_changes, flags_for_change, normalize, strip_label
@@ -85,6 +86,54 @@ def resolve_ours(our_authors: list[str] | None, base: DocxDoc | None) -> tuple[s
                    "контрагента. Укажите, кто из авторов наш."]
 
 
+def new_ours(base: DocxDoc, ours: set[str]):
+    """Проверка куска версии контрагента: наша правка, сделанная уже после отправленной версии (см. without_new_ours)."""
+    mine = [s.date[:19] for para in base.paragraphs for s in para.segments
+            if s.kind != "equal" and s.author in ours and s.author != ANNOTATOR and s.date]
+    last = max(mine, default="")
+
+    def new(s) -> bool:
+        return (s.kind != "equal" and s.author in ours and s.author != ANNOTATOR
+                and (not last or bool(s.date and s.date[:19] > last)))
+
+    return new
+
+
+def without_new_ours(base: DocxDoc | None, theirs: DocxDoc, ours: set[str]) -> tuple[DocxDoc, int]:
+    """Версия контрагента без наших правок, сделанных уже после отправленной версии. Возвращает (версия, сколько мест).
+
+    Бывает, что юрист начал отвечать прямо в присланном файле: его правки в рецензировании — не правки контрагента.
+    Прежние наши правки (до последней правки в отправленной версии) остаются: контрагент мог их не принять и не
+    отклонить. Новые убираются: наша вставка — как будто её нет, наше удаление — текст на месте (а удалённая нами
+    вставка контрагента снова его вставка). Если в отправленной версии наших правок нет, новые — все наши правки.
+    """
+    if base is None:
+        return theirs, 0
+    new = new_ours(base, ours)
+    count = 0
+    paragraphs = []
+    reworked = {}
+    for para in theirs.paragraphs:
+        if not any(new(s) for s in para.segments):
+            paragraphs.append(para)
+            continue
+        reworked[para.index] = para
+        segs = []
+        for s in para.segments:
+            if not new(s):
+                segs.append(s)
+                continue
+            count += 1
+            if s.kind == "del" and s.ins_author is not None and s.ins_author not in ours:
+                segs.append(replace(s, kind="ins", author=s.ins_author, date="", ins_author=None, rev=""))
+            elif s.kind == "del":
+                segs.append(replace(s, kind="equal", author="", date="", ins_author=None, rev=""))
+        paragraphs.append(replace(para, segments=segs))
+    if not count:
+        return theirs, 0
+    return replace(theirs, paragraphs=paragraphs, reworked=reworked), count
+
+
 def _tracked_key(c: Change) -> tuple:
     return (c.kind, c.author, c.date, normalize(c.before), normalize(c.after))
 
@@ -115,6 +164,74 @@ def paired_views(base: DocxDoc, theirs: DocxDoc, ours, mode: str = "rejected"):
     return view(base, strip_base), view(theirs, strip_theirs)
 
 
+def _our_rework(bp, tp, reworked, ours) -> bool:
+    """Отличие абзаца — наша же переработка после отправки, а не «тихая» правка контрагента.
+
+    Наша новая правка могла убрать часть нашей прежней вставки без отметки (свою вставку Word удаляет без следа).
+    Считаем отличие нашим, только если всё, что исчезло, было нашей вставкой в отправленной версии, а всё, что
+    появилось, — наши вставки в файле контрагента. Возвращённый контрагентом текст (он отклонил наше удаление)
+    нашим не станет: в его файле это обычный текст.
+    """
+    para = reworked.get(tp.index)
+    if para is None:
+        return False
+
+    def text_mask(segments):
+        text, mask = [], []
+        for s in segments:
+            if segment_included(s, "rejected", ours):
+                mine = s.kind == "ins" and s.author in ours
+                text.append(s.text)
+                mask.extend([mine] * len(s.text))
+        return "".join(text), mask
+
+    btext, bmask = text_mask(bp.segments)
+    ttext, tmask = text_mask(para.segments)
+    if btext == ttext:
+        return False
+    sm = SequenceMatcher(None, btext, ttext, autojunk=False)
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == "equal":
+            continue
+        if any(not bmask[k] and not btext[k].isspace() for k in range(i1, i2)):
+            return False
+        if any(not tmask[k] and not ttext[k].isspace() for k in range(j1, j2)):
+            return False
+    return True
+
+
+def _pair_reworked(pairs, base_view, their_view, reworked, ours):
+    """Наш переписанный после отправки абзац мог не сопоставиться со своим прежним видом (тексты слишком разные) и
+    выглядел бы удалённым и вставленным. Среди несопоставленных абзацев между двумя сопоставленными связываем
+    по порядку те, где отличие — наша переработка (_our_rework)."""
+    out, run = [], []
+
+    def flush():
+        used: set[int] = set()
+        matched: dict[int, int] = {}
+        for i, j in run:
+            if i is None:
+                k = next((d for d, e in run if e is None and d not in used and _our_rework(
+                    base_view[d][0], their_view[j][0], reworked, ours)), None)
+                if k is not None:
+                    used.add(k)
+                    matched[j] = k
+        for i, j in run:
+            if j is None and i in used:
+                continue
+            out.append((matched[j], j) if i is None and j in matched else (i, j))
+        run.clear()
+
+    for x in pairs:
+        if x[0] is not None and x[1] is not None:
+            flush()
+            out.append(x)
+        else:
+            run.append(x)
+    flush()
+    return out
+
+
 def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -> list[Change]:
     """Отличия текста, не отмеченные в рецензировании.
 
@@ -128,6 +245,8 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
     # наша версия со всеми правками принятыми: так видно, что контрагент просто принял правку из рецензирования
     base_accepted = {p.index: normalize(t) for p, t in paired_views(base, theirs, ours, "accepted")[0]}
     pairs = _align([t for _, t in base_view], [t for _, t in their_view])
+    if theirs.reworked:
+        pairs = _pair_reworked(pairs, base_view, their_view, theirs.reworked, ours)
     changes: list[Change] = []
     last_order = -1.0
     for i, j in pairs:
@@ -137,6 +256,8 @@ def find_untracked(base: DocxDoc, theirs: DocxDoc, ours: set[str], label: str) -
         if i is not None and j is not None:
             bp, btext = base_view[i]
             if normalize(btext) == normalize(ttext):
+                continue
+            if _our_rework(bp, tp, theirs.reworked, ours):
                 continue
             accepted_by = []
             if base_accepted.get(bp.index) == normalize(ttext):

@@ -72,6 +72,16 @@ func (h *ReviewsHTTPHandler) Create(rw http.ResponseWriter, r *http.Request) {
 		Theirs: *theirs, Base: base,
 		Playbook: r.FormValue("playbook"), OurAuthors: r.FormValue("our_authors"),
 		Company: r.FormValue("company"), ConfirmRole: r.FormValue("confirm_role"), ProjectName: r.FormValue("project_name"),
+		CounterpartyName: r.FormValue("counterparty_name"), CounterpartyINN: r.FormValue("counterparty_inn"),
+		FirstVersion: r.FormValue("first_version") == "1",
+	}
+	if v := r.FormValue("counterparty_id"); v != "" {
+		id, err := strconv.Atoi(v)
+		if err != nil || id <= 0 {
+			resp.ErrorResponse(fmt.Errorf("номер контрагента %q: %w", v, core_errors.ErrInvalidArgument), "invalid counterparty")
+			return
+		}
+		req.CounterpartyID = id
 	}
 	if v := r.FormValue("project_id"); v != "" {
 		id, err := strconv.Atoi(v)

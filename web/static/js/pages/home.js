@@ -1,6 +1,7 @@
-// Главная: гостю — что это за сервис и вход; вошедшему — форма нового разбора и список прошлых.
-import { ApiError, projects, reviews } from '../api.js';
+// Главная: гостю — что это за сервис и вход; вошедшему — загрузка первой версии договора, контрагенты и последние разборы.
+import { ApiError, contracts, counterparties, reviews } from '../api.js';
 import { $, currentUser, emptyState, html, mount, renderLayout, setTitle } from '../ui.js';
+import { fmtDate, memoLoad, memoSave, wireDrops, wireReviewSubmit } from '../upload.js';
 
 renderLayout({ nav: 'home' });
 setTitle('');
@@ -10,23 +11,6 @@ const COUNTS = [
   ['нужно решение юриста', 'Решает юрист'],
   ['красные линии', 'Красные линии'],
 ];
-
-// Поля, которые удобно не вводить каждый раз. Хранятся только в этом браузере; сбой хранилища не мешает работе.
-const MEMO = 'pravki.form';
-function memoLoad() {
-  try {
-    return JSON.parse(localStorage.getItem(MEMO) || '{}');
-  } catch {
-    return {};
-  }
-}
-function memoSave(v) {
-  try {
-    localStorage.setItem(MEMO, JSON.stringify(v));
-  } catch {
-    /* приватный режим и т.п. */
-  }
-}
 
 function guestView() {
   return html`
@@ -50,212 +34,307 @@ function guestView() {
     </ol>`;
 }
 
-function formView(playbooks, memo, contracts, chosen) {
+// Первая версия договора: так, как её прислал контрагент, без наших правок. Файл выбран — программа находит контрагента
+// по преамбуле, юрист подтверждает или правит и запускает разбор.
+function uploadView(playbooks, memo) {
   const options = playbooks.map((p) => html`<option value="${p.key}" data-role="${p.role}"${p.key === memo.playbook ? ' selected' : ''}>${p.name}</option>`);
   return html`
     <header class="page-header">
-      <h1 class="page-title">Новый разбор</h1>
-      <p class="page-subtitle">Редакция контрагента обязательна. Ваша отправленная редакция нужна, чтобы найти правки без режима рецензирования; для PDF она обязательна: в PDF рецензирования нет. Word с примечаниями и ответ в Word — только для .docx.</p>
+      <h1 class="page-title">Новый договор</h1>
+      <p class="page-subtitle">Загрузите первую версию — так, как её прислал контрагент, без ваших правок. Программа найдёт контрагента, создаст договор
+      и папку для него. Следующие версии добавляются на странице договора.</p>
     </header>
     <p class="alert" role="alert" id="review-alert" hidden></p>
     <form class="form form--wide" id="review-form" novalidate>
-      <div class="drops">
-        <label class="drop" for="f-base">
-          <span class="drop__title">Наша редакция</span>
-          <span class="drop__file" data-empty="Отправленная контрагенту, .docx или .odt — перетащите или выберите">Отправленная контрагенту, .docx или .odt — перетащите или выберите</span>
-          <input id="f-base" name="base" type="file" accept=".docx,.odt,.pdf">
-        </label>
-        <label class="drop drop--main" for="f-theirs">
-          <span class="drop__title">Редакция контрагента</span>
-          <span class="drop__file" data-empty="Его ответ, .docx, .odt или PDF — перетащите или выберите">Его ответ, .docx, .odt или PDF — перетащите или выберите</span>
-          <input id="f-theirs" name="theirs" type="file" accept=".docx,.odt,.pdf" required>
-        </label>
-      </div>
-      <div class="form__row">
-        <div class="form__field">
-          <label class="form__label" for="f-project">Договор</label>
-          <select class="form__input" id="f-project" name="project_id">
-            <option value="">Новый договор</option>
-            ${contracts.map((c) => html`<option value="${c.id}" data-playbook="${c.playbook}" data-role="${c.our_role}"${c.id === chosen ? ' selected' : ''}>Следующий раунд: ${c.name} (раундов: ${c.rounds})</option>`)}
-          </select>
-        </div>
-        <div class="form__field" id="f-project-name-field">
-          <label class="form__label" for="f-project-name">Название нового договора</label>
-          <input class="form__input" id="f-project-name" name="project_name" type="text" maxlength="255" placeholder="по умолчанию — имя файла контрагента">
-        </div>
-      </div>
-      <div class="form__field">
-        <label class="form__label" for="f-playbook">Плейбук</label>
-        <select class="form__input" id="f-playbook" name="playbook">
-          <option value="">Без плейбука — только найти и показать правки</option>
-          ${options}
-        </select>
-      </div>
-      <div class="form__row">
-        <div class="form__field">
-          <label class="form__label" for="f-authors">Авторы ваших правок в Word</label>
-          <input class="form__input" id="f-authors" name="our_authors" type="text" maxlength="500" value="${memo.our_authors || ''}" placeholder="через запятую, как они подписаны в Word: Иванов И.И., Петрова А.С.">
-        </div>
-        <div class="form__field">
-          <label class="form__label" for="f-company">ИНН или наименование вашей компании</label>
-          <input class="form__input" id="f-company" name="company" type="text" maxlength="500" value="${memo.company || ''}" placeholder="по ним программа найдёт вашу сторону">
-        </div>
-      </div>
-      <label class="check">
-        <input type="checkbox" id="f-confirm"${memo.confirm ? ' checked' : ''}>
-        <span>Ваша сторона в договоре называется иначе, чем в плейбуке (например, «Участник» вместо «Заказчика») — подтверждаю роль плейбука вручную</span>
+      <label class="drop drop--main drop--big" for="f-theirs">
+        <span class="drop__icon" aria-hidden="true">⇪</span>
+        <span class="drop__title">Первая версия договора</span>
+        <span class="drop__file" data-empty="Перетащите файл сюда или выберите: .docx, .odt или PDF">Перетащите файл сюда или выберите: .docx, .odt или PDF</span>
+        <input id="f-theirs" name="theirs" type="file" accept=".docx,.odt,.pdf" required>
       </label>
-      <p><button class="button button--cta" type="submit" id="review-submit">Свести и разобрать →</button></p>
-      <p class="form__hint" id="review-progress" hidden role="status">Разбираю договор… Это может занять до нескольких минут.</p>
+      <p class="form__hint" id="detect-status" role="status" hidden></p>
+      <p class="chips" id="detect-parties" hidden></p>
+      <section class="confirm" id="confirm" aria-labelledby="confirm-title" hidden>
+        <h2 class="confirm__title" id="confirm-title">Проверьте данные</h2>
+        <div class="form__row">
+          <div class="form__field">
+            <label class="form__label" for="f-cp">Контрагент</label>
+            <select class="form__input" id="f-cp" name="counterparty_id"><option value="">Новый контрагент</option></select>
+          </div>
+          <div class="form__field" id="f-cp-new">
+            <label class="form__label" for="f-cp-name">Название контрагента</label>
+            <input class="form__input" id="f-cp-name" name="counterparty_name" type="text" maxlength="255" placeholder="например, ООО «Ромашка»">
+          </div>
+          <div class="form__field" id="f-cp-inn-field">
+            <label class="form__label" for="f-cp-inn">ИНН контрагента</label>
+            <input class="form__input" id="f-cp-inn" name="counterparty_inn" type="text" inputmode="numeric" maxlength="12" placeholder="10 или 12 цифр, если есть">
+          </div>
+        </div>
+        <div class="form__row">
+          <div class="form__field">
+            <label class="form__label" for="f-project-name">Название договора</label>
+            <input class="form__input" id="f-project-name" name="project_name" type="text" maxlength="255" placeholder="по умолчанию — имя файла">
+          </div>
+          <div class="form__field">
+            <label class="form__label" for="f-playbook">Плейбук</label>
+            <select class="form__input" id="f-playbook" name="playbook">
+              <option value="">Без плейбука — только найти и показать правки</option>
+              ${options}
+            </select>
+          </div>
+        </div>
+        <details class="more">
+          <summary class="more__summary">Дополнительно: ваша компания, авторы правок, сторона</summary>
+          <div class="form__row">
+            <div class="form__field">
+              <label class="form__label" for="f-company">ИНН или наименование вашей компании</label>
+              <input class="form__input" id="f-company" name="company" type="text" maxlength="500" value="${memo.company || ''}" placeholder="ИНН и/или название, например: 7701234567, ООО «Ромашка»">
+            </div>
+            <div class="form__field">
+              <label class="form__label" for="f-authors">Авторы ваших правок в Word</label>
+              <input class="form__input" id="f-authors" name="our_authors" type="text" maxlength="500" value="${memo.our_authors || ''}" placeholder="через запятую, как они подписаны в Word">
+            </div>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="f-confirm"${memo.confirm ? ' checked' : ''}>
+            <span>Ваша сторона в договоре называется иначе, чем в плейбуке (например, «Участник» вместо «Заказчика») — подтверждаю роль плейбука вручную</span>
+          </label>
+        </details>
+        <p><button class="button button--cta" type="submit" id="review-submit">Создать договор и разобрать →</button></p>
+        <p class="form__hint" id="review-progress" hidden role="status">Разбираю договор… Это может занять до нескольких минут.</p>
+      </section>
     </form>`;
 }
 
-function fmtDate(iso) {
-  try {
-    return new Date(iso).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
-  } catch {
-    return iso;
-  }
+function counterpartiesView(list) {
+  if (!list.length) return emptyState('Контрагентов пока нет. Загрузите первый договор выше.');
+  const cards = list.map((c) => html`
+    <a class="card" href="/counterparties/${c.id}" data-name="${c.name.toLowerCase()}">
+      <span class="card__title">${c.name}</span>
+      <span class="card__meta">${c.inn ? `ИНН ${c.inn}` : 'ИНН не указан'}</span>
+      <span class="card__foot">
+        <span class="chip">договоров: ${c.contracts}</span>
+        <span class="card__date">${fmtDate(c.last_at)}</span>
+      </span>
+    </a>`);
+  return html`
+    <input class="form__input search" id="cp-search" type="search" placeholder="Найти контрагента…" aria-label="Найти контрагента">
+    <div class="cards" id="cp-cards">${cards}</div>
+    <p class="form__hint" id="cp-none" hidden>Ничего не найдено.</p>`;
 }
+
+const RECENT = 8; // сколько последних разборов показывать сразу
 
 function listView(items) {
   if (!items.length) return emptyState('Разборов пока нет. Загрузите первый договор выше.');
-  const rows = items.map((r) => html`
-    <tr>
+  const rows = items.map((r, i) => html`
+    <tr${i >= RECENT ? html` class="is-extra" hidden` : ''}>
       <td>${fmtDate(r.created_at)}</td>
       <td><a href="/reviews/${r.id}">${r.theirs_name}</a></td>
+      <td>${r.counterparty_name ? html`<a href="/counterparties/${r.counterparty_id}">${r.counterparty_name}</a>` : '—'}</td>
       <td>${r.project_name ? html`<a href="/projects/${r.project_id}">${r.project_name}</a> · раунд ${r.round}` : '—'}</td>
-      <td>${r.playbook_name || '—'}</td>
       ${COUNTS.map(([k]) => html`<td class="num">${(r.counts || {})[k] ?? 0}</td>`)}
     </tr>`);
   return html`
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>Когда</th><th>Файл контрагента</th><th>Договор</th><th>Плейбук</th>${COUNTS.map(([, l]) => html`<th class="num">${l}</th>`)}</tr></thead>
+        <thead><tr><th>Когда</th><th>Файл контрагента</th><th>Контрагент</th><th>Договор</th>${COUNTS.map(([, l]) => html`<th class="num">${l}</th>`)}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${items.length > RECENT ? html`<p><button class="button button--ghost button--small" type="button" id="show-all">Показать все (${items.length})</button></p>` : ''}`;
 }
 
 async function loggedInView() {
-  const [playbooks, items, contracts] = await Promise.all([reviews.playbooks().catch(() => null), reviews.list(50, 0),
-    projects.list().catch(() => [])]);
+  // старая ссылка «Следующий раунд» вела на главную: теперь раунды добавляются на странице договора
+  const asked = Number(new URLSearchParams(location.search).get('project')) || 0;
+  if (asked) {
+    location.replace('/projects/' + asked);
+    return;
+  }
+  const [playbooks, items, cps] = await Promise.all([reviews.playbooks().catch(() => null), reviews.list(50, 0),
+    counterparties.list().catch(() => [])]);
   const memo = memoLoad();
-  const asked = Number(new URLSearchParams(location.search).get('project')) || 0; // ссылка «Следующий раунд»
-  const chosen = (contracts || []).some((c) => c.id === asked) ? asked : 0;
   mount($('#home'), html`
     ${playbooks === null ? html`<p class="alert">Движок разбора не отвечает: список плейбуков не загружен. Разбор без плейбука всё равно можно запустить.</p>` : ''}
-    ${formView(playbooks || [], memo, contracts || [], chosen)}
+    ${uploadView(playbooks || [], memo)}
+    <section class="section" aria-labelledby="cp-title">
+      <div class="section-heading"><h2 class="section-heading__title" id="cp-title">Контрагенты</h2></div>
+      ${counterpartiesView(cps || [])}
+    </section>
     <section class="section" aria-labelledby="list-title">
-      <div class="section-heading"><h2 class="section-heading__title" id="list-title">Мои разборы</h2></div>
+      <div class="section-heading"><h2 class="section-heading__title" id="list-title">Последние разборы</h2></div>
       ${listView(items || [])}
     </section>`);
-  wireForm();
+  wireForm(cps || []);
+  wireLists();
 }
 
-// Зоны загрузки: показать имя выбранного файла и подсветить зону, когда над ней держат файл.
-function wireDrops() {
-  document.querySelectorAll('.drop').forEach((drop) => {
-    const input = drop.querySelector('input');
-    const label = drop.querySelector('.drop__file');
-    const show = () => {
-      const f = input.files[0];
-      label.textContent = f ? f.name : label.dataset.empty;
-      drop.classList.toggle('has-file', !!f);
-    };
-    input.addEventListener('change', show);
-    input.addEventListener('dragenter', () => drop.classList.add('is-over'));
-    ['dragleave', 'drop'].forEach((e) => input.addEventListener(e, () => drop.classList.remove('is-over')));
-    show();
-  });
+// Поиск по контрагентам и «показать все» в списке разборов.
+function wireLists() {
+  const search = $('#cp-search');
+  if (search) {
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      let shown = 0;
+      document.querySelectorAll('#cp-cards .card').forEach((card) => {
+        const hit = !q || card.dataset.name.includes(q);
+        card.hidden = !hit;
+        if (hit) shown++;
+      });
+      $('#cp-none').hidden = shown > 0;
+    });
+  }
+  const all = $('#show-all');
+  if (all) {
+    const total = all.textContent.match(/\((\d+)\)/)?.[1];
+    let open = false;
+    all.setAttribute('aria-expanded', 'false');
+    all.addEventListener('click', () => {
+      open = !open;
+      document.querySelectorAll('.is-extra').forEach((row) => { row.hidden = !open; });
+      all.textContent = open ? 'Скрыть' : `Показать все (${total})`;
+      all.setAttribute('aria-expanded', String(open));
+      if (!open) all.closest('p').previousElementSibling.scrollIntoView({ block: 'nearest' }); // не оставаться внизу пустого места
+    });
+  }
 }
 
-// Выбран существующий договор: плейбук берём из прошлого раунда и не даём поменять (роль у договора одна),
-// а поле названия нового договора прячем.
-function wireProject() {
-  const project = $('#f-project');
-  const playbook = $('#f-playbook');
-  const apply = () => {
-    const opt = project.selectedOptions[0];
-    const existing = !!project.value;
-    $('#f-project-name-field').hidden = existing;
-    if (existing && opt.dataset.playbook && [...playbook.options].some((o) => o.value === opt.dataset.playbook)) {
-      playbook.value = opt.dataset.playbook;
-    }
-    playbook.disabled = existing && !!opt.dataset.playbook;
-  };
-  project.addEventListener('change', apply);
-  apply();
-}
+const stem = (name) => name.replace(/\.(docx|odt|pdf)$/i, '');
 
-function wireForm() {
-  wireDrops();
-  wireProject();
+function wireForm(cps) {
   const form = $('#review-form');
   const alertBox = $('#review-alert');
-  const submit = $('#review-submit');
-  const progress = $('#review-progress');
-  let confirmRole = ''; // роль, которую юрист подтвердил после ответа 422
+  const confirmBox = $('#confirm');
+  const status = $('#detect-status');
+  const cpSelect = $('#f-cp');
+  const preset = Number(new URLSearchParams(location.search).get('counterparty')) || 0; // «Новый договор» со страницы контрагента
+  cps.forEach((c) => cpSelect.append(new Option(c.name, String(c.id))));
 
   const show = (msg) => {
     alertBox.textContent = msg;
     alertBox.hidden = !msg;
   };
+  const syncCounterparty = () => {
+    const existing = !!cpSelect.value;
+    $('#f-cp-new').hidden = existing;
+    $('#f-cp-inn-field').hidden = existing;
+  };
+  cpSelect.addEventListener('change', syncCounterparty);
 
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    show('');
+  // найденное по договору: контрагент, наша компания, название договора и плейбук. Пользователь может всё поправить.
+  const partyLine = (p) => [p.inn, p.name].filter(Boolean).join(', ');
+  const setCounterparty = (cp) => {
+    const same = cps.find((c) => c.name.toLowerCase() === cp.name.toLowerCase());
+    cpSelect.value = same ? String(same.id) : '';
+    $('#f-cp-name').value = same ? '' : cp.name;
+    $('#f-cp-inn').value = same ? '' : cp.inn;
+    syncCounterparty();
+  };
+  const fill = (found) => {
+    const chips = $('#detect-parties');
+    chips.hidden = true;
+    chips.textContent = '';
+    cpSelect.value = preset && cps.some((c) => c.id === preset) ? String(preset) : '';
+    $('#f-cp-name').value = '';
+    $('#f-cp-inn').value = '';
+    const cp = found && found.counterparty;
+    if (found && found.title && !$('#f-project-name').dataset.touched) $('#f-project-name').value = found.title;
+    if (found && found.playbook && [...$('#f-playbook').options].some((o) => o.value === found.playbook)) {
+      $('#f-playbook').value = found.playbook;
+    }
+    if (found && found.ours && !$('#f-company').value.trim()) $('#f-company').value = partyLine(found.ours);
+    const how = found && found.source === 'model' ? ' (стороны нашла локальная модель, названия проверены по тексту договора)' : '';
+    if (cp) {
+      setCounterparty(cp);
+      status.textContent = `Контрагент определён по договору: ${cp.name}${cp.role ? ` (${cp.role})` : ''}${how}. Проверьте и при необходимости поправьте.`;
+    } else if (found && found.parties.length) {
+      status.textContent = `Стороны найдены${how}, но какая из них ваша — не определено. Укажите контрагента кнопкой — вторая сторона станет «вашей компанией»:`;
+      found.parties.forEach((party) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'button button--ghost button--small';
+        button.textContent = `${party.name}${party.role ? ` — ${party.role}` : ''}`;
+        button.addEventListener('click', () => {
+          setCounterparty(party);
+          const mine = found.parties.find((x) => x !== party);
+          const fillCompany = mine && !$('#f-company').value.trim();
+          if (fillCompany) $('#f-company').value = partyLine(mine);
+          status.textContent = `Контрагент: ${party.name}.${fillCompany ? ' Ваша компания подставлена в «Дополнительно».' : ''}`;
+          chips.hidden = true;
+        });
+        chips.append(button);
+      });
+      chips.hidden = false;
+    } else {
+      status.textContent = 'Стороны в начале договора не найдены. Выберите или введите контрагента.';
+    }
+  };
+
+  const detect = async () => {
     const theirs = $('#f-theirs').files[0];
+    show('');
+    confirmBox.hidden = true;
     if (!theirs) {
-      show('Выберите файл редакции контрагента (.docx, .odt или PDF).');
-      $('#f-theirs').focus();
+      status.hidden = true;
       return;
     }
-    if (/\.pdf$/i.test(theirs.name) && !$('#f-base').files[0]) {
-      show('Для PDF загрузите и вашу отправленную редакцию: в PDF нет рецензирования, правки находятся сравнением с ней.');
-      $('#f-base').focus();
-      return;
-    }
-    const select = $('#f-playbook');
-    const role = select.selectedOptions[0] ? select.selectedOptions[0].dataset.role || '' : '';
-    const confirm = $('#f-confirm').checked;
-    memoSave({ our_authors: $('#f-authors').value, company: $('#f-company').value, playbook: $('#f-project').value ? memoLoad().playbook : select.value, confirm });
-
+    status.hidden = false;
+    status.textContent = 'Читаю договор…';
     const fd = new FormData();
     fd.append('theirs', theirs);
-    const base = $('#f-base').files[0];
-    if (base) fd.append('base', base);
-    fd.append('playbook', select.value);
-    if ($('#f-project').value) fd.append('project_id', $('#f-project').value);
-    else fd.append('project_name', $('#f-project-name').value);
-    fd.append('our_authors', $('#f-authors').value);
     fd.append('company', $('#f-company').value);
-    if (confirmRole || (confirm && role)) fd.append('confirm_role', confirmRole || role);
-
-    submit.disabled = true;
-    progress.hidden = false;
     try {
-      const rev = await reviews.create(fd);
-      location.href = '/reviews/' + rev.id;
+      fill(await contracts.detect(fd));
     } catch (err) {
-      const status = err instanceof ApiError ? err.status : 0;
-      if (status === 422 && err.data && err.data.role) {
-        confirmRole = err.data.role;
-        show(`Сторона договора не подтверждена: ${err.message} Если вы действительно «${err.data.role}», нажмите «Разобрать» ещё раз — роль будет подтверждена вручную.`);
-        submit.textContent = `Подтвердить роль «${err.data.role}» и разобрать →`;
-      } else if (status === 400) {
-        // текст ошибки проверки (неверный файл, роль не совпала с прошлыми раундами) — для юриста, без служебного хвоста
-        show(`Не удалось разобрать: ${(err.detail || '').replace(/: invalid argument$/, '') || err.message}`);
-      } else if (status === 502) {
-        show('Движок разбора не отвечает. Проверьте, что контейнер engine запущен, и попробуйте ещё раз.');
-      } else if (status === 401) {
-        location.href = '/login?next=/';
-      } else {
-        show('Не удалось выполнить разбор. Попробуйте ещё раз чуть позже.');
+      if (err instanceof ApiError && err.status === 400) {
+        status.hidden = true;
+        show(`Файл не подходит: ${(err.detail || '').replace(/: invalid argument$/, '') || err.message}`);
+        return;
       }
-      submit.disabled = false;
-      progress.hidden = true;
+      fill(null); // поиск сторон не удался — юрист вводит контрагента сам
+      status.textContent = 'Не удалось определить контрагента автоматически. Выберите или введите его.';
     }
+    if (!$('#f-project-name').value) $('#f-project-name').placeholder = stem(theirs.name);
+    confirmBox.hidden = false;
+  };
+  wireDrops(detect);
+  $('#f-project-name').addEventListener('input', () => { $('#f-project-name').dataset.touched = '1'; });
+  $('#f-company').addEventListener('change', () => {
+    if ($('#f-theirs').files[0]) detect();
+  });
+
+  wireReviewSubmit({
+    form, submit: $('#review-submit'), progress: $('#review-progress'), show,
+    collect() {
+      const theirs = $('#f-theirs').files[0];
+      if (!theirs) {
+        show('Выберите файл первой версии договора (.docx, .odt или PDF).');
+        return null;
+      }
+      if (!cpSelect.value && !$('#f-cp-name').value.trim()) {
+        show('Укажите контрагента: выберите из списка или введите название.');
+        $('#f-cp-name').focus();
+        return null;
+      }
+      const select = $('#f-playbook');
+      const role = select.selectedOptions[0] ? select.selectedOptions[0].dataset.role || '' : '';
+      const confirm = $('#f-confirm').checked;
+      memoSave({ our_authors: $('#f-authors').value, company: $('#f-company').value, playbook: select.value, confirm });
+      const fd = new FormData();
+      fd.append('theirs', theirs);
+      fd.append('first_version', '1'); // правок в ней нет: положения проверяются по плейбуку (для PDF наша версия не нужна)
+      fd.append('playbook', select.value);
+      if (cpSelect.value) fd.append('counterparty_id', cpSelect.value);
+      else {
+        fd.append('counterparty_name', $('#f-cp-name').value);
+        fd.append('counterparty_inn', $('#f-cp-inn').value);
+      }
+      fd.append('project_name', $('#f-project-name').value);
+      fd.append('our_authors', $('#f-authors').value);
+      fd.append('company', $('#f-company').value);
+      return { fd, role, confirm };
+    },
   });
 }
 
@@ -268,6 +347,6 @@ currentUser().then(async (user) => {
     await loggedInView();
   } catch (err) {
     if (!(err instanceof ApiError)) console.error(err);
-    mount($('#home'), html`<p class="alert">Не удалось загрузить разборы. Обновите страницу чуть позже.</p>`);
+    mount($('#home'), html`<p class="alert">Не удалось загрузить данные. Обновите страницу чуть позже.</p>`);
   }
 });

@@ -26,6 +26,10 @@ type fakeService struct {
 	userID    int
 	choice    core_domain.ReviewChoice
 	author    string
+	renamed   string
+	moved     [2]int
+	deleted   int
+	company   string
 }
 
 func (f *fakeService) Playbooks(context.Context) ([]core_domain.Playbook, error) {
@@ -122,6 +126,49 @@ func (f *fakeService) Project(_ context.Context, userID, id int) (core_domain.Pr
 	return core_domain.ProjectView{Project: core_domain.ProjectSummary{Project: core_domain.Project{ID: 3, Name: "Поставка Омега"}, Rounds: 2},
 		Rounds: []core_domain.ProjectRoundView{{ReviewID: 8, Round: 1, TheirsName: "v1.docx", Total: 4, New: 4},
 			{ReviewID: 9, Round: 2, TheirsName: "v2.docx", Total: 5, New: 1, Repeat: 2, Returned: 1, Closed: 3}}}, nil
+}
+func (f *fakeService) Counterparties(_ context.Context, userID int) ([]core_domain.CounterpartySummary, error) {
+	if userID != 1 {
+		return []core_domain.CounterpartySummary{}, nil
+	}
+	return []core_domain.CounterpartySummary{{Counterparty: core_domain.Counterparty{ID: 2, Name: "ООО «Ромашка»", INN: "7702345678", Dir: "ООО «Ромашка»"},
+		Contracts: 1, Rounds: 2}}, nil
+}
+func (f *fakeService) Counterparty(_ context.Context, userID, id int) (core_domain.CounterpartyView, error) {
+	if userID != 1 || id != 2 {
+		return core_domain.CounterpartyView{}, core_errors.ErrNotFound
+	}
+	return core_domain.CounterpartyView{
+		Counterparty: core_domain.CounterpartySummary{Counterparty: core_domain.Counterparty{ID: 2, Name: "ООО «Ромашка»"}, Contracts: 1},
+		Projects: []core_domain.ProjectSummary{{Project: core_domain.Project{ID: 3, Name: "Поставка", CounterpartyID: 2,
+			CounterpartyName: "ООО «Ромашка»", Dir: "ООО «Ромашка»/Поставка"}, Rounds: 2}}}, nil
+}
+func (f *fakeService) RenameCounterparty(_ context.Context, userID, id int, name, inn string) error {
+	if userID != 1 || id != 2 {
+		return core_errors.ErrNotFound
+	}
+	f.renamed = name + "|" + inn
+	return nil
+}
+func (f *fakeService) MoveProject(_ context.Context, userID, projectID, counterpartyID int) error {
+	if userID != 1 {
+		return core_errors.ErrNotFound
+	}
+	f.moved = [2]int{projectID, counterpartyID}
+	return nil
+}
+func (f *fakeService) DeleteProject(_ context.Context, userID, id int) error {
+	if userID != 1 || id == 99 {
+		return core_errors.ErrNotFound
+	}
+	f.deleted = id
+	return nil
+}
+func (f *fakeService) DetectParties(_ context.Context, theirs core_domain.UploadedFile, company string) (core_domain.DetectedParties, error) {
+	f.company = company
+	return core_domain.DetectedParties{
+		Parties:      []core_domain.DetectedParty{{Role: "Исполнитель", Name: "Альфа"}, {Role: "Заказчик", Name: "Бета", INN: "7702345678"}},
+		Counterparty: &core_domain.DetectedParty{Role: "Заказчик", Name: "Бета", INN: "7702345678"}}, nil
 }
 func (f *fakeService) Rounds(_ context.Context, userID, _ int) (core_domain.ReviewRounds, error) {
 	if userID != 1 {
@@ -394,5 +441,107 @@ func TestGet_HasDocxTellsWhetherWordFileExists(t *testing.T) {
 	}
 	if body := get("/reviews/7"); !strings.Contains(body, `"has_docx":false`) {
 		t.Errorf("разбор PDF или odt: %s", body)
+	}
+}
+
+func TestCreate_CounterpartyFields(t *testing.T) {
+	svc := &fakeService{}
+	rec := httptest.NewRecorder()
+	router(svc, 1).ServeHTTP(rec, upload(t, map[string]string{"counterparty_id": "2"}, true))
+	if rec.Code != http.StatusCreated || svc.got.CounterpartyID != 2 {
+		t.Fatalf("существующий контрагент: status = %d, got %+v", rec.Code, svc.got)
+	}
+	rec = httptest.NewRecorder()
+	router(svc, 1).ServeHTTP(rec, upload(t, map[string]string{"counterparty_name": "ООО «Ромашка»", "counterparty_inn": "7702345678"}, true))
+	if rec.Code != http.StatusCreated || svc.got.CounterpartyName != "ООО «Ромашка»" || svc.got.CounterpartyINN != "7702345678" {
+		t.Fatalf("новый контрагент: status = %d, got %+v", rec.Code, svc.got)
+	}
+	for _, bad := range []string{"abc", "0", "-1"} {
+		rec = httptest.NewRecorder()
+		router(svc, 1).ServeHTTP(rec, upload(t, map[string]string{"counterparty_id": bad}, true))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("counterparty_id %q: status = %d, want 400", bad, rec.Code)
+		}
+	}
+}
+
+func TestCreate_FirstVersionField(t *testing.T) {
+	svc := &fakeService{}
+	router(svc, 1).ServeHTTP(httptest.NewRecorder(), upload(t, map[string]string{"first_version": "1"}, true))
+	if !svc.got.FirstVersion {
+		t.Errorf("first_version=1 не дошёл до сервиса: %+v", svc.got)
+	}
+	router(svc, 1).ServeHTTP(httptest.NewRecorder(), upload(t, map[string]string{"first_version": "yes"}, true))
+	if svc.got.FirstVersion {
+		t.Errorf("только «1» включает первую версию: %+v", svc.got)
+	}
+}
+
+func TestCounterparties(t *testing.T) {
+	get := func(user int, path string) (int, string) {
+		rec := httptest.NewRecorder()
+		router(&fakeService{}, user).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := get(1, "/counterparties"); code != http.StatusOK || !strings.Contains(body, `"name":"ООО «Ромашка»"`) ||
+		!strings.Contains(body, `"contracts":1`) || !strings.Contains(body, `"has_folder":true`) {
+		t.Errorf("список: %d %s", code, body)
+	}
+	if code, body := get(1, "/counterparties/2"); code != http.StatusOK || !strings.Contains(body, `"projects":[{"id":3`) ||
+		!strings.Contains(body, `"counterparty_name":"ООО «Ромашка»"`) {
+		t.Errorf("страница контрагента: %d %s", code, body)
+	}
+	if code, _ := get(2, "/counterparties/2"); code != http.StatusNotFound {
+		t.Errorf("чужой контрагент: %d, want 404", code)
+	}
+	if code, _ := get(0, "/counterparties"); code != http.StatusUnauthorized {
+		t.Errorf("гость: %d, want 401", code)
+	}
+}
+
+func TestUpdateCounterpartyAndMoveProject(t *testing.T) {
+	svc := &fakeService{}
+	send := func(method, path, body string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router(svc, 1).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := send(http.MethodPatch, "/counterparties/2", `{"name":"ООО «Новая»","inn":"7702345678"}`); code != http.StatusNoContent ||
+		svc.renamed != "ООО «Новая»|7702345678" {
+		t.Errorf("переименование: %d, %q", code, svc.renamed)
+	}
+	if code := send(http.MethodPatch, "/counterparties/99", `{"name":"x"}`); code != http.StatusNotFound {
+		t.Errorf("чужой контрагент: %d", code)
+	}
+	if code := send(http.MethodPatch, "/projects/3", `{"counterparty_id":2}`); code != http.StatusNoContent || svc.moved != [2]int{3, 2} {
+		t.Errorf("перенос договора: %d, %v", code, svc.moved)
+	}
+	if code := send(http.MethodDelete, "/projects/3", ""); code != http.StatusNoContent || svc.deleted != 3 {
+		t.Errorf("удаление договора: %d, %d", code, svc.deleted)
+	}
+	if code := send(http.MethodDelete, "/projects/99", ""); code != http.StatusNotFound {
+		t.Errorf("чужой договор: %d, want 404", code)
+	}
+}
+
+func TestDetectParties(t *testing.T) {
+	svc := &fakeService{}
+	req := upload(t, map[string]string{"company": "7701234567"}, true)
+	req.URL.Path = "/contracts/detect"
+	rec := httptest.NewRecorder()
+	router(svc, 1).ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || svc.company != "7701234567" || !strings.Contains(body, `"counterparty":{"role":"Заказчик","name":"Бета","inn":"7702345678"}`) ||
+		!strings.Contains(body, `"parties":[{"role":"Исполнитель","name":"Альфа","inn":""}`) {
+		t.Fatalf("status = %d; body = %s", rec.Code, body)
+	}
+	req = upload(t, nil, false) // без отметки загрузки: возможная междоменная форма
+	req.URL.Path = "/contracts/detect"
+	rec = httptest.NewRecorder()
+	router(svc, 1).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("без отметки: %d, want 400", rec.Code)
 	}
 }

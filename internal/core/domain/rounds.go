@@ -21,6 +21,7 @@ type RoundChange struct {
 	Kind        string
 	Before      string
 	After       string
+	Remark      bool // замечание к положению первой версии (не правка контрагента): только чтобы вспомнить ваше решение
 }
 
 // RoundSource — прошлый раунд: его правки и решения юриста по ним.
@@ -42,6 +43,7 @@ type RoundLink struct {
 	PastAfter    string
 	Decision     string // решение юриста по прошлой правке: accept, reject, counter; пусто — не решал
 	DecisionText string
+	PastRemark   bool // в прошлом раунде это было ваше замечание к положению первой версии, а не правка контрагента
 }
 
 // RoundClosed — правка прошлого раунда, которой нет в текущем: контрагент её снял или принял нашу встречную.
@@ -83,6 +85,7 @@ func ParseRoundChanges(changes []byte) ([]RoundChange, error) {
 		Clause      string `json:"clause"`
 		Topic       string `json:"topic"`
 		Kind        string `json:"kind"`
+		Source      string `json:"source"`
 		Before      string `json:"before"`
 		After       string `json:"after"`
 		Materiality string `json:"materiality"`
@@ -95,8 +98,10 @@ func ParseRoundChanges(changes []byte) ([]RoundChange, error) {
 		if c.Kind == "comment" || c.Materiality == "техническая" {
 			continue
 		}
+		// замечания к положениям первой версии (source «clause») правками контрагента не были: в счёт правок не идут,
+		// но по ним вспоминается ваше решение, когда контрагент правит тот же пункт
 		out = append(out, RoundChange{ID: c.ID, Fingerprint: c.Fingerprint, Clause: c.Clause, Topic: c.Topic,
-			Kind: c.Kind, Before: shortText(c.Before), After: shortText(c.After)})
+			Kind: c.Kind, Before: shortText(c.Before), After: shortText(c.After), Remark: c.Source == "clause"})
 	}
 	return out, nil
 }
@@ -110,12 +115,15 @@ func CompareRounds(cur []RoundChange, earlier []RoundSource) RoundComparison {
 	out := RoundComparison{Links: make([]RoundLink, 0, len(cur))}
 	matched := map[string]bool{} // «раунд:правка» прошлых раундов, к которым что-то привязано
 	for _, c := range cur {
+		if c.Remark {
+			continue // замечание программы, а не правка контрагента
+		}
 		link := RoundLink{ChangeID: c.ID, Relation: RelationNew}
 		for i := len(earlier) - 1; i >= 0 && link.Relation == RelationNew; i-- {
 			src := earlier[i]
 			if past, ok := findRepeat(c, src.Changes); ok {
 				link = roundLink(c.ID, RelationRepeat, src, past)
-			} else if past, ok := findReturned(c, src.Changes); ok {
+			} else if past, ok := findReturned(c, src); ok {
 				link = roundLink(c.ID, RelationReturned, src, past)
 			}
 		}
@@ -127,7 +135,7 @@ func CompareRounds(cur []RoundChange, earlier []RoundSource) RoundComparison {
 	if n := len(earlier); n > 0 {
 		last := earlier[n-1]
 		for _, p := range last.Changes {
-			if matched[fmt.Sprintf("%d:%s", last.ReviewID, p.ID)] {
+			if p.Remark || matched[fmt.Sprintf("%d:%s", last.ReviewID, p.ID)] {
 				continue
 			}
 			d := last.Decisions[p.ID]
@@ -143,18 +151,23 @@ func findRepeat(c RoundChange, past []RoundChange) (RoundChange, bool) {
 		return RoundChange{}, false
 	}
 	for _, p := range past {
-		if p.Fingerprint == c.Fingerprint {
+		if !p.Remark && p.Fingerprint == c.Fingerprint {
 			return p, true
 		}
 	}
 	return RoundChange{}, false
 }
 
-func findReturned(c RoundChange, past []RoundChange) (RoundChange, bool) {
+// findReturned: тот же пункт и тема в прошлом раунде. Замечание к первой версии подходит, только если по нему есть
+// ваше решение: иначе вспоминать нечего.
+func findReturned(c RoundChange, src RoundSource) (RoundChange, bool) {
 	if c.Clause == "" || c.Topic == "" || c.Topic == OtherTopic {
 		return RoundChange{}, false
 	}
-	for _, p := range past {
+	for _, p := range src.Changes {
+		if p.Remark && src.Decisions[p.ID].Choice == "" {
+			continue
+		}
 		if p.Clause == c.Clause && p.Topic == c.Topic && p.Fingerprint != c.Fingerprint {
 			return p, true
 		}
@@ -165,5 +178,5 @@ func findReturned(c RoundChange, past []RoundChange) (RoundChange, bool) {
 func roundLink(changeID, relation string, src RoundSource, past RoundChange) RoundLink {
 	d := src.Decisions[past.ID]
 	return RoundLink{ChangeID: changeID, Relation: relation, Round: src.Round, ReviewID: src.ReviewID, PastChangeID: past.ID,
-		PastBefore: past.Before, PastAfter: past.After, Decision: d.Choice, DecisionText: d.Text}
+		PastBefore: past.Before, PastAfter: past.After, Decision: d.Choice, DecisionText: d.Text, PastRemark: past.Remark}
 }

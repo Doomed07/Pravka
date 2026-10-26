@@ -528,6 +528,25 @@ def read_docx(path: str) -> DocxDoc:
 # --------------------------------------------------------------------------------------
 # Представления документа: «принять все» / «отклонить все»
 # --------------------------------------------------------------------------------------
+def segment_included(s: Segment, mode: str, ours: frozenset[str] | set[str] = frozenset()) -> bool:
+    """Есть ли кусок в тексте абзаца в режиме 'accepted' / 'rejected' (правила — в view_paragraphs)."""
+    if s.kind == "equal":
+        return True
+    if s.author == ANNOTATOR:
+        return s.kind == "del"  # примечания программы (annotate.py) — как будто их нет
+    mine = s.author in ours
+    if mode == "accepted":
+        return s.kind == "ins"
+    if s.kind == "del" and s.ins_author is not None:
+        # текст вставил один автор, удалил другой: после «отклонить чужое» он есть,
+        # только если вставка наша, а удаление чужое
+        return s.ins_author in ours and not mine
+    # rejected: чужие вставки убираем, чужие удаления возвращаем; свои правки принимаем
+    if s.kind == "ins":
+        return mine
+    return not mine  # del
+
+
 def view_paragraphs(doc: DocxDoc, mode: str, ours: frozenset[str] | set[str] = frozenset()) -> list[tuple[Paragraph, str]]:
     """Список (абзац, текст) для режима 'accepted' или 'rejected'.
 
@@ -538,21 +557,7 @@ def view_paragraphs(doc: DocxDoc, mode: str, ours: frozenset[str] | set[str] = f
         raise ValueError(mode)
 
     def seg_included(s: Segment) -> bool:
-        if s.kind == "equal":
-            return True
-        if s.author == ANNOTATOR:
-            return s.kind == "del"  # примечания программы (annotate.py) — как будто их нет
-        mine = s.author in ours
-        if mode == "accepted":
-            return s.kind == "ins"
-        if s.kind == "del" and s.ins_author is not None:
-            # текст вставил один автор, удалил другой: после «отклонить чужое» он есть,
-            # только если вставка наша, а удаление чужое
-            return s.ins_author in ours and not mine
-        # rejected: чужие вставки убираем, чужие удаления возвращаем; свои правки принимаем
-        if s.kind == "ins":
-            return mine
-        return not mine  # del
+        return segment_included(s, mode, ours)
 
     texts = []
     for para in doc.paragraphs:

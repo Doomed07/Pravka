@@ -16,34 +16,39 @@ import (
 // project_id, название договора и номер раунда: сколько разборов договора было раньше этого, плюс один.
 const columns = `id, user_id, created_at, theirs_name, base_name, playbook, playbook_name, our_role, contract_type, side, counts, warnings,
 	project_id, (SELECT name FROM pravkiapp.projects p WHERE p.id = pravkiapp.reviews.project_id),
+	(SELECT p.counterparty_id FROM pravkiapp.projects p WHERE p.id = pravkiapp.reviews.project_id),
+	(SELECT c.name FROM pravkiapp.projects p JOIN pravkiapp.counterparties c ON c.id = p.counterparty_id
+	   WHERE p.id = pravkiapp.reviews.project_id),
 	(SELECT count(*) + 1 FROM pravkiapp.reviews o WHERE o.project_id = pravkiapp.reviews.project_id
 	   AND (o.created_at, o.id) < (pravkiapp.reviews.created_at, pravkiapp.reviews.id)),
 	unified_docx IS NOT NULL`
 
 // ReviewModel — строка pravkiapp.reviews (без тяжёлых частей): counts и warnings — JSON.
 type ReviewModel struct {
-	ID           int
-	UserID       int
-	CreatedAt    time.Time
-	TheirsName   string
-	BaseName     string
-	Playbook     string
-	PlaybookName string
-	OurRole      string
-	ContractType string
-	Side         string
-	Counts       []byte
-	Warnings     []byte
-	ProjectID    int
-	ProjectName  string
-	Round        int
-	HasDocx      bool
+	ID               int
+	UserID           int
+	CreatedAt        time.Time
+	TheirsName       string
+	BaseName         string
+	Playbook         string
+	PlaybookName     string
+	OurRole          string
+	ContractType     string
+	Side             string
+	Counts           []byte
+	Warnings         []byte
+	ProjectID        int
+	ProjectName      string
+	CounterpartyID   int
+	CounterpartyName string
+	Round            int
+	HasDocx          bool
 }
 
 func scanReview(row core_postgres_pool.Row) (core_domain.ContractReview, error) {
 	var m ReviewModel
 	if err := row.Scan(&m.ID, &m.UserID, &m.CreatedAt, &m.TheirsName, &m.BaseName, &m.Playbook, &m.PlaybookName,
-		&m.OurRole, &m.ContractType, &m.Side, &m.Counts, &m.Warnings, &m.ProjectID, &m.ProjectName, &m.Round, &m.HasDocx); err != nil {
+		&m.OurRole, &m.ContractType, &m.Side, &m.Counts, &m.Warnings, &m.ProjectID, &m.ProjectName, &m.CounterpartyID, &m.CounterpartyName, &m.Round, &m.HasDocx); err != nil {
 		return core_domain.ContractReview{}, err
 	}
 	return reviewDomainFromModel(m)
@@ -53,7 +58,8 @@ func reviewDomainFromModel(m ReviewModel) (core_domain.ContractReview, error) {
 	r := core_domain.ContractReview{
 		ID: m.ID, UserID: m.UserID, CreatedAt: m.CreatedAt, TheirsName: m.TheirsName, BaseName: m.BaseName,
 		Playbook: m.Playbook, PlaybookName: m.PlaybookName, OurRole: m.OurRole, ContractType: m.ContractType, Side: m.Side,
-		ProjectID: m.ProjectID, ProjectName: m.ProjectName, Round: m.Round, HasDocx: m.HasDocx,
+		ProjectID: m.ProjectID, ProjectName: m.ProjectName, CounterpartyID: m.CounterpartyID, CounterpartyName: m.CounterpartyName,
+		Round: m.Round, HasDocx: m.HasDocx,
 	}
 	if err := json.Unmarshal(m.Counts, &r.Counts); err != nil {
 		return core_domain.ContractReview{}, fmt.Errorf("decode counts: %w", err)
@@ -181,12 +187,17 @@ type ProjectSummaryModel struct {
 	PlaybookName string
 	OurRole      string
 	ContractType string
+
+	CounterpartyID   int
+	CounterpartyName string
+	Dir              string
 }
 
 func projectSummaryDomainFromModel(m ProjectSummaryModel) core_domain.ProjectSummary {
 	return core_domain.ProjectSummary{
-		Project: core_domain.Project{ID: m.ID, UserID: m.UserID, Name: m.Name, CreatedAt: m.CreatedAt},
-		Rounds:  m.Rounds, LastReviewID: m.LastReviewID, LastAt: m.LastAt, Playbook: m.Playbook, PlaybookName: m.PlaybookName,
+		Project: core_domain.Project{ID: m.ID, UserID: m.UserID, Name: m.Name, CreatedAt: m.CreatedAt,
+			CounterpartyID: m.CounterpartyID, CounterpartyName: m.CounterpartyName, Dir: m.Dir},
+		Rounds: m.Rounds, LastReviewID: m.LastReviewID, LastAt: m.LastAt, Playbook: m.Playbook, PlaybookName: m.PlaybookName,
 		OurRole: m.OurRole, ContractType: m.ContractType,
 	}
 }
@@ -216,4 +227,26 @@ func projectRoundDomainFromModel(m ProjectRoundModel, round int) (core_domain.Pr
 	}
 	return core_domain.ProjectRound{ReviewID: m.ReviewID, Round: round, CreatedAt: m.CreatedAt, TheirsName: m.TheirsName,
 		BaseName: m.BaseName, Changes: m.Changes, Choices: choices}, nil
+}
+
+// ---------- контрагент ----------
+
+// CounterpartyModel — строка pravkiapp.counterparties с итогами: договоров, раундов и время последнего раунда.
+type CounterpartyModel struct {
+	ID        int
+	UserID    int
+	Name      string
+	INN       string
+	Dir       string
+	CreatedAt time.Time
+	Contracts int
+	Rounds    int
+	LastAt    time.Time
+}
+
+func counterpartySummaryDomainFromModel(m CounterpartyModel) core_domain.CounterpartySummary {
+	return core_domain.CounterpartySummary{
+		Counterparty: core_domain.Counterparty{ID: m.ID, UserID: m.UserID, Name: m.Name, INN: m.INN, Dir: m.Dir, CreatedAt: m.CreatedAt},
+		Contracts:    m.Contracts, Rounds: m.Rounds, LastAt: m.LastAt,
+	}
 }

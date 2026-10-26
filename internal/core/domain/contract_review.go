@@ -21,19 +21,22 @@ type ContractReview struct {
 	UserID    int
 	CreatedAt time.Time
 
-	ProjectID    int // договор (проект), раундом которого стал разбор
-	ProjectName  string
-	Round        int  // номер раунда в проекте: порядок разборов по времени
-	HasDocx      bool // есть единая версия в Word: только если файл контрагента — .docx
-	TheirsName   string
-	BaseName     string
-	Playbook     string
-	PlaybookName string
-	OurRole      string
-	ContractType string // тип договора по плейбуку: supply, services…
-	Side         string
-	Counts       map[string]int
-	Warnings     []string
+	ProjectID        int // договор (проект), раундом которого стал разбор
+	ProjectName      string
+	CounterpartyID   int
+	CounterpartyName string
+	ProjectDir       string // только при создании нового договора: путь его папки на диске
+	Round            int    // номер раунда в проекте: порядок разборов по времени
+	HasDocx          bool   // есть единая версия в Word: только если файл контрагента — .docx
+	TheirsName       string
+	BaseName         string
+	Playbook         string
+	PlaybookName     string
+	OurRole          string
+	ContractType     string // тип договора по плейбуку: supply, services…
+	Side             string
+	Counts           map[string]int
+	Warnings         []string
 }
 
 // ReviewFiles — тяжёлые результаты разбора.
@@ -61,6 +64,15 @@ type ReviewRequest struct {
 	ConfirmRole string
 	ProjectID   int    // 0 — новый договор; иначе очередной раунд существующего
 	ProjectName string // название нового договора; пусто — имя файла контрагента
+
+	// Контрагент нового договора: CounterpartyID — существующий; иначе по названию (ищется или создаётся); пусто — «Без контрагента».
+	CounterpartyID   int
+	CounterpartyName string
+	CounterpartyINN  string
+
+	// FirstVersion — первая версия нового договора, как прислал контрагент: правок в ней нет, поэтому положения
+	// проверяются по плейбуку. Только для нового договора (ProjectID == 0).
+	FirstVersion bool
 }
 
 // Validate проверяет запрос до обращения к движку: дешёвые ошибки ловим сразу.
@@ -134,6 +146,7 @@ const (
 	ChoiceReject  = "reject"  // отклонить
 	ChoiceCounter = "counter" // встречная редакция: текст пишет юрист
 	ChoiceReply   = "reply"   // ответ на комментарий контрагента: текст пишет юрист
+	ChoiceEdit    = "edit"    // текст юриста к абзацу: «P<абзац>» — новый текст абзаца целиком, «A<абзац>» — новый абзац после, «C<абзац>» — комментарий
 )
 
 // MaxChoiceText — предел текста встречной редакции.
@@ -153,6 +166,16 @@ func (c ReviewChoice) Validate() error {
 	}
 	switch c.Choice {
 	case "", ChoiceAccept, ChoiceReject, ChoiceCounter, ChoiceReply:
+		if textOnly(c.ChangeID) && c.Choice != "" {
+			return fmt.Errorf("номер %q — правка текста абзаца, у неё только решение %q: %w", c.ChangeID, ChoiceEdit, core_errors.ErrInvalidArgument)
+		}
+		if (strings.HasPrefix(c.ChangeID, "X") || strings.HasPrefix(c.ChangeID, "R")) && c.Choice != "" && c.Choice != ChoiceReject {
+			return fmt.Errorf("номер %q — удаление абзаца: только решение %q: %w", c.ChangeID, ChoiceReject, core_errors.ErrInvalidArgument)
+		}
+	case ChoiceEdit:
+		if !textOnly(c.ChangeID) || strings.TrimSpace(c.Text) == "" {
+			return fmt.Errorf("правка абзаца: номер вида P012, A012, C012 или N012 и непустой текст: %w", core_errors.ErrInvalidArgument)
+		}
 	default:
 		return fmt.Errorf("неизвестное решение %q: %w", c.Choice, core_errors.ErrInvalidArgument)
 	}
@@ -163,6 +186,12 @@ func (c ReviewChoice) Validate() error {
 }
 
 var changeIDRe = regexp.MustCompile(`^[A-Z]\d{3,5}$`)
+
+// textOnly — номера, у которых решение только «edit» с текстом юриста: P — текст абзаца, A — новый абзац после,
+// C — комментарий к абзацу, N — новая строка таблицы после (ячейки через табуляцию).
+func textOnly(id string) bool {
+	return id != "" && strings.ContainsRune("PACN", rune(id[0]))
+}
 
 // Precedent — «как решали раньше»: похожая правка из прошлого разбора того же юриста (тот же тип договора и наша роль)
 // и его решение по ней. Только подсказка: решение по текущей правке принимает плейбук и юрист.

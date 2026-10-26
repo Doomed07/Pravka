@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .classify import classify
-from .compare import compare_versions, resolve_ours
+from .compare import compare_versions, resolve_ours, without_new_ours
 from .docx_reader import DocxError
+from .intake import MAX_MODEL_CLAUSES, clause_changes
 from .readers import read_document
 from .model import Change
 from .parties import (PARTY_TOPIC, RoleCheckError, SideConfig, SideResult, check_side, head_indices,
@@ -57,6 +58,7 @@ def review_files(
     explainer=None,
     ordering: str = "priority",
     side: SideConfig | None = None,
+    first_version: bool = False,
 ) -> Review:
     """Разобрать версию контрагента.
 
@@ -65,12 +67,20 @@ def review_files(
     """
     theirs = read_document(theirs_path)
     base = read_document(base_path) if base_path else None
-    if theirs.format == "pdf" and base is None:
+    if theirs.format == "pdf" and base is None and not first_version:
         raise DocxError("для PDF нужна ваша отправленная версия: в PDF нет рецензирования, правки находятся сравнением с ней")
     pb = load_playbook(playbook) if isinstance(playbook, str) else playbook
     warnings: list[str] = list(theirs.notes) + list(base.notes if base is not None else [])
     ours, ours_warnings = resolve_ours(our_authors, base)
     warnings.extend(ours_warnings)
+    theirs, n_new_ours = without_new_ours(base, theirs, ours)
+    if n_new_ours:
+        clauses = sorted({p.clause for p in theirs.paragraphs if p.index in theirs.reworked and p.clause},
+                         key=lambda c: [int(x) if x.isdigit() else 0 for x in c.split(".")])
+        where = f", пункты: {', '.join(clauses)}" if clauses else ""
+        warnings.append(f"В версии контрагента есть ваши правки, сделанные после отправленной версии (мест: {n_new_ours}{where}). "
+                        "Это не правки контрагента: программа их не разбирает. Если вы отправляли более позднюю версию, "
+                        "загрузите её как отправленную.")
 
     # C9: стороны берём из нашей версии текста: без правок контрагента, с нашими правками
     our_doc, our_mode = (base, "accepted") if base is not None else (theirs, "rejected")
@@ -80,6 +90,9 @@ def review_files(
         side_res.message = "Плейбук не указан: сторона договора не проверялась."
     if side_res.blocked:
         raise RoleCheckError(side_res)
+
+    if first_version and base is None and not theirs.has_tracked:
+        return _review_first_version(theirs, theirs_path, pb, explainer, side_res, warnings, ours)
 
     changes = compare_versions(base, theirs, our_authors, judge=explainer.same_condition if explainer else None)
     # C10: стороны и реквизиты между версиями — отдельные правки высшего приоритета
@@ -153,6 +166,34 @@ def review_files(
         llm_used=explainer is not None,
         side=side_res,
         document=build_unified(base, theirs, ours, changes),
+    )
+
+
+def _review_first_version(theirs, theirs_path, pb, explainer, side_res, warnings, ours) -> Review:
+    """Первая версия договора (правок в ней ещё нет): положения проверяются по плейбуку как «предложенные контрагентом».
+    Замечание появляется только там, где правило плейбука сработало и не «принять»; решает плейбук, модель поясняет."""
+    warnings = list(warnings)
+    flagged: list[Change] = []
+    if pb is None:
+        warnings.append("Плейбук не указан: положения договора по плейбуку не проверялись.")
+    else:
+        clauses = clause_changes(theirs)
+        for c in clauses:
+            classify(c)
+        analyze(clauses, pb)
+        flagged = [c for c in clauses if c.detail.get("rule_applied") and c.level in ("reject", "fallback", "review")]
+        for n, c in enumerate(flagged, 1):
+            c.id = f"E{n:03d}"
+        if explainer is not None:
+            for c in flagged[:MAX_MODEL_CLAUSES]:
+                explainer.apply(c)
+        warnings.append(f"Первая версия договора: правок в ней нет. Положения проверены по плейбуку «{pb.name}»: "
+                        f"замечаний {len(flagged)}. Пункты без замечаний не «одобрены»: проверка идёт только по правилам плейбука.")
+    return Review(
+        base_path="", theirs_path=theirs_path, playbook_name=pb.name if pb else "", our_role=pb.our_role if pb else "",
+        changes=flagged, authors=theirs.authors, mode="first", warnings=warnings,
+        created=datetime.now().strftime("%Y-%m-%d %H:%M"), llm_used=explainer is not None, side=side_res,
+        document=build_unified(None, theirs, ours, flagged),
     )
 
 

@@ -33,8 +33,11 @@ type fakeRepo struct {
 	rounds    []core_domain.ProjectRound
 	asked     [2]int // для кого и какой договор запрашивали
 	review    core_domain.ContractReview
-	queue     []int         // разборы, ждущие индексации (отдаются один раз)
-	sourceErr map[int]error // ошибка чтения исходных данных разбора
+	cpDir     string          // папка контрагента, который отдаёт EnsureCounterparty
+	cpEnsured []string        // названия контрагентов, которых просили найти или создать
+	dirTaken  map[string]bool // занятые папки договоров
+	queue     []int           // разборы, ждущие индексации (отдаются один раз)
+	sourceErr map[int]error   // ошибка чтения исходных данных разбора
 	mu        sync.Mutex
 }
 
@@ -135,7 +138,35 @@ func (f *fakeRepo) ListProjectRounds(context.Context, int, int) ([]core_domain.P
 	return f.rounds, nil
 }
 
+func (f *fakeRepo) EnsureCounterparty(_ context.Context, userID, id int, name, _ string) (core_domain.Counterparty, error) {
+	f.cpEnsured = append(f.cpEnsured, name)
+	return core_domain.Counterparty{ID: 5, UserID: userID, Name: name, Dir: f.cpDir}, nil
+}
+func (f *fakeRepo) AssignCounterpartyDir(_ context.Context, _, _ int, base string) (string, error) {
+	f.cpDir = base
+	return base, nil
+}
+func (f *fakeRepo) ProjectDirTaken(_ context.Context, dir string) (bool, error) {
+	return f.dirTaken[dir], nil
+}
+func (f *fakeRepo) GetCounterparty(_ context.Context, userID, id int) (core_domain.CounterpartySummary, error) {
+	if id != 5 {
+		return core_domain.CounterpartySummary{}, core_errors.ErrNotFound
+	}
+	return core_domain.CounterpartySummary{Counterparty: core_domain.Counterparty{ID: id, UserID: userID, Name: "Ромашка"}}, nil
+}
+func (f *fakeRepo) ListCounterparties(context.Context, int, int) ([]core_domain.CounterpartySummary, error) {
+	return nil, nil
+}
+func (f *fakeRepo) ListCounterpartyProjects(context.Context, int, int) ([]core_domain.ProjectSummary, error) {
+	return nil, nil
+}
+func (f *fakeRepo) RenameCounterparty(context.Context, int, int, string, string) error { return nil }
+func (f *fakeRepo) MoveProject(context.Context, int, int, int) error                   { return nil }
+func (f *fakeRepo) DeleteProject(context.Context, int, int) error                      { return nil }
+
 type fakeEngine struct {
+	parties  core_domain.DetectedParties
 	noEmbed  bool
 	tries    int // сколько раз просили посчитать векторы, включая отказы
 	embedded []string
@@ -149,6 +180,10 @@ type fakeEngine struct {
 func (f *fakeEngine) Answer(_ context.Context, unified, document, changes []byte, choices []core_domain.ReviewChoice, author string) (engine.AnswerResult, error) {
 	f.ans, f.ansCh = []string{string(unified), string(changes), author, string(document)}, choices
 	return engine.AnswerResult{DOCX: []byte("PKanswer")}, nil
+}
+
+func (f *fakeEngine) Parties(context.Context, core_domain.UploadedFile, string) (core_domain.DetectedParties, error) {
+	return f.parties, f.err
 }
 
 func (f *fakeEngine) Embed(_ context.Context, texts []string) (string, [][]float32, error) {
@@ -262,6 +297,16 @@ func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
 		{ChangeID: "E001; DROP", Choice: "accept"},
 		{ChangeID: "E001", Choice: "maybe"},
 		{ChangeID: "E001", Choice: "counter", Text: string(make([]rune, core_domain.MaxChoiceText+1))},
+		{ChangeID: "E001", Choice: "edit", Text: "правка абзаца только у номера P…"},
+		{ChangeID: "P012", Choice: "edit", Text: "  "},
+		{ChangeID: "P012", Choice: "accept"},
+		{ChangeID: "A012", Choice: "reject"},
+		{ChangeID: "X012", Choice: "accept"},
+		{ChangeID: "X012", Choice: "edit", Text: "x"},
+		{ChangeID: "C012", Choice: "reject"},
+		{ChangeID: "C012", Choice: "edit", Text: " "},
+		{ChangeID: "R012", Choice: "accept"},
+		{ChangeID: "N012", Choice: "reject"},
 	}
 	for _, c := range bad {
 		if err := s.SaveChoice(context.Background(), 1, 1, c); !errors.Is(err, core_errors.ErrInvalidArgument) {
@@ -272,7 +317,11 @@ func TestSaveChoice_ValidatesBeforeRepo(t *testing.T) {
 		t.Fatalf("invalid choices reached repo: %+v", repo.choices)
 	}
 	for _, c := range []core_domain.ReviewChoice{{ChangeID: "E001", Choice: "counter", Text: "30 дней"}, {ChangeID: "S002", Choice: ""},
-		{ChangeID: "E003", Choice: "reply", Text: "Согласны."}} {
+		{ChangeID: "E003", Choice: "reply", Text: "Согласны."}, {ChangeID: "P012", Choice: "edit", Text: "Новый текст абзаца."}, {ChangeID: "A012", Choice: "edit", Text: "Новый абзац."},
+		{ChangeID: "X012", Choice: "reject"}, {ChangeID: "X012", Choice: ""},
+		{ChangeID: "C012", Choice: "edit", Text: "Обоснование удаления."}, {ChangeID: "R012", Choice: "reject"},
+		{ChangeID: "N012", Choice: "edit", Text: "2\tСтенд\t100 000"},
+		{ChangeID: "P012", Choice: ""}} {
 		if err := s.SaveChoice(context.Background(), 1, 1, c); err != nil {
 			t.Fatalf("%+v: %v", c, err)
 		}

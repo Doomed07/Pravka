@@ -124,6 +124,8 @@ func TestProjectName(t *testing.T) {
 	for _, c := range []struct{ entered, file, want string }{
 		{"  Поставка   ООО «Омега»  ", "x.docx", "Поставка ООО «Омега»"},
 		{"", "Договор поставки_v3.DOCX", "Договор поставки_v3"},
+		{"", "Приложение 2.pdf", "Приложение 2"},
+		{"", "Договор.ODT", "Договор"},
 		{"", ".docx", "Договор"},
 		{"", "", "Договор"},
 	} {
@@ -137,5 +139,35 @@ func TestProjectName(t *testing.T) {
 	}
 	if got, err := ProjectName("", strings.Repeat("я", 300)+".docx"); err != nil || len([]rune(got)) != MaxProjectName {
 		t.Errorf("длинное имя файла обрезается: %d, %v", len([]rune(got)), err)
+	}
+}
+
+// Первая версия разбирается замечаниями к положениям: правками контрагента они не были, в счёт правок и в «снято» не
+// идут, но если контрагент во втором раунде правит тот же пункт, вспоминается ваше решение по замечанию.
+func TestCompareRounds_FirstVersionRemarks(t *testing.T) {
+	r1, err := ParseRoundChanges([]byte(`[
+	{"id":"E001","fingerprint":"x1","clause":"4.3","topic":"ограничение ответственности","kind":"para_insert","source":"clause","after":"4.3. Ответственность ограничена 10%","materiality":"высокая"},
+	{"id":"E002","fingerprint":"x2","clause":"3.3","topic":"приёмка и качество","kind":"para_insert","source":"clause","after":"3.3. Приёмка по умолчанию","materiality":"высокая"}]`))
+	if err != nil || len(r1) != 2 || !r1[0].Remark {
+		t.Fatalf("замечания первой версии: %+v, %v", r1, err)
+	}
+	r2 := []RoundChange{
+		{ID: "E008", Fingerprint: "y1", Clause: "4.3", Topic: "ограничение ответственности", Kind: "delete"},
+		{ID: "E006", Fingerprint: "y2", Clause: "3.3", Topic: "приёмка и качество", Kind: "para_delete"},
+	}
+	src := RoundSource{ReviewID: 48, Round: 1, Changes: r1,
+		Decisions: map[string]ReviewChoice{"E001": {ChangeID: "E001", Choice: ChoiceCounter, Text: "Ограничить суммой договора."}}}
+	cmp := CompareRounds(r2, []RoundSource{src})
+	if l := cmp.Links[0]; l.Relation != RelationReturned || !l.PastRemark || l.Decision != ChoiceCounter || l.DecisionText != "Ограничить суммой договора." {
+		t.Errorf("пункт с вашей встречной редакцией: %+v", l)
+	}
+	if l := cmp.Links[1]; l.Relation != RelationNew {
+		t.Errorf("по замечанию без вашего решения вспоминать нечего: %+v", l)
+	}
+	if len(cmp.Closed) != 0 {
+		t.Errorf("замечания не «сняты контрагентом»: %+v", cmp.Closed)
+	}
+	if own := CompareRounds(r1, nil); len(own.Links) != 0 {
+		t.Errorf("замечания первой версии не считаются правками раунда: %+v", own.Links)
 	}
 }

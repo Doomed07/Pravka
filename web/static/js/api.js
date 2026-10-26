@@ -125,6 +125,22 @@ export const reviews = {
 export const projects = {
   list: () => api('/projects'),
   get: (id) => api('/projects/' + id),
+  // перенести договор к другому контрагенту (папка договора на диске остаётся прежней)
+  move: (id, counterpartyID) => api('/projects/' + id, { method: 'PATCH', body: { counterparty_id: counterpartyID } }),
+  // удалить договор со всеми раундами; файлы на диске остаются
+  remove: (id) => api('/projects/' + id, { method: 'DELETE' }),
+};
+
+// Контрагенты: у контрагента — договоры, у договора — раунды.
+export const counterparties = {
+  list: () => api('/counterparties'),
+  get: (id) => api('/counterparties/' + id),
+  update: (id, name, inn) => api('/counterparties/' + id, { method: 'PATCH', body: { name, inn } }),
+};
+
+export const contracts = {
+  // стороны договора и контрагент по первой версии (ничего не сохраняет); company — наш ИНН или наименование
+  detect: (formData) => upload('/contracts/detect', formData),
 };
 
 // answerFile скачивает ответ контрагенту в Word: {blob, stats}. Файл собирается на сервере по решениям юриста.
@@ -149,6 +165,6 @@ async function answerFile(id, author) {
     throw new ApiError(response.status, (data && data.message) || response.statusText, (data && data.error) || '');
   }
   const stats = {};
-  for (const k of ['accept', 'reject', 'counter', 'reply', 'untracked']) stats[k] = Number(response.headers.get('X-Pravki-' + k) || 0);
+  for (const k of ['accept', 'reject', 'counter', 'reply', 'edit', 'comment', 'untracked']) stats[k] = Number(response.headers.get('X-Pravki-' + k) || 0);
   return { blob: await response.blob(), stats };
 }

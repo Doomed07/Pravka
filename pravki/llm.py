@@ -29,6 +29,15 @@ SYSTEM = (
 )
 
 
+CLAUSE_SYSTEM = (
+    "Ты помощник юриста в российской компании. Контрагент прислал первую версию договора. Объясни простым деловым языком, "
+    "2–3 предложения, чем положение договора расходится с позицией нашей компании по плейбуку. Опирайся на поля "
+    "«вывод по плейбуку», «основание» и «позиция компании». Используй только факты из входных данных. Не придумывай числа, "
+    "сроки и ссылки на законы. Не упоминай органы, организации и должности, которых нет во входных данных. "
+    "Не давай окончательных юридических заключений."
+)
+
+
 GRAMMAR_SYSTEM = (
     "Ты проверяешь правку в договоре. Ответь одним словом. ДА — если правка только исправляет грамматику, орфографию "
     "или пунктуацию и не меняет смысл условия: не меняет, кто, что, когда и сколько обязан сделать, и не позволяет "
@@ -122,6 +131,8 @@ _AUTHORITIES = [re.compile(p, re.IGNORECASE) for p in (
 
 def kind_words(ch: Change) -> str:
     """Вид правки человеческими словами — модели, чтобы не перепутать направление."""
+    if ch.source == "clause":
+        return "положение первой версии договора, предложенное контрагентом"
     if ch.detail.get("replaced_para"):
         what = "пункт заменён новой редакцией"
     else:
@@ -154,7 +165,7 @@ def check_output(text: str, ch: Change, allowed_norms: list[str], neighbours=())
         return "пустой или слишком длинный ответ"
     if ch.kind in _REMOVALS and not ch.detail.get("replaced_para") and not _SAYS_REMOVED.search(text):
         return "удаление не описано как удаление"
-    if ch.kind in _ADDITIONS and not ch.detail.get("replaced_para") and not _SAYS_ADDED.search(text):
+    if ch.kind in _ADDITIONS and ch.source != "clause" and not ch.detail.get("replaced_para") and not _SAYS_ADDED.search(text):
         return "вставка не описана как добавление"
     own = " ".join([ch.before, ch.after, ch.context, ch.context_after, ch.explanation, ch.suggested, ch.escalate_to,
                     ch.action, ch.rule_title, ch.topic, ch.clause])
@@ -224,7 +235,8 @@ class Explainer:
             return
         facts = self.facts(ch)
         try:
-            text = self.client.complete(SYSTEM, json.dumps(facts, ensure_ascii=False))
+            text = self.client.complete(CLAUSE_SYSTEM if ch.source == "clause" else SYSTEM,
+                                        json.dumps(facts, ensure_ascii=False))
         except LLMError as e:
             ch.notes.append(f"Модель недоступна, пояснение шаблонное ({e})")
             return
