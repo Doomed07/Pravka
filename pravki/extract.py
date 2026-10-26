@@ -173,8 +173,35 @@ def extract_tracked(doc: DocxDoc, ours: set[str] | frozenset[str] = frozenset())
             )
         )
     _pair_moves(changes)
+    changes = _merge_breaks(changes)
     changes.sort(key=lambda c: c.order)
     return changes
+
+
+def _merge_breaks(changes: list[Change]) -> list[Change]:
+    """Удалённые знаки абзаца в соседних абзацах одного автора — одна правка «склейка абзацев × N».
+
+    Так бывает в реквизитах: контрагент сводит строки «Адрес», «ИНН», «Банк» в одну, и каждая строка была бы отдельной
+    правкой. Решение по такой склейке одно на все строки (номера правок Word объединяются)."""
+    out: list[Change] = []
+    last: Change | None = None
+    for c in sorted(changes, key=lambda c: c.order):
+        if "склейка абзацев" in c.flags and c.kind == "delete":
+            run = last.detail.get("breaks", [last.paragraph_index]) if last is not None else []
+            if last is not None and last.author == c.author and last.clause == c.clause and run[-1] + 1 == c.paragraph_index:
+                run.append(c.paragraph_index)
+                last.detail["breaks"] = run
+                last.detail["revs"] = sorted(set(last.detail.get("revs", [])) | set(c.detail.get("revs", [])),
+                                             key=lambda x: (len(x), x))
+                last.before = f"[разрыв абзаца] × {len(run)}"
+                last.context = _short(last.context + " ¶ " + c.context)
+                continue
+            last = c
+        else:
+            if c.kind != "comment":
+                last = None
+        out.append(c)
+    return out
 
 
 def _pair_moves(changes: list[Change]) -> None:

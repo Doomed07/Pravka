@@ -519,3 +519,14 @@ def test_counter_to_their_insertion_removes_our_patch_inside_it(tmp_path):
                          AUTHOR, document)
     assert stats["counter"] == 1
     assert _accepted(read_docx(out))[0] == "1.1. Оплата по счёту Организатора, но не позднее 12 апреля."
+
+
+def test_merged_breaks_are_decided_at_once(tmp_path):
+    from tests.test_compare import _mark_del
+    lines = ["10. Реквизиты сторон", "Адрес: г. Москва", "ИНН 7701234567", "Банк: Альфа", "БИК 044525593"]
+    base = "".join(p(r(t)) for t in lines)
+    theirs = p(r(lines[0])) + "".join(p(r(t), ppr=_mark_del(n)) for n, t in enumerate(lines[1:4], 1)) + p(r(lines[4]))
+    for choice, expected in (("reject", 5), ("accept", 2)):
+        doc, stats, dicts = _run(tmp_path, base, theirs, lambda c: {"choice": choice})
+        assert [d["before"] for d in dicts] == ["[разрыв абзаца] × 3"] and stats[choice] == 1
+        assert len(_accepted(doc)) == expected, (choice, _accepted(doc))

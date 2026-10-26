@@ -276,3 +276,18 @@ def test_site_marks_their_silent_edit_but_not_ours_in_the_same_clause(tmp_path):
     doc = review_files(t, base_path=b, our_authors=["Мы"]).document
     silent = "".join(s["t"] for para in doc for s in para["segments"] if s["k"] == "silent_ins")
     assert "99999" in silent and "ОГРНИП" not in silent
+
+
+def _mark_del(n, author="Контрагент"):
+    return f'<w:rPr><w:del w:id="{n}" w:author="{author}" w:date="2026-10-05T10:00:00Z"/></w:rPr>'
+
+
+def test_breaks_in_requisites_are_one_change(tmp_path):
+    # контрагент свёл строки реквизитов в одну: три удалённых знака абзаца подряд — одна правка, а не три
+    from pravki.extract import extract_tracked
+    body = (p(r("10. Реквизиты сторон")) + p(r("Адрес: г. Москва"), ppr=_mark_del(1)) + p(r("ИНН 7701234567"), ppr=_mark_del(2)) +
+            p(r("Банк: Альфа"), ppr=_mark_del(3)) + p(r("БИК 044525593")) + p(r("Телефон: 123"), ppr=_mark_del(4)) + p(r("Почта: a@b.ru")))
+    doc = read_docx(str(make_docx(tmp_path / "t.docx", body)))
+    breaks = [c for c in extract_tracked(doc) if "склейка абзацев" in c.flags]
+    assert [c.before for c in breaks] == ["[разрыв абзаца] × 3", "[разрыв абзаца]"]
+    assert breaks[0].detail["revs"] == ["1", "2", "3"] and breaks[0].detail["breaks"] == [1, 2, 3]

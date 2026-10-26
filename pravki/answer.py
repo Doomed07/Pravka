@@ -70,11 +70,29 @@ def _drop_mark(el, remove_empty_paragraph: bool) -> None:
         p.getparent().remove(p)
 
 
+def _merge_with_next(p) -> None:
+    """Принятое удаление знака абзаца: текст абзаца переходит в начало следующего, как делает Word (у склеенного абзаца
+    вид и нумерация следующего). Следующего абзаца нет (таблица, конец раздела) — абзац остаётся как есть."""
+    nxt = p.getnext()
+    if nxt is None or nxt.tag != q("p"):
+        return
+    anchor = nxt.find(q("pPr"))
+    pos = list(nxt).index(anchor) + 1 if anchor is not None else 0
+    for child in [c for c in p if c.tag != q("pPr")]:
+        nxt.insert(pos, child)
+        pos += 1
+    p.getparent().remove(p)
+
+
 def _apply(el, choice: str, author: str, date: str) -> None:
     if _is_mark(el):
         inserted = el.tag == q("ins")
-        # принять удаление знака или отклонить вставку: пустой абзац исчезает; с текстом — снимаем только метку
+        p = el.getparent().getparent().getparent()
+        # принять удаление знака или отклонить вставку: пустой абзац исчезает; абзац с текстом при принятом
+        # удалении знака склеивается со следующим, при отклонённой вставке — снимаем только метку
         _drop_mark(el, remove_empty_paragraph=(choice == "accept") != inserted)
+        if choice == "accept" and not inserted and p is not None and p.getparent() is not None and _has_text(p):
+            _merge_with_next(p)
         return
     if el.tag in INSERTS:
         if choice == "accept":
