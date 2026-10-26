@@ -144,6 +144,22 @@ def _add_comment(comments_root, p, text: str, author: str, date: str, last_id: i
     return cid
 
 
+def _inserts_inside(els: list) -> list:
+    """Чужие вставки внутри отклоняемой вставки контрагента: наш юрист уже поправил её прямо в файле («8» → «12»).
+    Без вставки контрагента правка поверх неё теряет смысл и остаётся обрывком («…2026 12.»), поэтому уходит вместе с ней."""
+    ins = [e for e in els if e.tag in INSERTS]
+    if len(ins) < 2:
+        return []
+    para = next((a for a in ins[0].iterancestors() if a.tag == q("p")), None)
+    if para is None or any(next((a for a in e.iterancestors() if a.tag == q("p")), None) is not para for e in ins):
+        return []
+    order = {e: n for n, e in enumerate(para.iter())}
+    first, last = min(order[e] for e in ins), max(order[e] for e in ins)
+    mine = set(els)
+    return [e for e in para.iter(*INSERTS) if first < order[e] < last and e not in mine
+            and not any(a in mine for a in e.iterancestors())]
+
+
 def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dict[str, dict], author: str,
                  document: list[dict] | None = None) -> dict:
     """Собрать ответ. changes — правки разбора (to_dict, с полем revs), choices — {id: {"choice", "text"}},
@@ -248,6 +264,8 @@ def build_answer(src_docx: str, out_docx: str, changes: list[dict], choices: dic
                     dels[-1].addnext(ins)  # сразу после прежнего текста, который мы удаляем
                 else:
                     body[0].addprevious(ins)  # на место вставки контрагента
+        if choice in ("reject", "counter"):
+            els += _inserts_inside(els)
         for e in els:
             _apply(e, choice, author, date)
         stats[choice] += 1

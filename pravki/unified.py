@@ -10,7 +10,7 @@ import re
 from collections import Counter
 
 from .classify import _known
-from .compare import _align, label_policy, paired_views
+from .compare import _align, _our_rework, _pair_reworked, label_policy, new_ours, paired_views
 from .docx_reader import view_paragraphs
 from .extract import _net_zero
 from .model import ANNOTATOR, Change, DocxDoc, Paragraph
@@ -41,8 +41,12 @@ def _font(seg: dict) -> tuple[bool, bool]:
     return bool(seg.get("b")), bool(seg.get("i"))
 
 
-def _tracked_segments(para: Paragraph, ours) -> list[dict]:
-    """Текст абзаца с чужими правками: наши правки приняты, чужие видны как ins / del."""
+def _tracked_segments(para: Paragraph, ours, new=None) -> list[dict]:
+    """Текст абзаца с чужими правками: наши правки приняты, чужие видны как ins / del.
+
+    new — проверка нашей правки, сделанной после отправленной версии: такая вставка временно помечается «own», чтобы
+    сравнение с отправленной версией (_overlay) не приняло её за правку без отметки; потом она обычный текст (_settle).
+    """
     segs: list[dict] = []
     for s in para.segments:
         if _net_zero(s, ours) or s.author == ANNOTATOR and s.kind == "ins":
@@ -52,7 +56,7 @@ def _tracked_segments(para: Paragraph, ours) -> list[dict]:
             _push(segs, "equal", s.text, font=font)
         elif s.author in ours:
             if s.kind == "ins":
-                _push(segs, "equal", s.text, font=font)
+                _push(segs, "own" if new is not None and new(s) else "equal", s.text, font=font)
             # наше удаление уже принято: текста нет
         else:
             _push(segs, s.kind, s.text, s.author, font)
@@ -79,8 +83,8 @@ def _overlay(before: str, segs: list[dict]) -> list[dict]:
     pos = 0
     for s in segs:
         font = _font(s)
-        if s["k"] == "ins":
-            _push(out, "ins", s["t"], s["a"], font)
+        if s["k"] in ("ins", "own"):
+            _push(out, s["k"], s["t"], s["a"], font)
             continue
         for ch in s["t"]:
             if pos in gaps:
@@ -92,6 +96,16 @@ def _overlay(before: str, segs: list[dict]) -> list[dict]:
             pos += 1
     for rest in gaps.values():
         _push(out, "silent_del", rest)
+    return out
+
+
+def _settle(segs: list[dict]) -> list[dict]:
+    """Наши новые вставки («own») — обычный текст: так абзац выглядит в Word, где наши правки приняты."""
+    if not any(s["k"] == "own" for s in segs):
+        return segs
+    out: list[dict] = []
+    for s in segs:
+        _push(out, "equal" if s["k"] == "own" else s["k"], s["t"], s["a"], _font(s))
     return out
 
 
@@ -132,8 +146,10 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
     """
     ours = set(ours)
     paras: dict[int, dict] = {}
+    new = new_ours(base, ours) if base is not None and theirs.reworked else None
     for para in theirs.paragraphs:
-        segs = _tracked_segments(para, ours)
+        # абзац, где мы правили после отправки, показываем как в файле: с нашими новыми правками (в разборе их нет)
+        segs = _tracked_segments(theirs.reworked.get(para.index, para), ours, new)
         if not "".join(s["t"] for s in segs).strip() and not para.table:
             continue  # пустой абзац; пустую ячейку таблицы оставляем, иначе таблица «съезжает»
         paras[para.index] = {"index": para.index, "clause": para.clause, "label": _auto_label(para), "style": para.style,
@@ -147,7 +163,10 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
         their_view = [(p, t) for p, t in their_view if normalize(t)]
         _, strip_theirs = label_policy(base, theirs)
         last = -1
-        for i, j in _align([t for _, t in base_view], [t for _, t in their_view]):
+        pairs = _align([t for _, t in base_view], [t for _, t in their_view])
+        if theirs.reworked:
+            pairs = _pair_reworked(pairs, base_view, their_view, theirs.reworked, ours)
+        for i, j in pairs:
             if j is not None:
                 tp, ttext = their_view[j]
                 last = tp.index
@@ -156,6 +175,8 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
                     continue
                 if i is not None and normalize(base_view[i][1]) == normalize(ttext):
                     continue
+                if i is not None and _our_rework(base_view[i][0], tp, theirs.reworked, ours):
+                    continue  # отличие — наша же переработка пункта после отправки
                 before = base_view[i][1] if i is not None else ""
                 if strip_theirs and i is not None and tp.label_in_text:
                     # номер пункта в тексте контрагента напечатан, у нас — нет: добавляем его к нашему тексту, иначе он «вставка»
@@ -169,6 +190,8 @@ def build_unified(base: DocxDoc | None, theirs: DocxDoc, ours, changes: list[Cha
                                        "segments": [{"k": "silent_del", "t": _squash(btext), "a": ""}],
                                        "changes": [], "table": _removed_cell(bp, paras.get(last))}))
 
+    for p in paras.values():
+        p["segments"] = _settle(p["segments"])
     out: list[dict] = []
     pending = sorted(removed, key=lambda x: x[0])
     k = 0

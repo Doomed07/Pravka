@@ -109,6 +109,13 @@ func (s *ReviewsService) Create(ctx context.Context, userID int, req core_domain
 		core_logger.FromCtx(ctx).Warn("review: file not saved to disk", zap.Error(err))
 		rev.Warnings = append(rev.Warnings, "Файл контрагента не сохранён в папку на диске: "+err.Error()+". Разбор в базе сохранён.")
 	}
+	// наша отправленная версия — ответ прошлого раунда: кладём её в папку того раунда
+	if req.Base != nil && round > 1 {
+		if err := s.files.Save(dir, round-1, filestore.SentFile+filestore.Ext(req.Base.Name), req.Base.Data); err != nil {
+			core_logger.FromCtx(ctx).Warn("review: sent version not saved to disk", zap.Error(err))
+			rev.Warnings = append(rev.Warnings, "Наша отправленная версия не сохранена в папку на диске: "+err.Error()+". Разбор в базе сохранён.")
+		}
+	}
 	out, err := s.repo.CreateReview(ctx, rev, core_domain.ReviewFiles{
 		ReportHTML: []byte(res.ReportHTML), ReportXLSX: xlsx, Changes: res.Changes,
 		Document: res.Document, Unified: res.Unified,

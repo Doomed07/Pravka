@@ -466,3 +466,56 @@ def test_table_row_deleted_and_added_on_the_site(tmp_path):
     ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     trs = root.findall(".//w:tr", ns)
     assert len(trs) == 4 and trs[2].find("w:trPr/w:ins", ns) is not None and trs[3].find("w:trPr/w:del", ns) is not None
+
+
+def test_reject_restored_sentence_that_we_already_trimmed_in_their_file(tmp_path):
+    # контрагент вернул удалённую нами фразу (без отметки), а мы позже прямо в его файле удалили из неё хвост:
+    # в файле фраза короче, чем в разборе, но отказ всё равно должен её удалить
+    from pravki.compare import without_new_ours
+    from tests.test_compare import _at
+    sent, later = "2026-03-27T16:00:00Z", "2026-03-31T15:00:00Z"
+    phrase = " Организатор вправе расторгнуть настоящий договор без возмещения убытков или ущерба"
+    base = p(r("6.1. Стороны не отвечают за форс-мажор."), _at("del", phrase + " (предоплата не возвращается).", 1, "Мы", sent))
+    theirs_body = p(r("6.1. Стороны не отвечают за форс-мажор." + phrase), _at("del", " (предоплата не возвращается)", 2, "Мы", later), r("."))
+    b = read_docx(str(make_docx(tmp_path / "b.docx", base)))
+    tp = str(make_docx(tmp_path / "t.docx", theirs_body))
+    theirs, _ = without_new_ours(b, read_docx(tp), {"Мы"})
+    changes = compare_versions(b, theirs, ["Мы"])
+    document = build_unified(b, theirs, {"Мы"}, changes)
+    unified = str(tmp_path / "u.docx")
+    annotate_docx(tp, unified, changes, document)
+    dicts = [c.to_dict() for c in changes]
+    assert [d["source"] for d in dicts] == ["diff"] and "не возвращается" in dicts[0]["after"]
+    out = str(tmp_path / "answer.docx")
+    stats = build_answer(unified, out, dicts, {d["id"]: {"choice": "reject"} for d in dicts}, AUTHOR, document)
+    assert stats["reject"] == 1 and stats["без отметки"] == 0
+    assert _accepted(read_docx(out)) == ["6.1. Стороны не отвечают за форс-мажор."]
+
+
+def test_short_text_is_not_searched_approximately():
+    from pravki.answer_silent import _near_span
+    text = "1.1. Организатор вправе расторгнуть настоящий договор без возмещения убытков."
+    after = "Организатор вправе расторгнуть настоящий договор без возмещения убытков (предоплата не возвращается)."
+    assert _near_span(text, after, " (предоплата не возвращается)") == (5, 77)
+    assert _near_span(text, after, " (другое удалённое)") is None  # недостающего куска нет среди удалённого
+    assert _near_span("Оплата 30 дней.", "Оплата 31 день.", "1") is None  # короткий текст так не ищем
+
+
+def test_counter_to_their_insertion_removes_our_patch_inside_it(tmp_path):
+    # контрагент вставил «, но не позднее 8 апреля»; мы прямо в его файле заменили «8» на «12», а на сайте дали
+    # встречную редакцию: наша прежняя «12» внутри его вставки не должна остаться обрывком
+    from pravki.compare import without_new_ours
+    from tests.test_compare import _answered_in_their_file
+    bp, tp = _answered_in_their_file(tmp_path)
+    b = read_docx(bp)
+    theirs, _ = without_new_ours(b, read_docx(tp), {"Мы"})
+    changes = compare_versions(b, theirs, ["Мы"])
+    document = build_unified(b, theirs, {"Мы"}, changes)
+    unified = str(tmp_path / "u.docx")
+    annotate_docx(tp, unified, changes, document)
+    dicts = [c.to_dict() for c in changes]
+    out = str(tmp_path / "answer.docx")
+    stats = build_answer(unified, out, dicts, {d["id"]: {"choice": "counter", "text": ", но не позднее 12 апреля"} for d in dicts},
+                         AUTHOR, document)
+    assert stats["counter"] == 1
+    assert _accepted(read_docx(out))[0] == "1.1. Оплата по счёту Организатора, но не позднее 12 апреля."

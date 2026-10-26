@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .classify import classify
-from .compare import compare_versions, resolve_ours
+from .compare import compare_versions, resolve_ours, without_new_ours
 from .docx_reader import DocxError
 from .intake import MAX_MODEL_CLAUSES, clause_changes
 from .readers import read_document
@@ -73,6 +73,14 @@ def review_files(
     warnings: list[str] = list(theirs.notes) + list(base.notes if base is not None else [])
     ours, ours_warnings = resolve_ours(our_authors, base)
     warnings.extend(ours_warnings)
+    theirs, n_new_ours = without_new_ours(base, theirs, ours)
+    if n_new_ours:
+        clauses = sorted({p.clause for p in theirs.paragraphs if p.index in theirs.reworked and p.clause},
+                         key=lambda c: [int(x) if x.isdigit() else 0 for x in c.split(".")])
+        where = f", пункты: {', '.join(clauses)}" if clauses else ""
+        warnings.append(f"В версии контрагента есть ваши правки, сделанные после отправленной версии (мест: {n_new_ours}{where}). "
+                        "Это не правки контрагента: программа их не разбирает. Если вы отправляли более позднюю версию, "
+                        "загрузите её как отправленную.")
 
     # C9: стороны берём из нашей версии текста: без правок контрагента, с нашими правками
     our_doc, our_mode = (base, "accepted") if base is not None else (theirs, "rejected")

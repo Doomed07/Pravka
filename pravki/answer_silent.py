@@ -178,6 +178,31 @@ class Writer:
         rpr.append(self.track(tag))
 
 
+def _near_span(text: str, after: str, deleted: str = "") -> tuple[int, int] | None:
+    """Текст правки в абзаце, из которого уже удалено в рецензировании несколько слов: юрист правил этот пункт прямо
+    в файле контрагента. Каждый недостающий кусок должен найтись среди удалённого в этом абзаце (deleted), иначе
+    это другое место. Только длинный текст: короткое «10» так не ищем."""
+    if len(after) < 40 or not deleted:
+        return None
+    blocks = [b for b in SequenceMatcher(None, text, after, autojunk=False).get_matching_blocks() if b.size >= 8]
+    if not blocks:
+        return None
+    gone = normalize(deleted)
+    pos = 0
+    for blk in blocks + [type(blocks[0])(len(text), len(after), 0)]:
+        gap = after[pos:blk.b].strip(" .,;:")
+        if gap and normalize(gap) not in gone:
+            return None
+        pos = blk.b + blk.size
+    a, b = blocks[0].a, blocks[-1].a + blocks[-1].size
+    end = after.rstrip()[-1:]
+    if end in ".;," and text[b:b + 1] == end:
+        b += 1  # точка в конце правки стоит после удалённого куска
+    if b - a > len(after) * 1.2:
+        return None
+    return a, b
+
+
 def _best_span(p, ch: dict) -> tuple[int, int] | None:
     """Где в абзаце текст контрагента «стало»: при нескольких совпадениях — ближайший к нашей редакции результат."""
     text = "".join(t for _, _, t in _nodes(p))
@@ -186,8 +211,11 @@ def _best_span(p, ch: dict) -> tuple[int, int] | None:
     left = r"(?<![\w\d])" if after[:1].isalnum() else ""
     right = r"(?![\d])" if after[-1:].isdigit() else ""
     spans = [m.span() for m in re.finditer(left + pattern(after) + right, text)] if after else []
-    if len(spans) <= 1:
-        return spans[0] if spans else None
+    if not spans:
+        deleted = "".join(t.text or "" for t in p.iter(q("delText")))
+        return _near_span(text, after, deleted)
+    if len(spans) == 1:
+        return spans[0]
     ours = normalize(ch.get("context", ""))
     return max(spans, key=lambda s: SequenceMatcher(None, normalize(text[:s[0]] + ch.get("before", "") + text[s[1]:]),
                                                    ours, autojunk=False).ratio())

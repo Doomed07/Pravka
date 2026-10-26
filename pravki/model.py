@@ -92,6 +92,8 @@ class DocxDoc:
     authors: list[str]
     format: str = "docx"  # docx | odt | pdf
     notes: list[str] = field(default_factory=list)  # что юристу надо знать о том, как прочитан файл (попадает в предупреждения)
+    # абзацы, где наш автор правил уже после отправленной версии: номер → абзац как в файле (compare.without_new_ours)
+    reworked: dict[int, Paragraph] = field(default_factory=dict)
 
     @property
     def has_tracked(self) -> bool:

@@ -81,6 +81,24 @@ func TestCreate_NextRoundGoesToNextRoundFolderOfTheSameContract(t *testing.T) {
 	}
 }
 
+func TestCreate_SentVersionGoesToPreviousRoundFolder(t *testing.T) {
+	root := t.TempDir()
+	repo := &fakeRepo{project: core_domain.ProjectSummary{
+		Project: core_domain.Project{ID: 3, UserID: 7, Name: "Договор", Dir: "Ромашка/Договор"}, Rounds: 1}}
+	s := NewReviewsService(repo, &fakeEngine{}, WithFiles(filestore.New(root)))
+	base := core_domain.UploadedFile{Name: "наш ответ.docx", Data: []byte("PK\x03\x04 наш")}
+	if _, err := s.Create(context.Background(), 7, core_domain.ReviewRequest{Theirs: docx, Base: &base, ProjectID: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, root, "Ромашка", "Договор", "Раунд 1", "02 Наша отправленная версия.docx"); got != string(base.Data) {
+		t.Errorf("отправленная версия = %q", got)
+	}
+	read(t, root, "Ромашка", "Договор", "Раунд 2", "01 Версия контрагента.docx")
+	if _, err := os.Stat(filepath.Join(root, "Ромашка", "Договор", "Раунд 2", "02 Наша отправленная версия.docx")); err == nil {
+		t.Error("отправленная версия — ответ прошлого раунда, не нового")
+	}
+}
+
 func TestCreate_PdfKeepsItsExtension(t *testing.T) {
 	root := t.TempDir()
 	repo := &fakeRepo{}
