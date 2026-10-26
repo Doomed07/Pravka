@@ -132,7 +132,7 @@ def test_accepted_tracked_change_from_our_version_is_named(tmp_path):
     # правку в нашей версии внёс коллега (его нет среди наших авторов), контрагент принял её без отметки
     base = p(r("1.1. Срок "), ins("10", author="Коллега"), r(" дней."))
     b, t = _docs(tmp_path, base, p(r("1.1. Срок 10 дней.")))
-    ch = compare_versions(b, t, ["kandu"])
+    ch = compare_versions(b, t, ["Юрист"])
     assert len(ch) == 1 and ch[0].detail.get("accepted_from_base") == ["Коллега"]
     assert "Коллега" in ch[0].notes[0]
 
@@ -140,7 +140,7 @@ def test_accepted_tracked_change_from_our_version_is_named(tmp_path):
 def test_real_silent_edit_is_not_taken_for_accepted_change(tmp_path):
     base = p(r("1.1. Срок "), ins("10", author="Коллега"), r(" дней."))
     b, t = _docs(tmp_path, base, p(r("1.1. Срок 15 дней.")))
-    ch = compare_versions(b, t, ["kandu"])
+    ch = compare_versions(b, t, ["Юрист"])
     assert ch and not any(c.detail.get("accepted_from_base") for c in ch)
 
 

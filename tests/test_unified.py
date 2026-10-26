@@ -28,8 +28,8 @@ def test_silent_edit_is_marked_separately(tmp_path):
 
 
 def test_our_own_changes_are_plain_text(tmp_path):
-    theirs = p(r("1.1. Срок "), dele("10", author="kandu"), ins("20", author="kandu"), r(" дней."))
-    doc, _ = _unified(tmp_path, p(r("1.1. Срок 20 дней.")), theirs, ours=["kandu"])
+    theirs = p(r("1.1. Срок "), dele("10", author="Юрист"), ins("20", author="Юрист"), r(" дней."))
+    doc, _ = _unified(tmp_path, p(r("1.1. Срок 20 дней.")), theirs, ours=["Юрист"])
     assert _marked(doc) == []
     assert "".join(s["t"] for s in doc[0]["segments"]) == "1.1. Срок 20 дней."
 
@@ -126,9 +126,9 @@ def test_replaced_clause_is_one_change_on_both_paragraphs(tmp_path):
 def test_party_comments_are_kept_whole_with_side(tmp_path):
     body = p('<w:commentRangeStart w:id="1"/>', r("1.1. Срок 10 дней."), '<w:commentRangeEnd w:id="1"/>',
              '<w:r><w:commentReference w:id="1"/></w:r>')
-    comments = ('<w:comment w:id="1" w:author="kandu" w:date="2026-03-27T10:00:00Z"><w:p><w:r><w:t>Просим 10 дней.</w:t></w:r></w:p>'
+    comments = ('<w:comment w:id="1" w:author="Юрист" w:date="2026-03-27T10:00:00Z"><w:p><w:r><w:t>Просим 10 дней.</w:t></w:r></w:p>'
                 '<w:p><w:r><w:t>Иначе не успеем.</w:t></w:r></w:p></w:comment>')
     t = read_docx(str(make_docx(tmp_path / "t.docx", body, comments=comments)))
-    doc = build_unified(None, t, {"kandu"}, [])
-    assert doc[0]["comments"] == [{"author": "kandu", "date": "2026-03-27T10:00:00Z", "text": "Просим 10 дней.\nИначе не успеем.",
+    doc = build_unified(None, t, {"Юрист"}, [])
+    assert doc[0]["comments"] == [{"author": "Юрист", "date": "2026-03-27T10:00:00Z", "text": "Просим 10 дней.\nИначе не успеем.",
                                    "ours": True, "anchor": "1.1. Срок 10 дней."}]

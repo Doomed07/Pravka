@@ -29,7 +29,7 @@ func TestWithIdentity(t *testing.T) {
 			identity: core_auth.Identity{
 				UserID:   7,
 				Username: "kant",
-				Email:    "kant@mail.ru",
+				Email:    "user@example.ru",
 			},
 		},
 		{

@@ -40,19 +40,19 @@ func TestAuthService_Register_Metrics(t *testing.T) {
 		pass    string
 		want    float64 // на сколько вырос счётчик регистраций
 	}{
-		{name: "success", user: "kant", email: "kant@mail.ru", pass: "Passw0rd!", want: 1},
-		{name: "invalid input", user: "ab", email: "kant@mail.ru", pass: "Passw0rd!", want: 0},
+		{name: "success", user: "kant", email: "user@example.ru", pass: "Passw0rd!", want: 1},
+		{name: "invalid input", user: "ab", email: "user@example.ru", pass: "Passw0rd!", want: 0},
 		{
 			name: "username already taken",
 			prepare: func(r *fakeAuthRepository, t *testing.T) {
 				r.seedUser(t, 1, "kant", "other@mail.ru", "Passw0rd!")
 			},
-			user: "kant", email: "kant@mail.ru", pass: "Passw0rd!", want: 0,
+			user: "kant", email: "user@example.ru", pass: "Passw0rd!", want: 0,
 		},
 		{
 			name:    "session could not be created",
 			prepare: func(r *fakeAuthRepository, t *testing.T) { r.createSessionErr = errBoom },
-			user:    "kant", email: "kant@mail.ru", pass: "Passw0rd!", want: 0,
+			user:    "kant", email: "user@example.ru", pass: "Passw0rd!", want: 0,
 		},
 	}
 	for _, tt := range tests {
@@ -88,7 +88,7 @@ func TestAuthService_Login_Metrics(t *testing.T) {
 		wantLoginErr error
 	}{
 		{name: "by username", login: "kant", password: "Passw0rd!", wantOK: 1},
-		{name: "by email", login: "kant@mail.ru", password: "Passw0rd!", wantOK: 1},
+		{name: "by email", login: "user@example.ru", password: "Passw0rd!", wantOK: 1},
 		{name: "wrong password", login: "kant", password: "Wrong0rd!", wantInvalid: 1, wantLoginErr: core_errors.ErrUnauthorized},
 		{name: "unknown user", login: "nobody", password: "Passw0rd!", wantInvalid: 1, wantLoginErr: core_errors.ErrUnauthorized},
 		{
@@ -101,7 +101,7 @@ func TestAuthService_Login_Metrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
-			repo.seedUser(t, 1, "kant", "kant@mail.ru", "Passw0rd!")
+			repo.seedUser(t, 1, "kant", "user@example.ru", "Passw0rd!")
 			repo.credsErr = tt.repoErr
 			s := newTestService(t, repo)
 			before := readAuthCounters()

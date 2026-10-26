@@ -184,7 +184,7 @@ class Span:
 
 @dataclass
 class Anonymizer:
-    authors: dict[str, str] = field(default_factory=dict)  # автор → заглушка («kandu» → «Мы»)
+    authors: dict[str, str] = field(default_factory=dict)  # автор → заглушка («Юрист» → «Мы»)
     terms: dict[str, str] = field(default_factory=dict)  # слово → заглушка (ручные добавления)
     seed: str = "pravki"
     orgs: dict[str, str] = field(default_factory=dict)  # нормализованное название → заглушка
