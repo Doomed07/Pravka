@@ -24,10 +24,11 @@ func (r *ReviewsRepository) changesWithoutVectors(ctx context.Context, reviewID 
 	rows, err := r.pool.Query(ctx, `
 	SELECT c->>'id', coalesce(c->>'kind', ''), coalesce(c->>'topic', ''), coalesce(c->>'context', ''),
 	       coalesce(c->>'context_after', '')
-	FROM pravkiapp.reviews r CROSS JOIN LATERAL jsonb_array_elements(r.changes) c
+	FROM pravkiapp.reviews r CROSS JOIN LATERAL jsonb_array_elements(r.changes) WITH ORDINALITY AS e(c, n)
 	WHERE r.id = $1 AND r.contract_type IN ('supply', 'services') AND coalesce(c->>'kind', '') <> 'comment'
 	  AND coalesce(c->>'materiality', '') <> 'техническая'
-	  AND NOT EXISTS (SELECT 1 FROM pravkiapp.review_vectors v WHERE v.review_id = r.id AND v.change_id = c->>'id');`,
+	  AND NOT EXISTS (SELECT 1 FROM pravkiapp.review_vectors v WHERE v.review_id = r.id AND v.change_id = c->>'id')
+	ORDER BY e.n;`, // порядок правок в разборе: без него PostgreSQL вправе вернуть их в любом порядке
 		reviewID)
 	if err != nil {
 		return nil, fmt.Errorf("select changes without vectors: %w", err)

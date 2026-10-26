@@ -12,6 +12,9 @@ from pravki.synth import generate_case
 
 @pytest.fixture()
 def server(tmp_path, monkeypatch):
+    # без модели: если в окружении остался адрес локальной модели (например, после «. ./.env»), разбор шёл бы к ней,
+    # и под нагрузкой или без запущенной модели тест падал бы с ошибкой модели вместо отчёта
+    monkeypatch.delenv("PRAVKI_LLM_URL", raising=False)
     monkeypatch.setattr(web, "STORE", str(tmp_path / "store"))
     monkeypatch.setattr(web, "SETTINGS", str(tmp_path / "settings.json"))
     srv = web.ThreadingHTTPServer(("127.0.0.1", 0), web.Handler)
