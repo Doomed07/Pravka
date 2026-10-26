@@ -2790,3 +2790,10 @@ select.form__input {
   font-size: 11px;
   white-space: nowrap;
 }
+
+/* Высоту договора под карточки на полях добавляет layoutNotes (min-height): лишнее место — внизу, а не между абзацами */
+@media (min-width: 1181px) {
+  .doc {
+    align-content: start;
+  }
+}
