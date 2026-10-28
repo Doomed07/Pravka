@@ -274,13 +274,13 @@ func TestAuthService_Register_Success(t *testing.T) {
 	s := newTestService(t, repo)
 
 	// лишние пробелы вокруг ника и заглавные буквы в email нормализуются
-	user, token, err := s.Register(context.Background(), "  Kant ", "KANT@Mail.ru", "Passw0rd!")
+	user, token, err := s.Register(context.Background(), "  Kant ", "USER@Example.ru", "Passw0rd!")
 	if err != nil {
 		t.Fatalf("Register() failed: %v", err)
 	}
 
-	if user.ID == 0 || user.Username != "Kant" || user.Email != "kant@mail.ru" {
-		t.Errorf("Register() user = %+v, want ID != 0, Username Kant, Email kant@mail.ru", user)
+	if user.ID == 0 || user.Username != "Kant" || user.Email != "user@example.ru" {
+		t.Errorf("Register() user = %+v, want ID != 0, Username Kant, Email user@example.ru", user)
 	}
 	if repo.gotUserHash == "Passw0rd!" {
 		t.Fatal("password was stored in plain text")
@@ -334,10 +334,10 @@ func TestAuthService_Register_Invalid(t *testing.T) {
 func TestAuthService_Register_RepositoryErrors(t *testing.T) {
 	t.Run("conflict is propagated", func(t *testing.T) {
 		repo := newFakeRepo()
-		repo.seedUser(t, 1, "Kant", "kant@mail.ru", "Passw0rd!")
+		repo.seedUser(t, 1, "Kant", "user@example.ru", "Passw0rd!")
 		s := newTestService(t, repo)
 
-		_, token, err := s.Register(context.Background(), "Other", "kant@mail.ru", "Passw0rd!")
+		_, token, err := s.Register(context.Background(), "Other", "user@example.ru", "Passw0rd!")
 
 		if !errors.Is(err, core_errors.ErrConflict) {
 			t.Fatalf("Register() error = %v, want ErrConflict", err)
@@ -352,7 +352,7 @@ func TestAuthService_Register_RepositoryErrors(t *testing.T) {
 		repo.createUserErr = errBoom
 		s := newTestService(t, repo)
 
-		_, _, err := s.Register(context.Background(), "Kant", "kant@mail.ru", "Passw0rd!")
+		_, _, err := s.Register(context.Background(), "Kant", "user@example.ru", "Passw0rd!")
 
 		if !errors.Is(err, errBoom) {
 			t.Errorf("Register() error = %v, want wrapped %v", err, errBoom)
@@ -364,7 +364,7 @@ func TestAuthService_Register_RepositoryErrors(t *testing.T) {
 		repo.createSessionErr = errBoom
 		s := newTestService(t, repo)
 
-		_, token, err := s.Register(context.Background(), "Kant", "kant@mail.ru", "Passw0rd!")
+		_, token, err := s.Register(context.Background(), "Kant", "user@example.ru", "Passw0rd!")
 
 		if !errors.Is(err, errBoom) {
 			t.Errorf("Register() error = %v, want wrapped %v", err, errBoom)
@@ -386,13 +386,13 @@ func TestAuthService_Login_Success(t *testing.T) {
 		{name: "by username", login: "Kant"},
 		{name: "username in other case", login: "kAnT"},
 		{name: "username with spaces", login: "  Kant  "},
-		{name: "by email", login: "kant@mail.ru"},
-		{name: "email in other case", login: "KANT@Mail.RU"},
+		{name: "by email", login: "user@example.ru"},
+		{name: "email in other case", login: "USER@Example.RU"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
-			seeded := repo.seedUser(t, 7, "Kant", "kant@mail.ru", "Passw0rd!")
+			seeded := repo.seedUser(t, 7, "Kant", "user@example.ru", "Passw0rd!")
 			s := newTestService(t, repo)
 
 			user, token, err := s.Login(context.Background(), tt.login, "Passw0rd!")
@@ -435,7 +435,7 @@ func TestAuthService_Login_Unauthorized(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newFakeRepo()
-			repo.seedUser(t, 7, "Kant", "kant@mail.ru", "Passw0rd!")
+			repo.seedUser(t, 7, "Kant", "user@example.ru", "Passw0rd!")
 			s := newTestService(t, repo)
 
 			user, token, err := s.Login(context.Background(), tt.login, tt.password)
@@ -481,7 +481,7 @@ func TestAuthService_Login_RepositoryErrors(t *testing.T) {
 
 	t.Run("cleanup failure does not break login", func(t *testing.T) {
 		repo := newFakeRepo()
-		repo.seedUser(t, 7, "Kant", "kant@mail.ru", "Passw0rd!")
+		repo.seedUser(t, 7, "Kant", "user@example.ru", "Passw0rd!")
 		repo.deleteExpiredErr = errBoom
 		s := newTestService(t, repo)
 
@@ -494,7 +494,7 @@ func TestAuthService_Login_RepositoryErrors(t *testing.T) {
 
 	t.Run("create session error", func(t *testing.T) {
 		repo := newFakeRepo()
-		repo.seedUser(t, 7, "Kant", "kant@mail.ru", "Passw0rd!")
+		repo.seedUser(t, 7, "Kant", "user@example.ru", "Passw0rd!")
 		repo.createSessionErr = errBoom
 		s := newTestService(t, repo)
 
@@ -511,7 +511,7 @@ func TestAuthService_Login_RepositoryErrors(t *testing.T) {
 
 func TestAuthService_Login_NewTokenEachTime(t *testing.T) {
 	repo := newFakeRepo()
-	repo.seedUser(t, 7, "Kant", "kant@mail.ru", "Passw0rd!")
+	repo.seedUser(t, 7, "Kant", "user@example.ru", "Passw0rd!")
 	s := newTestService(t, repo)
 
 	_, first, err1 := s.Login(context.Background(), "Kant", "Passw0rd!")
@@ -543,7 +543,7 @@ func TestAuthService_BcryptQueueRespectsContext(t *testing.T) {
 
 	t.Run("login", func(t *testing.T) {
 		repo := newFakeRepo()
-		repo.seedUser(t, 7, "Kant", "kant@mail.ru", "Passw0rd!")
+		repo.seedUser(t, 7, "Kant", "user@example.ru", "Passw0rd!")
 		s := newTestService(t, repo)
 		fillQueue(s)
 
@@ -562,7 +562,7 @@ func TestAuthService_BcryptQueueRespectsContext(t *testing.T) {
 		s := newTestService(t, repo)
 		fillQueue(s)
 
-		_, _, err := s.Register(cancelled(), "Kant", "kant@mail.ru", "Passw0rd!")
+		_, _, err := s.Register(cancelled(), "Kant", "user@example.ru", "Passw0rd!")
 
 		if !errors.Is(err, context.Canceled) {
 			t.Errorf("Register() error = %v, want context.Canceled", err)
@@ -574,7 +574,7 @@ func TestAuthService_BcryptQueueRespectsContext(t *testing.T) {
 }
 
 func TestAuthService_Authenticate(t *testing.T) {
-	user := core_domain.NewUser(7, 1, "Kant", "kant@mail.ru", testNow)
+	user := core_domain.NewUser(7, 1, "Kant", "user@example.ru", testNow)
 
 	tests := []struct {
 		name      string
@@ -629,7 +629,7 @@ func TestAuthService_Authenticate(t *testing.T) {
 }
 
 func TestAuthService_Logout(t *testing.T) {
-	user := core_domain.NewUser(7, 1, "Kant", "kant@mail.ru", testNow)
+	user := core_domain.NewUser(7, 1, "Kant", "user@example.ru", testNow)
 
 	t.Run("removes the session by token hash", func(t *testing.T) {
 		repo := newFakeRepo()

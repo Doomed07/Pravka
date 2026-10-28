@@ -28,8 +28,8 @@ def test_silent_edit_is_marked_separately(tmp_path):
 
 
 def test_our_own_changes_are_plain_text(tmp_path):
-    theirs = p(r("1.1. Срок "), dele("10", author="kandu"), ins("20", author="kandu"), r(" дней."))
-    doc, _ = _unified(tmp_path, p(r("1.1. Срок 20 дней.")), theirs, ours=["kandu"])
+    theirs = p(r("1.1. Срок "), dele("10", author="Юрист"), ins("20", author="Юрист"), r(" дней."))
+    doc, _ = _unified(tmp_path, p(r("1.1. Срок 20 дней.")), theirs, ours=["Юрист"])
     assert _marked(doc) == []
     assert "".join(s["t"] for s in doc[0]["segments"]) == "1.1. Срок 20 дней."
 
@@ -98,17 +98,18 @@ def test_table_cells_keep_coordinates_and_empty_cells(tmp_path):
     theirs = make_docx(tmp_path / "theirs.docx", doc("500 000"))  # цену поменяли без отметки
     rv = review_files(str(theirs), str(base))
     cells = [d for d in rv.document if d["table"]]
-    assert len(cells) == 9  # 3 + 3 + 2 ячейки, включая пустую, и старое значение цены в её ячейке
+    assert len(cells) == 8  # 3 + 3 + 2 ячейки, включая пустую; старое значение цены — в той же ячейке
     assert {tuple(d["table"][:3]) for d in cells} == {(0, 0, 0), (0, 0, 1), (0, 0, 2), (0, 1, 0), (0, 1, 1), (0, 1, 2),
                                                       (0, 2, 0), (0, 2, 2)}
     itogo = next(d for d in cells if d["table"][1] == 2 and d["table"][2] == 0)
     assert itogo["table"][3] == 2  # объединённая ячейка шириной в два столбца
     price = [s for d in cells if d["table"][1] == 1 and d["table"][2] == 2 for s in d["segments"]]
-    # тихая правка цены видна в своей ячейке: было 475 000, стало 500 000
+    # тихая правка цены видна в своей ячейке: было 475 000, стало 500 000 (одна правка, а не удалённый и вставленный абзац)
     assert {(s["k"], s["t"]) for s in price} == {("silent_del", "475 000"), ("silent_ins", "500 000")}
+    assert [(c.kind, c.before, c.after) for c in rv.changes] == [("replace", "475 000", "500 000")]
     # таблица идёт одним куском: между её ячейками нет абзацев вне таблицы
     flags = [bool(d["table"]) for d in rv.document]
-    assert flags == [False] + [True] * 9 + [False]
+    assert flags == [False] + [True] * 8 + [False]
     outside = [d for d in rv.document if not d["table"]]
     assert all(d["table"] is None for d in outside) and len(outside) == 2
 
@@ -125,9 +126,9 @@ def test_replaced_clause_is_one_change_on_both_paragraphs(tmp_path):
 def test_party_comments_are_kept_whole_with_side(tmp_path):
     body = p('<w:commentRangeStart w:id="1"/>', r("1.1. Срок 10 дней."), '<w:commentRangeEnd w:id="1"/>',
              '<w:r><w:commentReference w:id="1"/></w:r>')
-    comments = ('<w:comment w:id="1" w:author="kandu" w:date="2026-03-27T10:00:00Z"><w:p><w:r><w:t>Просим 10 дней.</w:t></w:r></w:p>'
+    comments = ('<w:comment w:id="1" w:author="Юрист" w:date="2026-03-27T10:00:00Z"><w:p><w:r><w:t>Просим 10 дней.</w:t></w:r></w:p>'
                 '<w:p><w:r><w:t>Иначе не успеем.</w:t></w:r></w:p></w:comment>')
     t = read_docx(str(make_docx(tmp_path / "t.docx", body, comments=comments)))
-    doc = build_unified(None, t, {"kandu"}, [])
-    assert doc[0]["comments"] == [{"author": "kandu", "date": "2026-03-27T10:00:00Z", "text": "Просим 10 дней.\nИначе не успеем.",
+    doc = build_unified(None, t, {"Юрист"}, [])
+    assert doc[0]["comments"] == [{"author": "Юрист", "date": "2026-03-27T10:00:00Z", "text": "Просим 10 дней.\nИначе не успеем.",
                                    "ours": True, "anchor": "1.1. Срок 10 дней."}]

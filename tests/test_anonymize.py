@@ -272,13 +272,13 @@ def test_street_after_name_building_numbers_and_postal_code(tmp_path):
 
 
 def test_org_name_in_different_case_is_replaced_everywhere(tmp_path):
-    src = _write(tmp_path / "a.docx", p(r("ООО «КВАДРАТ РЕСУРС» и ООО «Квадрат ресурс» подписали. Квадрат просит ускорить.")) +
+    src = _write(tmp_path / "a.docx", p(r("ООО «ВЕКТОР ПЛЮС» и ООО «Вектор плюс» подписали. Вектор просит ускорить.")) +
                  p(r("Центральный банк России не изменился, а портал остался порталом.")))
     a = _anon_for(src)
     dst = str(tmp_path / "o.docx")
     anonymize_docx(a, src, dst)
     text = " ".join("".join(s.text for s in x.segments) for x in read_docx(dst).paragraphs)
-    assert "КВАДРАТ" not in text.upper().replace("ОРГАНИЗАЦИЯ", "") and "Организация-1" in text
+    assert "ВЕКТОР" not in text.upper().replace("ОРГАНИЗАЦИЯ", "") and "Организация-1" in text
     assert "Центральный банк России" in text and "портал" in text  # обычные слова не портим
 
 
@@ -339,10 +339,10 @@ def test_contract_word_before_initials_is_not_a_surname(tmp_path):
 
 def test_gender_from_inflected_patronymic():
     a = Anonymizer()
-    a.learn("Договор подписан с Ермаковой Екатериной Юрьевной. Генеральному директору Ивановой Анне Сергеевне.")
+    a.learn("Договор подписан с Сорокиной Екатериной Юрьевной. Генеральному директору Ивановой Анне Сергеевне.")
     a.learn("Директору Смирнову Алексею Петровичу и Смирнова Алексея Петровича.")
     by = {p.surname[:4]: p.female for p in a.persons}
-    assert by["Ерма"] is True and by["Иван"] is True and by["Смир"] is False
+    assert by["Соро"] is True and by["Иван"] is True and by["Смир"] is False
 
 
 def test_male_genitive_surname_is_not_female():

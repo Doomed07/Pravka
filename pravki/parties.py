@@ -12,10 +12,12 @@
 Ограничения (честно):
   * разбираются стороны, описанные в начале договора (до первого пункта) по образцу «…, именуемое в дальнейшем
     «Роль»», «…в дальнейшем Роль» (без кавычек) или «(далее – Роль)»; обозначения «Стороны» и «Договор» ролями не
-    считаются; раздел с реквизитами в конце договора (чаще таблицей) не разбирается;
+    считаются; из раздела реквизитов в конце договора (абзацами или таблицей) берутся ИНН, ОГРН, КПП, расчётный и
+    корреспондентский счёт и БИК стороны (`requisites_of`): ИНН и ОГРН дополняют сторону из преамбулы, смена счёта, БИК
+    или КПП — правка сторон высшего приоритета;
   * иностранные наименования распознаются по форме (Ltd, LLC, Inc, GmbH, AG, Corp и т. п.) и по слову «Фирма»,
     «Компания» с названием в кавычках; если наименование не разобрано в обеих версиях, оно изменением не считается;
-  * ИНН и ОГРН учитываются, только если указаны в преамбуле;
+  * сторона блока реквизитов определяется по названию роли («Исполнитель:») или по наименованию из преамбулы;
   * «Сторона 1» и «Сторона 2» роль не определяют: такие договоры всегда идут на подтверждение юристу.
 """
 from __future__ import annotations
@@ -291,7 +293,122 @@ def parse_parties(text: str) -> list[Party]:
 
 
 def parties_of(doc: DocxDoc, mode: str, ours: set[str] | frozenset[str] = frozenset()) -> list[Party]:
-    return parse_parties(head_text(doc, mode, ours))
+    parties = parse_parties(head_text(doc, mode, ours))
+    _fill_from_requisites(parties, requisites_of(doc, mode, ours, parties))
+    return parties
+
+
+# --------------------------------------------------------------------------------------
+# Реквизиты в конце договора
+# --------------------------------------------------------------------------------------
+_REQ_HEAD = re.compile(r"реквизит|адреса\s+сторон|юридические\s+адреса", re.IGNORECASE)
+_APPENDIX = re.compile(r"^\s*приложение\b", re.IGNORECASE)
+_ROLE_WORD = re.compile(r"(?<![\w])(" + "|".join(sorted((k for k in _SIDE if " " not in k), key=len, reverse=True)) + r")(?![\w])",
+                        re.IGNORECASE)
+_ACCOUNT = re.compile(r"(?:р\s*/\s*сч?|р\.\s*с\.?|расч[её]тный\s+сч[её]т)\s*[:№.]?\s*(\d{20})\b", re.IGNORECASE)
+_CORR = re.compile(r"(?:к\s*/\s*сч?|к\.\s*с\.?|корр?\w*\.?\s*сч[её]т)\s*[:№.]?\s*(\d{20})\b", re.IGNORECASE)
+_BIK = re.compile(r"БИК\s*[:№]?\s*(\d{9})\b")
+_KPP = re.compile(r"КПП\s*[:№]?\s*(\d{9})\b")
+REQUISITES = (("inn", "ИНН", _INN), ("ogrn", "ОГРН", _OGRN), ("kpp", "КПП", _KPP), ("account", "расчётный счёт", _ACCOUNT),
+              ("corr", "корреспондентский счёт", _CORR), ("bik", "БИК", _BIK))
+
+
+def _block_side(text: str, parties: list[Party]) -> str:
+    """Сторона блока реквизитов: по названию роли в начале блока, затем по наименованию из преамбулы, затем по роли где угодно."""
+    head = text[:60].casefold()
+    for p in parties:
+        role = re.sub(r"[«»\"“”]", "", p.role).strip().casefold()
+        if role and re.match(re.escape(role) + r"(?![\w])", head):
+            return p.side
+    low = norm_name(text)
+    for p in parties:
+        if p.name and norm_name(p.name) and norm_name(p.name) in low[:200]:
+            return p.side
+    m = _ROLE_WORD.search(text)
+    return canon_role(m.group(1)) if m else ""
+
+
+def requisites_of(doc: DocxDoc, mode: str, ours: set[str] | frozenset[str] = frozenset(),
+                  parties: list[Party] = ()) -> dict[str, dict[str, str]]:
+    """Реквизиты сторон из раздела «Реквизиты» в конце договора: {сторона: {inn, ogrn, kpp, account, corr, bik, text}}.
+
+    Раздел начинается с последнего короткого абзаца со словом «реквизиты» (или «адреса сторон») и идёт до конца или до
+    приложения. В таблице блок стороны — столбец, иначе блок начинается с абзаца, который открывается названием роли."""
+    view = [(p, normalize(t)) for p, t in view_paragraphs(doc, mode, ours)]
+    has_req = [any(rx.search(t) for _, _, rx in REQUISITES) for _, t in view]
+    # первый короткий заголовок со словом «реквизиты», после которого в пределах 40 абзацев есть ИНН или счёт:
+    # «Банковские реквизиты» внутри блока стороны и «изменение реквизитов» в тексте договора разделом не считаются
+    start = next((i for i, (_, t) in enumerate(view) if t and len(t) <= 120 and _REQ_HEAD.search(t)
+                  and any(has_req[i + 1:i + 41])), None)
+    if start is None:
+        return {}
+    names = [norm_name(p.name) for p in parties if norm_name(p.name)]
+    roles = [r for r in {re.sub(r"[«»\"“”]", "", p.role).strip() for p in parties} if r]
+    role_rx = re.compile(r"^(?:" + "|".join(map(re.escape, roles)) + r")(?![\w])", re.IGNORECASE) if roles else None
+
+    def opens_block(text: str) -> bool:
+        if _ROLE_WORD.match(text) or (role_rx is not None and role_rx.match(text)):
+            return True
+        return len(text) <= 150 and any(n in norm_name(text) for n in names)
+    blocks: dict[object, list[str]] = {}
+    order: list[object] = []
+    current: object = None
+    for n, (para, text) in enumerate(view[start + 1:], 1):
+        if not text:
+            continue
+        if _APPENDIX.match(text):
+            break
+        if para.table:
+            key = ("table", para.table[0], para.table[2])
+        else:
+            if current is None or (isinstance(current, tuple) and current[0] == "table") or opens_block(text):
+                current = ("text", n)
+            key = current
+        if key not in blocks:
+            blocks[key] = []
+            order.append(key)
+        blocks[key].append(text)
+    out: dict[str, dict[str, str]] = {}
+    for key in order:
+        text = " ".join(blocks[key])
+        side = _block_side(text, list(parties))
+        if not side or side in out:
+            continue
+        found = {name: m.group(1) for name, _, rx in REQUISITES if (m := rx.search(text))}
+        if found:
+            out[side] = {**found, "text": text}
+    return out
+
+
+def _fill_from_requisites(parties: list[Party], req: dict[str, dict[str, str]]) -> None:
+    """ИНН и ОГРН стороны из реквизитов, если в преамбуле их нет."""
+    for p in parties:
+        r = req.get(p.side, {})
+        if not p.inn and r.get("inn"):
+            p.inn = r["inn"]
+        if not p.ogrn and r.get("ogrn"):
+            p.ogrn = r["ogrn"]
+
+
+def compare_requisites(ours: dict[str, dict[str, str]], theirs: dict[str, dict[str, str]],
+                       roles: dict[str, str]) -> list[tuple[str, str, str]]:
+    """Смена банковских реквизитов и КПП стороны между версиями (ИНН и ОГРН сверяет compare_parties)."""
+    out: list[tuple[str, str, str]] = []
+    for side, o in ours.items():
+        t = theirs.get(side)
+        if t is None:
+            continue
+        role = roles.get(side, side)
+        for name, label, _ in REQUISITES:
+            if name in ("inn", "ogrn"):
+                continue
+            a, b = o.get(name, ""), t.get(name, "")
+            if a and b and a != b:
+                out.append((f"Изменён {label} стороны «{role}» в реквизитах: {a} → {b}. Проверьте по документам стороны: "
+                            "подмена счёта — частый способ мошенничества.", _short(o["text"]), _short(t["text"])))
+            elif a and not b:
+                out.append((f"В реквизитах стороны «{role}» больше нет: {label} {a}.", _short(o["text"]), _short(t["text"])))
+    return out
 
 
 # --------------------------------------------------------------------------------------
@@ -461,12 +578,16 @@ def _same_party_checks(o: Party, t: Party, out: list[tuple[str, str, str]]) -> N
 
 def party_changes(base: DocxDoc | None, theirs: DocxDoc, ours_authors: set[str], start: int = 1) -> list[Change]:
     """Правки сторон высшего приоритета (C10). Сравнивает нашу версию с принятой версией контрагента."""
-    if base is not None:
-        our_view = head_text(base, "accepted", ours_authors)
-    else:
-        our_view = head_text(theirs, "rejected", ours_authors)
+    our_doc, our_mode = (base, "accepted") if base is not None else (theirs, "rejected")
+    our_view = head_text(our_doc, our_mode, ours_authors)
     their_view = head_text(theirs, "accepted", ours_authors)
-    found = compare_parties(parse_parties(our_view), parse_parties(their_view))
+    our_parties, their_parties = parse_parties(our_view), parse_parties(their_view)
+    our_req = requisites_of(our_doc, our_mode, ours_authors, our_parties)
+    their_req = requisites_of(theirs, "accepted", ours_authors, their_parties)
+    _fill_from_requisites(our_parties, our_req)
+    _fill_from_requisites(their_parties, their_req)
+    found = compare_parties(our_parties, their_parties)
+    found += compare_requisites(our_req, their_req, {p.side: p.role for p in our_parties})
     out: list[Change] = []
     for n, (what, before, after) in enumerate(found, start):
         ch = Change(

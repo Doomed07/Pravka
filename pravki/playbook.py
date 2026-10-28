@@ -144,8 +144,33 @@ def _after_spans(text: str, after: str) -> list[tuple[int, int]]:
     return [(m.start(), m.end()) for m in re.finditer(pat, text)]
 
 
+# Единица в заголовке столбца таблицы («Стоимость, руб.», «Срок, дней»): в самой ячейке стоит только число.
+UNIT_WORDS = {"money": r"руб|₽|евро|usd|долл", "percent": r"%|процент", "days": r"\bдн|\bдней\b|сутк",
+              "months": r"месяц", "years": r"\bлет\b|\bгод"}
+
+
+def _cell_number(ch: Change, unit: str, check: dict) -> list[float]:
+    """Число в ячейке таблицы, единица которого указана в заголовке столбца; context проверки — по заголовку и строке."""
+    head = ch.detail.get("cell_head", "")
+    value = (ch.after or "").strip()
+    if not head or unit not in UNIT_WORDS or not re.search(UNIT_WORDS[unit], head, re.IGNORECASE):
+        return []
+    if not re.fullmatch(r"\d[\d\s\u00a0]*(?:[.,]\d+)?", value):
+        return []
+    sel = check.get("context")
+    if sel and not re.search(sel, f"{head} {ch.detail.get('cell_row', '')}", re.IGNORECASE):
+        return []
+    try:
+        return [_num(value)]
+    except ValueError:
+        return []
+
+
 def _find_numbers(ch: Change, unit: str, check: dict) -> list[float]:
     """Числа с единицей из итогового текста, которых касается правка."""
+    cell = _cell_number(ch, unit, check)
+    if cell:
+        return cell
     text = ch.context_after or ch.after
     if not text:
         return []

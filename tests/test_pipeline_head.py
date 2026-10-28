@@ -14,8 +14,8 @@ def _review(tmp_path, base_body, theirs_body, authors):
 
 def test_requisites_edit_in_preamble_goes_to_lawyer(tmp_path):
     clause = p(r("1. Предмет договора")) + p(r("1.1. Исполнитель оказывает услуги."))
-    rv = _review(tmp_path, p(r(PRE + "от 27.11.2019.")) + clause, p(r(PRE + "319774600680622 от 27.11.2019.")) + clause, ["kandu"])
-    edit = next(c for c in rv.changes if "319774600680622" in c.after)
+    rv = _review(tmp_path, p(r(PRE + "от 27.11.2019.")) + clause, p(r(PRE + "312345678901234 от 27.11.2019.")) + clause, ["Юрист"])
+    edit = next(c for c in rv.changes if "312345678901234" in c.after)
     assert edit.topic == PARTY_TOPIC and edit.lawyer_decision_needed and edit.rule_id == "PARTY"
     assert not edit.suggested  # позиция плейбука к реквизитам не относится
 
@@ -24,7 +24,7 @@ def test_accepted_change_from_our_version_skips_playbook(tmp_path):
     clause = p(r("1. Предмет договора"))
     base = clause + p(r("2.1. Ответственность Исполнителя ограничена суммой "), ins("стоимости Услуг", author="Коллега"), r("."))
     theirs = clause + p(r("2.1. Ответственность Исполнителя ограничена суммой стоимости Услуг."))
-    rv = _review(tmp_path, base, theirs, ["kandu"])
+    rv = _review(tmp_path, base, theirs, ["Юрист"])
     ch = next(c for c in rv.changes if c.detail.get("accepted_from_base"))
     assert ch.lawyer_decision_needed and ch.rule_id == "" and "Коллега" in ch.explanation
 

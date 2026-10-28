@@ -132,7 +132,7 @@ def test_accepted_tracked_change_from_our_version_is_named(tmp_path):
     # правку в нашей версии внёс коллега (его нет среди наших авторов), контрагент принял её без отметки
     base = p(r("1.1. Срок "), ins("10", author="Коллега"), r(" дней."))
     b, t = _docs(tmp_path, base, p(r("1.1. Срок 10 дней.")))
-    ch = compare_versions(b, t, ["kandu"])
+    ch = compare_versions(b, t, ["Юрист"])
     assert len(ch) == 1 and ch[0].detail.get("accepted_from_base") == ["Коллега"]
     assert "Коллега" in ch[0].notes[0]
 
@@ -140,7 +140,7 @@ def test_accepted_tracked_change_from_our_version_is_named(tmp_path):
 def test_real_silent_edit_is_not_taken_for_accepted_change(tmp_path):
     base = p(r("1.1. Срок "), ins("10", author="Коллега"), r(" дней."))
     b, t = _docs(tmp_path, base, p(r("1.1. Срок 15 дней.")))
-    ch = compare_versions(b, t, ["kandu"])
+    ch = compare_versions(b, t, ["Юрист"])
     assert ch and not any(c.detail.get("accepted_from_base") for c in ch)
 
 
@@ -276,3 +276,69 @@ def test_site_marks_their_silent_edit_but_not_ours_in_the_same_clause(tmp_path):
     doc = review_files(t, base_path=b, our_authors=["Мы"]).document
     silent = "".join(s["t"] for para in doc for s in para["segments"] if s["k"] == "silent_ins")
     assert "99999" in silent and "ОГРНИП" not in silent
+
+
+def _mark_del(n, author="Контрагент"):
+    return f'<w:rPr><w:del w:id="{n}" w:author="{author}" w:date="2026-10-05T10:00:00Z"/></w:rPr>'
+
+
+def test_breaks_in_requisites_are_one_change(tmp_path):
+    # контрагент свёл строки реквизитов в одну: три удалённых знака абзаца подряд — одна правка, а не три
+    from pravki.extract import extract_tracked
+    body = (p(r("10. Реквизиты сторон")) + p(r("Адрес: г. Москва"), ppr=_mark_del(1)) + p(r("ИНН 7701234567"), ppr=_mark_del(2)) +
+            p(r("Банк: Альфа"), ppr=_mark_del(3)) + p(r("БИК 044525593")) + p(r("Телефон: 123"), ppr=_mark_del(4)) + p(r("Почта: a@b.ru")))
+    doc = read_docx(str(make_docx(tmp_path / "t.docx", body)))
+    breaks = [c for c in extract_tracked(doc) if "склейка абзацев" in c.flags]
+    assert [c.before for c in breaks] == ["[разрыв абзаца] × 3", "[разрыв абзаца]"]
+    assert breaks[0].detail["revs"] == ["1", "2", "3"] and breaks[0].detail["breaks"] == [1, 2, 3]
+
+
+def test_replaced_clause_is_merged_across_a_comment_and_with_auto_numbering():
+    from pravki.compare import merge_replaced
+    from pravki.model import Change
+
+    def ch(kind, clause, idx, **kw):
+        return Change(kind=kind, clause=clause, paragraph_index=idx, order=float(idx), source="tracked", author="К",
+                      before=kw.get("before", ""), after=kw.get("after", ""), detail={"labeled": True})
+    old = ch("para_delete", "3.3", 5, before="Молчание — приёмка.")
+    note = Change(kind="comment", clause="3.3", paragraph_index=5, order=5.25, source="tracked", after="Не согласны")
+    # между удалённым и вставленным пунктом — комментарий: всё равно одна правка «пункт заменён»
+    got = merge_replaced([old, note, ch("para_insert", "3.3", 6, after="Приёмка только по Акту.")])
+    assert [c.kind for c in got] == ["replace", "comment"] and got[0].detail.get("replaced_para")
+    # автонумерация Word: вставленный сразу за удалённым 3.3 получил «3.4» — это тот же пункт 3.3
+    got = merge_replaced([ch("para_delete", "3.3", 5, before="Молчание — приёмка."), ch("para_insert", "3.4", 6, after="Новое.")])
+    assert [(c.kind, c.clause) for c in got] == [("replace", "3.3")]
+    # а не сразу за ним или с другим номером — разные пункты
+    assert len(merge_replaced([ch("para_delete", "3.3", 5, before="А."), ch("para_insert", "3.5", 6, after="Б.")])) == 2
+    assert len(merge_replaced([ch("para_delete", "3.3", 5, before="А."), ch("para_insert", "3.4", 8, after="Б.")])) == 2
+
+
+def test_scope_list_item_in_appendix_is_subject_of_contract():
+    from pravki.classify import classify
+    from pravki.model import Change
+    item = Change(kind="para_insert", after="Техническая поддержка программного обеспечения в течение 12 месяцев.",
+                  context_after="Техническая поддержка программного обеспечения в течение 12 месяцев.",
+                  heading="Приложение № 1 к договору. Перечень и стоимость Услуг")
+    assert classify(item).topic == "предмет договора"
+    other = Change(kind="para_insert", after="Подписи сторон проставлены.", context_after="Подписи сторон проставлены.",
+                   heading="Приложение № 2. Форма акта")
+    assert classify(other).topic == "прочее"
+
+
+def test_price_cut_in_table_cell_is_price_and_red_line(tmp_path):
+    # «700 000» → «500 000» в ячейке под заголовком «Стоимость, руб.»: тема — цена, снижение на 29% — красная линия
+    from pravki.parties import SideConfig
+    from pravki.pipeline import review_files
+
+    def cell(t):
+        return f"<w:tc>{p(r(t))}</w:tc>"
+
+    def doc(price):
+        pre = p(r('ООО «Альфа», именуемое в дальнейшем «Заказчик», и ООО «Бета», именуемое в дальнейшем «Исполнитель», заключили:'))
+        table = ("<w:tbl><w:tr>" + cell("Услуга") + cell("Стоимость, руб.") + "</w:tr><w:tr>" + cell("Разработка") + cell(price)
+                 + "</w:tr></w:tbl>")
+        return pre + p(r("1.1. Исполнитель оказывает услуги по Приложению № 1.")) + p(r("Приложение № 1. Перечень и стоимость Услуг")) + table
+    b, t = make_docx(tmp_path / "b.docx", doc("700 000")), make_docx(tmp_path / "t.docx", doc("500 000"))
+    rv = review_files(str(t), str(b), "playbooks/services_example.yaml", side=SideConfig(confirm_role="Исполнитель"))
+    [c] = rv.changes
+    assert (c.kind, c.topic, c.rule_id, c.level) == ("replace", "цена и сумма договора", "SV-07", "reject")

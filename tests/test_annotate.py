@@ -88,9 +88,9 @@ def test_accepted_change_from_our_version_is_described_as_such(tmp_path):
     base = read_docx(str(make_docx(tmp_path / "base.docx", p(r("1.1. Срок "), ins("10", author="Коллега"), r(" дней.")))))
     theirs_path = str(make_docx(tmp_path / "theirs.docx", p(r("1.1. Срок 10 дней."))))
     theirs = read_docx(theirs_path)
-    changes = compare_versions(base, theirs, ["kandu"])  # коллега не указан среди наших авторов
+    changes = compare_versions(base, theirs, ["Юрист"])  # коллега не указан среди наших авторов
     out = str(tmp_path / "unified.docx")
-    annotate_docx(theirs_path, out, changes, build_unified(base, theirs, {"kandu"}, changes))
+    annotate_docx(theirs_path, out, changes, build_unified(base, theirs, {"Юрист"}, changes))
     text = next(iter(read_docx(out).comments.values())).text
     assert changes[0].detail.get("accepted_from_base") and "Принята правка из нашей версии" in text
     assert "без отметки" not in text

@@ -512,3 +512,74 @@ def test_empty_names_with_replaced_role_is_flagged():
     b = [Party("Продавец"), Party("Арендатор")]
     found = compare_parties(a, b)
     assert len(found) == 1 and "заменена" in found[0][0]
+
+
+# ---------------------------------------------------------------- реквизиты в конце договора
+_PRE = p(r("ДОГОВОР ОКАЗАНИЯ УСЛУГ")) + p(r('ООО «Альфа», именуемое в дальнейшем «Заказчик», в лице директора, с одной стороны, '
+                                            'и ООО «Бета», именуемое в дальнейшем «Исполнитель», с другой стороны, заключили:'))
+_BODY = p(r("1. Предмет договора")) + p(r("1.1. Исполнитель оказывает услуги."))
+
+
+def _req_text(acc="40702810900000000001"):
+    return (p(r("10. Адреса и реквизиты сторон")) +
+            p(r("Заказчик: ООО «Альфа»")) + p(r("ИНН 7701234567, КПП 770101001")) + p(r("р/с 40702810100000000009, БИК 044525225")) +
+            p(r("Исполнитель: ООО «Бета»")) + p(r("ИНН 7709876543, ОГРН 1027700000001")) + p(r(f"р/с {acc}, БИК 044525593")))
+
+
+def _req_table(acc="40702810900000000001"):
+    def cell(*lines):
+        return "<w:tc>" + "".join(p(r(x)) for x in lines) + "</w:tc>"
+    return (p(r("10. Реквизиты сторон")) + "<w:tbl><w:tr>" + cell("Заказчик", "ООО «Альфа»", "ИНН 7701234567") +
+            cell("Исполнитель", "ООО «Бета»", "ИНН 7709876543", f"Расчётный счёт: {acc}") + "</w:tr></w:tbl>")
+
+
+@pytest.mark.parametrize("req", [_req_text, _req_table])
+def test_inn_is_taken_from_requisites_at_the_end(tmp_path, req):
+    from pravki.parties import parties_of, requisites_of
+    doc = read_docx(str(make_docx(tmp_path / "d.docx", _PRE + _BODY + req())))
+    by_side = {x.side: x for x in parties_of(doc, "accepted")}
+    assert by_side["заказчик"].inn == "7701234567" and by_side["исполнитель"].inn == "7709876543"
+    assert requisites_of(doc, "accepted")["исполнитель"]["account"] == "40702810900000000001"
+    # по ИНН из реквизитов определяется наша сторона, хотя в преамбуле ИНН нет
+    res = check_side("Заказчик", list(by_side.values()), SideConfig(profile=CompanyProfile(inns=["7701234567"])))
+    assert not res.blocked
+
+
+@pytest.mark.parametrize("req", [_req_text, _req_table])
+def test_changed_bank_account_is_a_party_change(tmp_path, req):
+    base = read_docx(str(make_docx(tmp_path / "b.docx", _PRE + _BODY + req())))
+    theirs = read_docx(str(make_docx(tmp_path / "t.docx", _PRE + _BODY + req("40702810555555555555"))))
+    from pravki.parties import party_changes
+    found = party_changes(base, theirs, set())
+    assert len(found) == 1 and "Изменён расчётный счёт стороны «Исполнитель»" in found[0].explanation
+    assert "40702810555555555555" in found[0].explanation and found[0].level == "review"
+    assert party_changes(base, base, set()) == []
+
+
+def test_requisites_blocks_open_with_party_name_and_have_bank_subheadings(tmp_path):
+    # как в договоре на участие: общий заголовок, у каждой стороны — наименование и подзаголовок «Банковские реквизиты»
+    from pravki.parties import party_changes, requisites_of, parties_of
+    pre = p(r('ООО «Альфа», именуемое в дальнейшем «Организатор», с одной стороны, и ИП Петров Иван Иванович, '
+              'именуемый в дальнейшем «Участник», с другой стороны, заключили:'))
+    body = p(r("1. Предмет договора")) + p(r("8.3. При изменении реквизитов Сторона уведомляет другую."))
+
+    def req(acc):
+        return (p(r("10. Адреса и реквизиты сторон")) + p(r("ООО «Альфа»")) + p(r("ИНН 7701234567")) +
+                p(r("Банковские реквизиты")) + p(r("Р/с 40702810100000000009")) +
+                p(r("ИП Петров Иван Иванович")) + p(r("ИНН 770912345678")) + p(r("Банковские реквизиты")) + p(r(f"Р/с {acc}")))
+    base = read_docx(str(make_docx(tmp_path / "b.docx", pre + body + req("40802810900000000001"))))
+    theirs = read_docx(str(make_docx(tmp_path / "t.docx", pre + body + req("40802810555555555555"))))
+    got = requisites_of(base, "accepted", set(), parties_of(base, "accepted"))
+    assert got["организатор"]["account"] == "40702810100000000009" and got["участник"]["inn"] == "770912345678"
+    found = party_changes(base, theirs, set())
+    assert len(found) == 1 and "стороны «Участник»" in found[0].explanation
+
+
+def test_requisites_section_is_not_taken_from_a_clause_about_requisites(tmp_path):
+    # «изменение реквизитов» в начале договора и строка «Приложение…» до раздела реквизитов не сбивают поиск
+    from pravki.parties import requisites_of
+    body = (_PRE + p(r("1. Предмет договора")) + p(r("1.2. Об изменении реквизитов Стороны уведомляют друг друга.")) +
+            p(r("Приложение 1 — неотъемлемая часть договора.")) + "".join(p(r(f"2.{n}. Условие {n}.")) for n in range(1, 45)) +
+            _req_text())
+    doc = read_docx(str(make_docx(tmp_path / "d.docx", body)))
+    assert requisites_of(doc, "accepted")["исполнитель"]["inn"] == "7709876543"
